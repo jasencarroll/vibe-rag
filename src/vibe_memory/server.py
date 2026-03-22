@@ -65,6 +65,14 @@ async def _startup() -> None:
     if _pg and _embedder:
         asyncio.create_task(_catch_up_sessions())
 
+    # Start session watcher
+    if _pg and _embedder and _config.session_log_dir.exists():
+        from vibe_memory.indexing.session_indexer import watch_session_dir
+        asyncio.create_task(
+            watch_session_dir(_config.session_log_dir, _index_one_session)
+        )
+        logger.info("Session watcher started")
+
 
 async def _catch_up_sessions() -> None:
     try:

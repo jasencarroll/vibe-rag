@@ -1,7 +1,10 @@
 from __future__ import annotations
+import asyncio
 import json
 import logging
 from pathlib import Path
+
+from watchfiles import awatch, Change
 
 logger = logging.getLogger(__name__)
 
@@ -62,3 +65,35 @@ def find_completed_sessions(log_dir: Path) -> list[dict]:
                 "meta": meta,
             })
     return completed
+
+
+async def watch_session_dir(log_dir: Path, on_session_complete) -> None:
+    """Watch for new completed sessions and call on_session_complete(session_info)."""
+    if not log_dir.exists():
+        logger.warning(f"Session log dir not found: {log_dir}. Watcher disabled.")
+        return
+
+    logger.info(f"Watching for new sessions in {log_dir}")
+    async for changes in awatch(log_dir):
+        for change_type, path_str in changes:
+            path = Path(path_str)
+            if path.name != "meta.json":
+                continue
+            if change_type not in (Change.added, Change.modified):
+                continue
+            try:
+                meta = json.loads(path.read_text())
+            except (json.JSONDecodeError, OSError):
+                continue
+            if not meta.get("end_time"):
+                continue
+            session_dir = path.parent
+            session_info = {
+                "session_id": meta.get("session_id", session_dir.name),
+                "session_dir": session_dir,
+                "meta": meta,
+            }
+            try:
+                await on_session_complete(session_info)
+            except Exception as e:
+                logger.warning(f"Failed to index session {session_info['session_id']}: {e}")
