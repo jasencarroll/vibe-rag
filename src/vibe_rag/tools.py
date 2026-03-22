@@ -2,7 +2,7 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-from vibe_rag.server import mcp, _get_db, _get_embedder
+from vibe_rag.server import mcp, _get_db, _get_pg, _get_embedder, _get_project_id
 from vibe_rag.chunking import chunk_doc, collect_files
 from vibe_rag.indexing.code_chunker import chunk_code
 from vibe_rag.constants import EXT_TO_LANG
@@ -129,6 +129,14 @@ def remember(content: str, tags: str = "") -> str:
     except Exception as e:
         return f"Embedding failed: {e}"
 
+    pg = _get_pg()
+    if pg:
+        import asyncio
+        memory_id = asyncio.get_event_loop().run_until_complete(
+            pg.remember(content, embeddings[0], tags, _get_project_id())
+        )
+        return f"Remembered in pgvector (id={memory_id}): {content[:200]}"
+
     db = _get_db()
     memory_id = db.remember(content, embeddings[0], tags)
     return f"Remembered (id={memory_id}): {content[:200]}"
@@ -137,19 +145,39 @@ def remember(content: str, tags: str = "") -> str:
 @mcp.tool()
 def search_memory(query: str, limit: int = 10) -> str:
     """Search stored memories by semantic meaning."""
+    pg = _get_pg()
+    if pg:
+        import asyncio
+        count = asyncio.get_event_loop().run_until_complete(pg.memory_count())
+        if count == 0:
+            return "No memories stored yet."
+        try:
+            embeddings = _get_embedder().embed_text_sync([query])
+        except Exception as e:
+            return f"Embedding failed: {e}"
+        results = asyncio.get_event_loop().run_until_complete(
+            pg.search_memories(embeddings[0], limit=limit, project_id=_get_project_id())
+        )
+        if not results:
+            return "No matching memories found."
+        output = []
+        for r in results:
+            score = f"{r.get('score', 0):.2f}" if r.get('score') else ""
+            project = f" [{r['project_id']}]" if r.get('project_id') else " [global]"
+            output.append(f"[id={r['id']}{project} score={score}] {r['content']}")
+        return "\n\n".join(output)
+
+    # Fallback to sqlite
     db = _get_db()
     if db.memory_count() == 0:
         return "No memories stored yet."
-
     try:
         embeddings = _get_embedder().embed_text_sync([query])
     except Exception as e:
         return f"Embedding failed: {e}"
-
     results = db.search_memories(embeddings[0], limit=limit)
     if not results:
         return "No matching memories found."
-
     output = []
     for r in results:
         output.append(f"[id={r['id']} | {r['created_at']}] {r['content']}")
@@ -159,6 +187,14 @@ def search_memory(query: str, limit: int = 10) -> str:
 @mcp.tool()
 def forget(memory_id: int) -> str:
     """Delete a memory by ID."""
+    pg = _get_pg()
+    if pg:
+        import asyncio
+        content = asyncio.get_event_loop().run_until_complete(pg.forget(memory_id))
+        if content:
+            return f"Deleted from pgvector: {content[:200]}"
+        return f"Memory {memory_id} not found."
+
     db = _get_db()
     content = db.forget(memory_id)
     if content:

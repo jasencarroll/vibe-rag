@@ -58,6 +58,9 @@ def init(name: str | None):
     api_key = os.environ.get("MISTRAL_API_KEY", "")
     config_text = config_text.replace("__MISTRAL_API_KEY__", api_key)
 
+    database_url = os.environ.get("DATABASE_URL", "")
+    config_text = config_text.replace("__DATABASE_URL__", database_url)
+
     vibe_rag_bin = shutil.which("vibe-rag") or "vibe-rag"
     config_text = config_text.replace("__VIBE_RAG_BIN__", vibe_rag_bin)
 
@@ -89,10 +92,18 @@ def init(name: str | None):
     click.echo(f"    vibe --agent builder\n")
 
 
+async def _pg_count(pg: PostgresDB) -> int:
+    await pg.connect()
+    count = await pg.memory_count()
+    await pg.close()
+    return count
+
+
 @main.command()
 def status():
     """Check memory status for current project."""
     from vibe_rag.db.sqlite import SqliteVecDB
+    from vibe_rag.db.postgres import PostgresDB
 
     db_path = Path.cwd() / ".vibe" / "index.db"
     click.echo(f"\n  vibe-rag {__version__}")
@@ -107,6 +118,18 @@ def status():
         db.close()
     else:
         click.echo("  No index yet. Run vibe and use index_project.")
+
+    database_url = os.environ.get("DATABASE_URL", "")
+    if database_url:
+        import asyncio
+        try:
+            pg = PostgresDB(database_url)
+            count = asyncio.run(_pg_count(pg))
+            click.echo(f"  pgvector:    {count} memories (cross-repo)")
+        except Exception as e:
+            click.echo(f"  pgvector:    error — {e}")
+    else:
+        click.echo(f"  pgvector:    not configured (set DATABASE_URL for cross-repo memory)")
     click.echo()
 
 
