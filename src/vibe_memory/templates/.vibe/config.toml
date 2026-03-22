@@ -51,7 +51,7 @@ name = "memory"
 transport = "stdio"
 command = "__VIBE_MEMORY_BIN__"
 args = ["serve"]
-env = { "DATABASE_URL" = "__DATABASE_URL__", "MISTRAL_API_KEY" = "__MISTRAL_CONSOLE_KEY__", "CODESTRAL_API_KEY" = "__MISTRAL_CONSOLE_KEY__" }
+env = { "MISTRAL_API_KEY" = "__MISTRAL_CONSOLE_KEY__", "CODESTRAL_API_KEY" = "__MISTRAL_CONSOLE_KEY__" }
 
 # Uncomment for additional MCP servers:
 #

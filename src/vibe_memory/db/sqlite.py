@@ -13,6 +13,7 @@ class SqliteVecDB:
 
     def _get_conn(self) -> sqlite3.Connection:
         if self._conn is None:
+            self._path.parent.mkdir(parents=True, exist_ok=True)
             self._conn = sqlite3.connect(str(self._path))
             self._conn.row_factory = sqlite3.Row
             self._conn.enable_load_extension(True)
@@ -40,15 +41,22 @@ class SqliteVecDB:
                 id INTEGER PRIMARY KEY,
                 embedding float[1024]
             );
+
+            CREATE TABLE IF NOT EXISTS memories (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                content TEXT NOT NULL,
+                tags TEXT,
+                created_at TEXT DEFAULT (datetime('now'))
+            );
+
+            CREATE VIRTUAL TABLE IF NOT EXISTS memories_vec USING vec0(
+                id INTEGER PRIMARY KEY,
+                embedding float[1024]
+            );
         """)
         conn.commit()
 
-    def list_tables(self) -> list[str]:
-        conn = self._get_conn()
-        rows = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type IN ('table', 'virtual table')"
-        ).fetchall()
-        return [row["name"] for row in rows]
+    # --- Code chunks ---
 
     def upsert_chunks(self, chunks: list[dict], embeddings: list[list[float]]) -> None:
         conn = self._get_conn()
@@ -67,7 +75,7 @@ class SqliteVecDB:
             )
         conn.commit()
 
-    def search(self, query_embedding: list[float], limit: int = 10, language: str | None = None) -> list[dict]:
+    def search_code(self, query_embedding: list[float], limit: int = 10, language: str | None = None) -> list[dict]:
         conn = self._get_conn()
         serialized = sqlite_vec.serialize_float32(query_embedding)
 
@@ -96,17 +104,76 @@ class SqliteVecDB:
 
         return [dict(row) for row in rows]
 
-    def chunk_count(self) -> int:
+    def clear_code(self) -> None:
+        conn = self._get_conn()
+        conn.executescript("DELETE FROM code_chunks_vec; DELETE FROM code_chunks;")
+        conn.commit()
+
+    def code_chunk_count(self) -> int:
         conn = self._get_conn()
         return conn.execute("SELECT COUNT(*) FROM code_chunks").fetchone()[0]
 
-    def clear(self) -> None:
+    # --- Memories ---
+
+    def remember(self, content: str, embedding: list[float], tags: str = "") -> int:
         conn = self._get_conn()
-        conn.executescript("""
-            DELETE FROM code_chunks_vec;
-            DELETE FROM code_chunks;
-        """)
+        cursor = conn.execute(
+            "INSERT INTO memories (content, tags) VALUES (?, ?)",
+            (content, tags),
+        )
+        row_id = cursor.lastrowid
+        conn.execute(
+            "INSERT INTO memories_vec (id, embedding) VALUES (?, ?)",
+            (row_id, sqlite_vec.serialize_float32(embedding)),
+        )
         conn.commit()
+        return row_id
+
+    def search_memories(self, query_embedding: list[float], limit: int = 10) -> list[dict]:
+        conn = self._get_conn()
+        serialized = sqlite_vec.serialize_float32(query_embedding)
+        rows = conn.execute(
+            """SELECT m.id, m.content, m.tags, m.created_at, v.distance
+               FROM memories_vec v
+               JOIN memories m ON m.id = v.id
+               WHERE v.embedding MATCH ? AND k = ?
+               ORDER BY v.distance""",
+            (serialized, limit),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def forget(self, memory_id: int) -> str | None:
+        conn = self._get_conn()
+        row = conn.execute("SELECT content FROM memories WHERE id = ?", (memory_id,)).fetchone()
+        if not row:
+            return None
+        content = row["content"]
+        conn.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
+        conn.execute("DELETE FROM memories_vec WHERE id = ?", (memory_id,))
+        conn.commit()
+        return content
+
+    def memory_count(self) -> int:
+        conn = self._get_conn()
+        return conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0]
+
+    # --- Compat aliases ---
+
+    def search(self, query_embedding: list[float], limit: int = 10, language: str | None = None) -> list[dict]:
+        return self.search_code(query_embedding, limit, language)
+
+    def clear(self) -> None:
+        self.clear_code()
+
+    def chunk_count(self) -> int:
+        return self.code_chunk_count()
+
+    def list_tables(self) -> list[str]:
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type IN ('table', 'virtual table')"
+        ).fetchall()
+        return [row["name"] for row in rows]
 
     def close(self) -> None:
         if self._conn:

@@ -9,8 +9,8 @@ def test_cli_version():
     assert "0.0.1" in result.output
 
 
-def test_cli_status_no_db(monkeypatch):
-    monkeypatch.delenv("DATABASE_URL", raising=False)
+def test_cli_status():
     runner = CliRunner()
     result = runner.invoke(main, ["status"])
-    assert "no DATABASE_URL" in result.output
+    assert result.exit_code == 0
+    assert "vibe-memory" in result.output
