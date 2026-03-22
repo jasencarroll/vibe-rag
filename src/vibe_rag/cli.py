@@ -21,6 +21,7 @@ def init(name: str | None):
     from importlib.resources import files as pkg_files
 
     templates_dir = Path(str(pkg_files("vibe_rag") / "templates"))
+    bundle_dir = Path(str(pkg_files("vibe_rag") / "template_bundle"))
 
     if not name:
         name = click.prompt("\n  Project name")
@@ -53,14 +54,14 @@ def init(name: str | None):
     # .vibe/config.toml
     vibe_dir = target / ".vibe"
     vibe_dir.mkdir(exist_ok=True)
-    config_text = (templates_dir / ".vibe" / "config.toml").read_text()
+    config_text = (bundle_dir / "vibe" / "config.toml").read_text()
 
     vibe_rag_bin = shutil.which("vibe-rag") or "vibe-rag"
     config_text = config_text.replace("__VIBE_RAG_BIN__", vibe_rag_bin)
 
     (vibe_dir / "config.toml").write_text(config_text)
 
-    skills_template_dir = templates_dir / ".vibe" / "skills"
+    skills_template_dir = bundle_dir / "vibe" / "skills"
     if skills_template_dir.exists():
         shutil.copytree(skills_template_dir, vibe_dir / "skills", dirs_exist_ok=True)
 

@@ -2,22 +2,20 @@
 
 Local semantic code search and persistent memory for [Mistral Vibe](https://docs.mistral.ai/mistral-vibe/). An MCP server that gives Vibe the ability to understand your codebase by meaning, remember things across sessions, and search your docs — all stored in a single local sqlite file. No external database. No cloud. Fully local.
 
-## v0.0.10 Highlights
+## v0.0.11 Highlights
 
-- **🧠 Session Bootstrap:** `load_session_context` pulls prior memories, code, and docs in one call
-- **🗂 Structured Memory:** pgvector memories now support kinds, summaries, metadata, and supersession
-- **🔌 Vibe Integration:** generated scaffold now teaches Vibe to use memory tools first
-- **📘 User Guide:** day-to-day setup and prompt patterns are documented
-- **🐛 Reliability:** pgvector/sqlite schemas upgrade cleanly and indexing handles stale hashes
+- **📦 Packaging Fix:** installed `vibe-rag init` now includes bundled project templates again
+- **🧠 Session Bootstrap:** packaged MCP flow remains verified with `load_session_context`
+- **🔌 Vibe Integration:** packaged `vibe` and `vibe-rag` releases were revalidated together
 
 ## Install
 
 ```bash
-# Latest stable release (v0.0.10)
+# Latest stable release (v0.0.11)
 uv tool install vibe-rag
 
 # Or install specific version
-uv tool install vibe-rag@0.0.10
+uv tool install vibe-rag@0.0.11
 ```
 
 Requires Python 3.12+ and a [Mistral API key](https://console.mistral.ai/api-keys).
