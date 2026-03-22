@@ -34,8 +34,8 @@ class Embedder:
         return results
 
     def embed_text_sync(self, texts: list[str]) -> list[list[float]]:
-        """Embed text/prose using mistral-embed."""
-        return self._embed_all(texts, MISTRAL_MODEL)
+        """Embed text/prose using codestral-embed."""
+        return self._embed_all(texts, CODESTRAL_MODEL)
 
     def embed_code_sync(self, texts: list[str]) -> list[list[float]]:
         """Embed code using codestral-embed."""

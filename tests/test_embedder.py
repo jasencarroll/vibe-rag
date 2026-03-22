@@ -9,7 +9,7 @@ def embedder():
     return Embedder(api_key="test-key")
 
 
-def test_embed_text_calls_mistral(embedder, httpx_mock):
+def test_embed_text_calls_codestral(embedder, httpx_mock):
     httpx_mock.add_response(
         url="https://api.mistral.ai/v1/embeddings",
         json={"data": [{"embedding": [0.1] * 1536}]},
@@ -19,7 +19,7 @@ def test_embed_text_calls_mistral(embedder, httpx_mock):
     assert len(result[0]) == 1536
     request = httpx_mock.get_request()
     body = request.content.decode()
-    assert "mistral-embed" in body
+    assert "codestral-embed" in body
 
 
 def test_embed_code_calls_codestral(embedder, httpx_mock):
