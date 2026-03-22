@@ -1,0 +1,17 @@
+# Planning and exploration agent — read-only with auto-approve.
+# Usage: vibe --agent planner
+
+display_name = "Planner"
+description = "Read-only agent for planning and codebase exploration."
+safety = "safe"
+auto_approve = true
+enabled_tools = [
+  "read_file",
+  "grep",
+  "bash",
+  "task",
+  "todo",
+  "ask_user_question",
+  "memory_*",
+  "context7_*",
+]

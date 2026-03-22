@@ -1,0 +1,22 @@
+# Full auto-approve agent for trusted projects.
+# Usage: vibe --agent builder
+
+display_name = "Builder"
+description = "Auto-approves all tool executions. Use in trusted projects only."
+safety = "destructive"
+auto_approve = true
+enabled_tools = [
+  # Built-in Vibe tools
+  "read_file",
+  "write_file",
+  "search_replace",
+  "bash",
+  "grep",
+  "task",
+  "todo",
+  "ask_user_question",
+  # MCP tools (wildcard matches all tools from each server)
+  "memory_*",
+  "playwright_*",
+  "context7_*",
+]

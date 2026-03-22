@@ -1,0 +1,14 @@
+# Background research subagent — delegated via the `task` tool.
+# Cannot ask questions. Returns text results only.
+
+display_name = "Researcher"
+description = "Read-only subagent for background research and codebase exploration."
+safety = "safe"
+agent_type = "subagent"
+enabled_tools = [
+  "read_file",
+  "grep",
+  "bash",
+  "memory_*",
+  "context7_*",
+]

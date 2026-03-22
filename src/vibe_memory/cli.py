@@ -14,6 +14,114 @@ def main():
 
 
 @main.command()
+@click.argument("name", required=False)
+def init(name: str | None):
+    """Create a new Vibe project with memory, skills, and agents."""
+    import shutil
+    import subprocess
+    from pathlib import Path
+    from importlib.resources import files as pkg_files
+
+    templates_dir = Path(str(pkg_files("vibe_memory") / "templates"))
+    projects_dir = Path.cwd()
+
+    # Ask for name if not provided
+    if not name:
+        name = click.prompt("\n  Project name")
+    if not name:
+        click.echo("  Error: project name required")
+        return
+
+    target = projects_dir / name
+
+    # Handle existing directory
+    if target.exists():
+        click.echo(f"\n  {target} already exists.")
+        if (target / ".vibe").exists():
+            if click.confirm("  Re-stamp .vibe config? (overwrites .vibe/ and AGENTS.md)", default=False):
+                shutil.rmtree(target / ".vibe", ignore_errors=True)
+                (target / "AGENTS.md").unlink(missing_ok=True)
+            else:
+                click.echo("  Aborted.")
+                return
+        elif click.confirm("  Delete and recreate?", default=False):
+            shutil.rmtree(target)
+        else:
+            click.echo("  Aborted.")
+            return
+
+    # Create project
+    target.mkdir(parents=True, exist_ok=True)
+
+    # Stamp AGENTS.md
+    shutil.copy2(templates_dir / "AGENTS.md", target / "AGENTS.md")
+
+    # Stamp .vibe/config.toml
+    vibe_dir = target / ".vibe"
+    vibe_dir.mkdir(exist_ok=True)
+    config_src = templates_dir / ".vibe" / "config.toml"
+    config_dst = vibe_dir / "config.toml"
+    config_text = config_src.read_text()
+
+    # Inject env vars (Vibe doesn't expand ${VAR} in MCP env blocks)
+    console_key = os.environ.get("MISTRAL_CONSOLE_KEY", os.environ.get("MISTRAL_API_KEY", ""))
+    config_text = config_text.replace("__DATABASE_URL__", os.environ.get("DATABASE_URL", ""))
+    config_text = config_text.replace("__MISTRAL_CONSOLE_KEY__", console_key)
+
+    # Resolve vibe-memory binary path
+    vibe_memory_bin = shutil.which("vibe-memory") or str(Path(__file__).resolve().parent.parent.parent / ".venv" / "bin" / "vibe-memory")
+    config_text = config_text.replace("__VIBE_MEMORY_BIN__", vibe_memory_bin)
+
+    config_dst.write_text(config_text)
+
+    # Stamp skills
+    skills_src = templates_dir / ".vibe" / "skills"
+    if skills_src.exists():
+        skills_dst = vibe_dir / "skills"
+        shutil.copytree(skills_src, skills_dst, dirs_exist_ok=True)
+
+    # Install global agents (once)
+    global_agents = Path.home() / ".vibe" / "agents"
+    agents_src = templates_dir / "agents"
+    if agents_src.exists():
+        if not global_agents.exists() or not any(global_agents.iterdir()):
+            global_agents.mkdir(parents=True, exist_ok=True)
+            for f in agents_src.glob("*.toml"):
+                shutil.copy2(f, global_agents / f.name)
+            click.echo("  Installed global agents to ~/.vibe/agents/")
+
+    # .gitignore
+    gitignore = target / ".gitignore"
+    if gitignore.exists():
+        text = gitignore.read_text()
+        if ".vibe/index.db" not in text:
+            gitignore.write_text(text.rstrip() + "\n.vibe/index.db\n")
+    else:
+        gitignore.write_text(".vibe/index.db\n")
+
+    # Init git
+    if not (target / ".git").exists():
+        subprocess.run(["git", "init", "-q"], cwd=target, capture_output=True)
+
+    # Summary
+    skill_count = sum(1 for _ in (vibe_dir / "skills").rglob("SKILL.md")) if (vibe_dir / "skills").exists() else 0
+    click.echo(f"\n  ✓ {name} created at {target}\n")
+    click.echo(f"    AGENTS.md            — coding rules")
+    click.echo(f"    .vibe/config.toml    — Playwright + Context7 + Memory MCP")
+    click.echo(f"    .vibe/skills/        — {skill_count} skills")
+    click.echo(f"    .gitignore           — excludes .vibe/index.db")
+
+    if os.environ.get("DATABASE_URL"):
+        click.echo(f"    vibe-memory          — connected")
+    else:
+        click.echo(f"\n    Run `vibe-memory setup` to connect a database")
+
+    click.echo(f"\n  Next:")
+    click.echo(f"    cd {target}")
+    click.echo(f"    vibe --agent builder\n")
+
+
+@main.command()
 def setup():
     """Set up the memory database (Neon or BYO Postgres)."""
     from vibe_memory.setup.neon import neonctl_available

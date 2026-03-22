@@ -1,0 +1,70 @@
+# Project-level Vibe configuration
+# Docs: https://docs.mistral.ai/mistral-vibe/introduction/configuration
+
+# ── Model ──────────────────────────────────────────────
+active_model = "devstral-2"
+
+# ── Skills ─────────────────────────────────────────────
+# Extra directories to scan for skills (in addition to .vibe/skills/)
+# skill_paths = ["/path/to/shared/skills"]
+
+# Enable/disable skills by name, glob, or regex (re:pattern)
+# enabled_skills = ["code-review", "test-*"]
+# disabled_skills = ["experimental-*"]
+
+# ── Tools ──────────────────────────────────────────────
+# Enable/disable built-in or MCP tools
+# enabled_tools = ["*"]
+# disabled_tools = ["mcp_*"]
+
+# Tool permissions
+# [tools]
+# bash_timeout = 60
+#
+# [tools.permissions]
+# read_file_allowlist = ["**/*"]
+# read_file_denylist = ["**/node_modules/**", "**/.env"]
+# write_file_allowlist = ["**/*"]
+# write_file_denylist = ["**/node_modules/**", "**/dist/**"]
+
+# ── MCP Servers ────────────────────────────────────────
+
+# Playwright — browser automation and E2E testing
+[[mcp_servers]]
+name = "playwright"
+transport = "stdio"
+command = "npx"
+args = ["@playwright/mcp@latest"]
+startup_timeout_sec = 15
+tool_timeout_sec = 120
+
+# Context7 — up-to-date library documentation lookup
+[[mcp_servers]]
+name = "context7"
+transport = "stdio"
+command = "npx"
+args = ["-y", "@upstash/context7-mcp"]
+
+# vibe-memory — persistent memory and semantic code search
+[[mcp_servers]]
+name = "memory"
+transport = "stdio"
+command = "__VIBE_MEMORY_BIN__"
+args = ["serve"]
+env = { "DATABASE_URL" = "__DATABASE_URL__", "MISTRAL_API_KEY" = "__MISTRAL_CONSOLE_KEY__", "CODESTRAL_API_KEY" = "__MISTRAL_CONSOLE_KEY__" }
+
+# Uncomment for additional MCP servers:
+#
+# [[mcp_servers]]
+# name = "filesystem"
+# transport = "stdio"
+# command = "npx"
+# args = ["-y", "@modelcontextprotocol/server-filesystem"]
+
+# ── Git ────────────────────────────────────────────────
+# [git]
+# include_commit_signature = true
+
+# ── Telemetry ──────────────────────────────────────────
+# [telemetry]
+# enable_telemetry = false
