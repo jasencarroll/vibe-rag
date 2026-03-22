@@ -19,7 +19,7 @@ def test_embed_text_calls_mistral(embedder, httpx_mock):
     assert len(result[0]) == 1024
     request = httpx_mock.get_request()
     body = request.content.decode()
-    assert "mistral-embed-latest" in body
+    assert "mistral-embed" in body
 
 
 def test_embed_code_calls_codestral(embedder, httpx_mock):
@@ -32,7 +32,7 @@ def test_embed_code_calls_codestral(embedder, httpx_mock):
     assert len(result[0]) == 1024
     request = httpx_mock.get_request()
     body = request.content.decode()
-    assert "codestral-embed-latest" in body
+    assert "codestral-embed" in body
 
 
 def test_embed_batches_large_input(embedder, httpx_mock):

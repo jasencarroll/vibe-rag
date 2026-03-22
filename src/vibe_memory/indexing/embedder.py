@@ -3,8 +3,8 @@ from __future__ import annotations
 import httpx
 
 EMBED_URL = "https://api.mistral.ai/v1/embeddings"
-MISTRAL_MODEL = "mistral-embed-latest"
-CODESTRAL_MODEL = "codestral-embed-latest"
+MISTRAL_MODEL = "mistral-embed"
+CODESTRAL_MODEL = "codestral-embed"
 BATCH_SIZE = 256
 
 
