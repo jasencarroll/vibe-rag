@@ -36,15 +36,13 @@ def test_embed_code_calls_codestral(embedder, httpx_mock):
 
 
 def test_embed_batches_large_input(embedder, httpx_mock):
-    httpx_mock.add_response(
-        url="https://api.mistral.ai/v1/embeddings",
-        json={"data": [{"embedding": [0.1] * 1024} for _ in range(256)]},
-    )
-    httpx_mock.add_response(
-        url="https://api.mistral.ai/v1/embeddings",
-        json={"data": [{"embedding": [0.1] * 1024} for _ in range(10)]},
-    )
-    texts = [f"text {i}" for i in range(266)]
+    # Batch size is 16, so 35 texts = 3 batches (16 + 16 + 3)
+    for count in [16, 16, 3]:
+        httpx_mock.add_response(
+            url="https://api.mistral.ai/v1/embeddings",
+            json={"data": [{"embedding": [0.1] * 1024} for _ in range(count)]},
+        )
+    texts = [f"text {i}" for i in range(35)]
     result = embedder.embed_text_sync(texts)
-    assert len(result) == 266
-    assert len(httpx_mock.get_requests()) == 2
+    assert len(result) == 35
+    assert len(httpx_mock.get_requests()) == 3

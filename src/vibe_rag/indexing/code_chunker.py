@@ -9,6 +9,8 @@ LANGUAGE_MAP: dict[str, str] = {
     "rust": "rust", "go": "go", "java": "java", "c": "c", "cpp": "cpp",
 }
 
+MAX_CHUNK_LINES = 200  # ~800 tokens — if a symbol is bigger, sub-split it
+
 SYMBOL_NODE_TYPES: set[str] = {
     "function_definition", "class_definition", "function_declaration",
     "class_declaration", "method_definition", "impl_item", "function_item", "struct_item",
@@ -83,9 +85,36 @@ def _try_tree_sitter_chunk(content: str, file_path: str, language: str) -> list[
     return chunks
 
 
+def _subsplit_large_chunks(chunks: list[dict]) -> list[dict]:
+    """If any chunk exceeds MAX_CHUNK_LINES, sub-split it with sliding window."""
+    result = []
+    idx = 0
+    for chunk in chunks:
+        line_count = chunk["content"].count("\n") + 1
+        if line_count <= MAX_CHUNK_LINES:
+            chunk["chunk_index"] = idx
+            result.append(chunk)
+            idx += 1
+        else:
+            sub_chunks = chunk_code_sliding_window(
+                chunk["content"], chunk["file_path"], window=60, overlap=10,
+            )
+            for sc in sub_chunks:
+                sc["chunk_index"] = idx
+                sc["language"] = chunk.get("language")
+                sc["symbol"] = chunk.get("symbol")
+                # Adjust line numbers relative to parent chunk
+                offset = chunk["start_line"] - 1
+                sc["start_line"] += offset
+                sc["end_line"] += offset
+                result.append(sc)
+                idx += 1
+    return result
+
+
 def chunk_code(content: str, file_path: str, language: str | None = None) -> list[dict]:
     if language:
         ts_chunks = _try_tree_sitter_chunk(content, file_path, language)
         if ts_chunks:
-            return ts_chunks
+            return _subsplit_large_chunks(ts_chunks)
     return chunk_code_sliding_window(content, file_path)
