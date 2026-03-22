@@ -20,9 +20,9 @@ def test_initialize_creates_tables(db):
 def test_insert_and_search(db):
     chunks = [{"file_path": "src/main.py", "chunk_index": 0, "content": "def hello(): print('hi')",
                "language": "python", "symbol": "hello", "start_line": 1, "end_line": 1}]
-    embeddings = [[0.1] * 1024]
+    embeddings = [[0.1] * 1536]
     db.upsert_chunks(chunks, embeddings)
-    results = db.search([0.1] * 1024, limit=5)
+    results = db.search([0.1] * 1536, limit=5)
     assert len(results) == 1
     assert results[0]["file_path"] == "src/main.py"
     assert results[0]["symbol"] == "hello"
@@ -31,14 +31,14 @@ def test_insert_and_search(db):
 def test_clear_and_reindex(db):
     chunks = [{"file_path": "src/a.py", "chunk_index": 0, "content": "x = 1",
                "language": "python", "symbol": None, "start_line": 1, "end_line": 1}]
-    db.upsert_chunks(chunks, [[0.1] * 1024])
+    db.upsert_chunks(chunks, [[0.1] * 1536])
     assert db.chunk_count() == 1
     db.clear()
     assert db.chunk_count() == 0
 
 
 def test_search_empty_db(db):
-    results = db.search([0.1] * 1024, limit=5)
+    results = db.search([0.1] * 1536, limit=5)
     assert results == []
 
 
@@ -47,8 +47,8 @@ def test_search_with_language_filter(db):
         {"file_path": "a.py", "chunk_index": 0, "content": "x", "language": "python", "symbol": None, "start_line": 1, "end_line": 1},
         {"file_path": "b.js", "chunk_index": 0, "content": "y", "language": "javascript", "symbol": None, "start_line": 1, "end_line": 1},
     ]
-    embeddings = [[0.1] * 1024, [0.1] * 1024]
+    embeddings = [[0.1] * 1536, [0.1] * 1536]
     db.upsert_chunks(chunks, embeddings)
-    results = db.search([0.1] * 1024, limit=10, language="python")
+    results = db.search([0.1] * 1536, limit=10, language="python")
     assert len(results) == 1
     assert results[0]["file_path"] == "a.py"
