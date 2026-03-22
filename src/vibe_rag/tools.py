@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import time
 from pathlib import Path
 
@@ -80,6 +81,64 @@ def _validate_memory_kind(memory_kind: str) -> str | None:
         allowed = ", ".join(sorted(ALLOWED_MEMORY_KINDS))
         return f"Error: memory_kind must be one of {allowed}."
     return None
+
+
+def _single_line(text: str) -> str:
+    return " ".join(text.split())
+
+
+def _truncate(text: str, max_chars: int) -> str:
+    if len(text) <= max_chars:
+        return text
+    return text[: max_chars - 1].rstrip() + "…"
+
+
+def _distill_session_turn(task: str, response: str) -> tuple[str, str]:
+    clean_task = _single_line(task.strip())
+    clean_response = response.strip()
+    response_preview = _truncate(_single_line(clean_response), 140)
+    summary = _truncate(f"{clean_task}: {response_preview}", 200)
+    details = f"Task: {clean_task}\n\nResponse:\n{clean_response}"
+    return summary, _truncate(details, MAX_MEMORY_LENGTH)
+
+
+def _distill_session_summary(turns: list[dict]) -> tuple[str, str]:
+    cleaned_turns: list[tuple[str, str]] = []
+    topics: list[str] = []
+    for turn in turns:
+        user = _single_line(str(turn.get("user", "")).strip())
+        assistant = str(turn.get("assistant", "")).strip()
+        if not user or not assistant:
+            continue
+        cleaned_turns.append((user, assistant))
+        topics.append(user)
+
+    if not cleaned_turns:
+        raise ValueError("Error: turns must contain at least one user/assistant pair.")
+
+    topic_preview = "; ".join(topics[:3])
+    if len(topics) > 3:
+        topic_preview += "; ..."
+    summary = _truncate(f"Session summary: {topic_preview}", 200)
+
+    lines = [f"Session covered {len(cleaned_turns)} turns."]
+    for idx, (user, assistant) in enumerate(cleaned_turns, start=1):
+        lines.append(f"\nTurn {idx}")
+        lines.append(f"User: {user}")
+        lines.append(f"Assistant: {_truncate(assistant, 800)}")
+    return summary, _truncate("\n".join(lines), MAX_MEMORY_LENGTH)
+
+
+def _metadata_dict(value: object) -> dict:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return {}
 
 
 def _score(result: dict) -> float:
@@ -180,11 +239,27 @@ def _search_memory_results(query: str, limit: int = 10) -> tuple[str | None, lis
         except Exception as e:
             return f"Embedding failed: {e}", []
         try:
-            results = _run_async(
+            local_results = _run_async(
                 pg.search_memories(embeddings[0], limit=limit, project_id=_ensure_project_id())
             )
         except Exception as e:
             return f"Error searching pgvector memories: {e}", []
+        try:
+            global_results = _run_async(pg.search_memories(embeddings[0], limit=limit, project_id=None))
+        except Exception as e:
+            return f"Error searching pgvector memories: {e}", []
+
+        seen_ids: set[str] = set()
+        results: list[dict] = []
+        for result in local_results + global_results:
+            memory_id = str(result["id"])
+            if memory_id in seen_ids:
+                continue
+            seen_ids.add(memory_id)
+            results.append(result)
+            if len(results) >= limit:
+                break
+
         if not results:
             return "No matching memories found.", []
         return None, results
@@ -537,6 +612,245 @@ def remember_structured(
 
 
 @mcp.tool()
+def save_session_memory(
+    task: str,
+    response: str,
+    source_session_id: str,
+    source_message_id: str,
+    user_message_id: str = "",
+    tags: str = "session,auto",
+    memory_kind: str = "summary",
+    metadata: dict | None = None,
+) -> dict:
+    """Persist a distilled durable memory from a completed chat turn."""
+    task_error = _validate_memory_content(task)
+    if task_error:
+        return {"ok": False, "error": task_error}
+    response_error = _validate_memory_content(response)
+    if response_error:
+        return {"ok": False, "error": response_error}
+    if not source_session_id.strip():
+        return {"ok": False, "error": "Error: source_session_id is required."}
+    if not source_message_id.strip():
+        return {"ok": False, "error": "Error: source_message_id is required."}
+    tags_error = _validate_tags(tags)
+    if tags_error:
+        return {"ok": False, "error": tags_error}
+    kind_error = _validate_memory_kind(memory_kind)
+    if kind_error:
+        return {"ok": False, "error": kind_error}
+
+    enriched_metadata = {
+        "capture_kind": "session_distillation",
+        "task": _single_line(task.strip()),
+        **(metadata or {}),
+    }
+    if user_message_id.strip():
+        enriched_metadata["user_message_id"] = user_message_id.strip()
+
+    summary, content = _distill_session_turn(task, response)
+
+    pg = _get_pg()
+    if pg:
+        try:
+            existing = _run_async(
+                pg.get_memory_by_source(
+                    source_session_id=source_session_id.strip(),
+                    source_message_id=source_message_id.strip(),
+                )
+            )
+        except Exception as e:
+            return {"ok": False, "error": f"Error checking pgvector memory: {e}"}
+        if existing:
+            return {
+                "ok": True,
+                "backend": "pgvector",
+                "deduplicated": True,
+                "memory": _memory_payload(existing),
+            }
+
+    else:
+        existing = _get_db().get_memory_by_source(
+            source_session_id.strip(), source_message_id.strip()
+        )
+        if existing:
+            return {
+                "ok": True,
+                "backend": "sqlite",
+                "deduplicated": True,
+                "memory": _memory_payload(existing),
+            }
+
+    try:
+        embedding = _get_embedder().embed_text_sync([content])[0]
+    except Exception as e:
+        return {"ok": False, "error": f"Embedding failed: {e}"}
+
+    if pg:
+        try:
+            memory_id = _run_async(
+                pg.remember_structured(
+                    summary=summary,
+                    content=content,
+                    embedding=embedding,
+                    tags=tags,
+                    project_id=_ensure_project_id(),
+                    memory_kind=memory_kind,
+                    metadata=enriched_metadata,
+                    source_session_id=source_session_id.strip(),
+                    source_message_id=source_message_id.strip(),
+                )
+            )
+            stored = _run_async(pg.get_memory(memory_id))
+        except Exception as e:
+            return {"ok": False, "error": f"Error storing session memory in pgvector: {e}"}
+        return {
+            "ok": True,
+            "backend": "pgvector",
+            "deduplicated": False,
+            "memory": _memory_payload(stored or {"id": memory_id, "summary": summary, "content": content}),
+        }
+
+    db = _get_db()
+    memory_id = db.remember_structured(
+        summary=summary,
+        content=content,
+        embedding=embedding,
+        tags=tags,
+        memory_kind=memory_kind,
+        metadata=enriched_metadata,
+        source_session_id=source_session_id.strip(),
+        source_message_id=source_message_id.strip(),
+    )
+    stored = db.get_memory(memory_id)
+    return {
+        "ok": True,
+        "backend": "sqlite",
+        "deduplicated": False,
+        "memory": _memory_payload(stored or {"id": memory_id, "summary": summary, "content": content}),
+    }
+
+
+@mcp.tool()
+def save_session_summary(
+    task: str,
+    turns: list[dict],
+    source_session_id: str,
+    source_message_id: str,
+    user_message_id: str = "",
+    tags: str = "session,summary,auto",
+    metadata: dict | None = None,
+) -> dict:
+    """Maintain a rolling durable summary for the current session."""
+    task_error = _validate_memory_content(task)
+    if task_error:
+        return {"ok": False, "error": task_error}
+    if not isinstance(turns, list):
+        return {"ok": False, "error": "Error: turns must be a list."}
+    if not source_session_id.strip():
+        return {"ok": False, "error": "Error: source_session_id is required."}
+    if not source_message_id.strip():
+        return {"ok": False, "error": "Error: source_message_id is required."}
+    tags_error = _validate_tags(tags)
+    if tags_error:
+        return {"ok": False, "error": tags_error}
+
+    try:
+        summary, content = _distill_session_summary(turns)
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}
+
+    summary_source_message_id = "__session_summary__"
+    enriched_metadata = {
+        "capture_kind": "session_rollup",
+        "task": _single_line(task.strip()),
+        "latest_message_id": source_message_id.strip(),
+        "turn_count": len(turns),
+        **(metadata or {}),
+    }
+    if user_message_id.strip():
+        enriched_metadata["user_message_id"] = user_message_id.strip()
+
+    try:
+        embedding = _get_embedder().embed_text_sync([content])[0]
+    except Exception as e:
+        return {"ok": False, "error": f"Embedding failed: {e}"}
+
+    pg = _get_pg()
+    if pg:
+        try:
+            existing = _run_async(
+                pg.get_memory_by_source(
+                    source_session_id=source_session_id.strip(),
+                    source_message_id=summary_source_message_id,
+                )
+            )
+        except Exception as e:
+            return {"ok": False, "error": f"Error checking pgvector summary memory: {e}"}
+        if existing and _metadata_dict(existing.get("metadata")).get("latest_message_id") == source_message_id.strip():
+            return {
+                "ok": True,
+                "backend": "pgvector",
+                "deduplicated": True,
+                "memory": _memory_payload(existing),
+            }
+        try:
+            memory_id = _run_async(
+                pg.remember_structured(
+                    summary=summary,
+                    content=content,
+                    embedding=embedding,
+                    tags=tags,
+                    project_id=_ensure_project_id(),
+                    memory_kind="summary",
+                    metadata=enriched_metadata,
+                    source_session_id=source_session_id.strip(),
+                    source_message_id=summary_source_message_id,
+                    supersedes=existing["id"] if existing else None,
+                )
+            )
+            stored = _run_async(pg.get_memory(memory_id))
+        except Exception as e:
+            return {"ok": False, "error": f"Error storing session summary in pgvector: {e}"}
+        return {
+            "ok": True,
+            "backend": "pgvector",
+            "deduplicated": False,
+            "memory": _memory_payload(stored or {"id": memory_id, "summary": summary, "content": content}),
+        }
+
+    db = _get_db()
+    existing = db.get_memory_by_source(
+        source_session_id.strip(), summary_source_message_id
+    )
+    if existing and _metadata_dict(existing.get("metadata")).get("latest_message_id") == source_message_id.strip():
+        return {
+            "ok": True,
+            "backend": "sqlite",
+            "deduplicated": True,
+            "memory": _memory_payload(existing),
+        }
+    memory_id = db.remember_structured(
+        summary=summary,
+        content=content,
+        embedding=embedding,
+        tags=tags,
+        memory_kind="summary",
+        metadata=enriched_metadata,
+        source_session_id=source_session_id.strip(),
+        source_message_id=summary_source_message_id,
+        supersedes=str(existing["id"]) if existing else None,
+    )
+    stored = db.get_memory(memory_id)
+    return {
+        "ok": True,
+        "backend": "sqlite",
+        "deduplicated": False,
+        "memory": _memory_payload(stored or {"id": memory_id, "summary": summary, "content": content}),
+    }
+
+
+@mcp.tool()
 def supersede_memory(
     old_memory_id: str,
     summary: str,
@@ -666,8 +980,16 @@ def project_status() -> str:
     lines = [
         f"Code chunks: {db.code_chunk_count()}",
         f"Doc chunks: {db.doc_count()}",
-        f"Memories: {db.memory_count()}",
+        f"Local sqlite memories: {db.memory_count()}",
     ]
+    pg = _get_pg()
+    if pg:
+        try:
+            lines.append(f"pgvector memories: {_run_async(pg.memory_count())}")
+        except Exception as e:
+            lines.append(f"pgvector memories: error ({e})")
+    else:
+        lines.append("pgvector memories: not configured")
     language_stats = db.language_stats()
     if language_stats:
         language_summary = ", ".join(

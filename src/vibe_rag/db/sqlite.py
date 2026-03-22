@@ -257,6 +257,25 @@ class SqliteVecDB:
         result["metadata"] = json.loads(result.pop("metadata_json") or "{}")
         return result
 
+    def get_memory_by_source(
+        self, source_session_id: str, source_message_id: str
+    ) -> dict | None:
+        conn = self._get_conn()
+        row = conn.execute(
+            """
+            SELECT *
+            FROM memories
+            WHERE source_session_id = ? AND source_message_id = ?
+            LIMIT 1
+            """,
+            (source_session_id, source_message_id),
+        ).fetchone()
+        if not row:
+            return None
+        result = dict(row)
+        result["metadata"] = json.loads(result.pop("metadata_json") or "{}")
+        return result
+
     def forget(self, memory_id: int) -> str | None:
         conn = self._get_conn()
         row = conn.execute("SELECT content FROM memories WHERE id = ?", (memory_id,)).fetchone()

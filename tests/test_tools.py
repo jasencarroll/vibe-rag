@@ -7,6 +7,8 @@ from vibe_rag.tools import (
     project_status,
     remember,
     remember_structured,
+    save_session_memory,
+    save_session_summary,
     search_code,
     search_docs,
     search_memory,
@@ -232,6 +234,157 @@ def test_remember_structured_returns_memory_payload(tmp_db, mock_embedder):
     assert result["memory"]["metadata"]["confidence"] == "high"
 
 
+def test_save_session_memory_distills_and_deduplicates(tmp_db, mock_embedder):
+    first = save_session_memory(
+        task="figure out auth ownership",
+        response="The API gateway validates JWT tokens before requests reach downstream services.",
+        source_session_id="sess-1",
+        source_message_id="msg-1",
+        user_message_id="user-1",
+    )
+    second = save_session_memory(
+        task="figure out auth ownership",
+        response="The API gateway validates JWT tokens before requests reach downstream services.",
+        source_session_id="sess-1",
+        source_message_id="msg-1",
+        user_message_id="user-1",
+    )
+
+    assert first["ok"] is True
+    assert first["deduplicated"] is False
+    assert first["memory"]["memory_kind"] == "summary"
+    assert first["memory"]["metadata"]["capture_kind"] == "session_distillation"
+    assert first["memory"]["metadata"]["user_message_id"] == "user-1"
+    assert "Task: figure out auth ownership" in first["memory"]["content"]
+    assert second["ok"] is True
+    assert second["deduplicated"] is True
+    assert second["memory"]["id"] == first["memory"]["id"]
+
+
+def test_save_session_summary_rolls_up_many_turns(tmp_db, mock_embedder):
+    first = save_session_summary(
+        task="finish the auth refactor",
+        turns=[
+            {
+                "user": "Figure out auth ownership",
+                "assistant": "The gateway owns auth validation.",
+            },
+            {
+                "user": "What about token refresh?",
+                "assistant": "The auth service issues refresh tokens.",
+            },
+        ],
+        source_session_id="sess-1",
+        source_message_id="msg-2",
+        user_message_id="user-2",
+    )
+    second = save_session_summary(
+        task="finish the auth refactor",
+        turns=[
+            {
+                "user": "Figure out auth ownership",
+                "assistant": "The gateway owns auth validation.",
+            },
+            {
+                "user": "What about token refresh?",
+                "assistant": "The auth service issues refresh tokens.",
+            },
+            {
+                "user": "Where do roles live?",
+                "assistant": "Roles live in the identity service.",
+            },
+        ],
+        source_session_id="sess-1",
+        source_message_id="msg-3",
+        user_message_id="user-3",
+    )
+
+    assert first["ok"] is True
+    assert first["deduplicated"] is False
+    assert first["memory"]["memory_kind"] == "summary"
+    assert first["memory"]["metadata"]["capture_kind"] == "session_rollup"
+    assert first["memory"]["metadata"]["latest_message_id"] == "msg-2"
+    assert "Session covered 2 turns." in first["memory"]["content"]
+    assert second["ok"] is True
+    assert second["deduplicated"] is False
+    assert second["memory"]["supersedes"] == first["memory"]["id"]
+    assert second["memory"]["metadata"]["latest_message_id"] == "msg-3"
+    assert "Session covered 3 turns." in second["memory"]["content"]
+
+
+def test_save_session_summary_updates_pgvector_rollup_when_existing_metadata_is_string(
+    tmp_db, mock_embedder
+):
+    import vibe_rag.server as srv
+
+    class FakePG:
+        def __init__(self):
+            self.memories = {}
+
+        async def get_memory_by_source(self, source_session_id, source_message_id):
+            return self.memories.get((source_session_id, source_message_id))
+
+        async def remember_structured(
+            self,
+            summary,
+            content,
+            embedding,
+            tags="",
+            project_id=None,
+            memory_kind="summary",
+            metadata=None,
+            source_session_id=None,
+            source_message_id=None,
+            supersedes=None,
+        ):
+            memory_id = f"memory-{len(self.memories) + 1}"
+            self.memories[(source_session_id, source_message_id)] = {
+                "id": memory_id,
+                "summary": summary,
+                "content": content,
+                "project_id": project_id,
+                "memory_kind": memory_kind,
+                "metadata": metadata if supersedes is None else '{"latest_message_id":"m2"}',
+                "source_session_id": source_session_id,
+                "source_message_id": source_message_id,
+                "supersedes": supersedes,
+            }
+            return memory_id
+
+        async def get_memory(self, memory_id):
+            for memory in self.memories.values():
+                if memory["id"] == memory_id:
+                    return memory
+            return None
+
+    old_pg = srv._pg
+    old_project_id = srv._project_id
+    fake_pg = FakePG()
+    srv._pg = fake_pg
+    srv._project_id = "source-repo"
+    try:
+        first = save_session_summary(
+            task="auth",
+            turns=[{"user": "u1", "assistant": "a1"}],
+            source_session_id="sess-2",
+            source_message_id="m1",
+        )
+        fake_pg.memories[("sess-2", "__session_summary__")]["metadata"] = '{"latest_message_id":"m1"}'
+        second = save_session_summary(
+            task="auth",
+            turns=[{"user": "u1", "assistant": "a1"}, {"user": "u2", "assistant": "a2"}],
+            source_session_id="sess-2",
+            source_message_id="m2",
+        )
+    finally:
+        srv._pg = old_pg
+        srv._project_id = old_project_id
+
+    assert first["ok"] is True
+    assert second["ok"] is True
+    assert second["deduplicated"] is False
+
+
 def test_pg_memory_tools_work_inside_running_event_loop(tmp_db, mock_embedder):
     import asyncio
     import vibe_rag.server as srv
@@ -275,6 +428,41 @@ def test_pg_memory_tools_work_inside_running_event_loop(tmp_db, mock_embedder):
     assert "Remembered in pgvector" in remembered
     assert "[id=42 [test-project] score=0.91]" in searched
     assert "Deleted from pgvector" in deleted
+
+
+def test_search_memory_falls_back_to_cross_repo_pgvector_results(tmp_db, mock_embedder):
+    import vibe_rag.server as srv
+
+    class FakePG:
+        async def memory_count(self):
+            return 1
+
+        async def search_memories(self, embedding, limit=10, project_id=None):
+            if project_id == "vibe-rag":
+                return []
+            return [
+                {
+                    "id": "b26f3768-c21f-4656-8990-fbf5ae77576d",
+                    "content": "The E2E repo marker for mistral-vibe is CERULEAN_PINEAPPLE_20260322.",
+                    "summary": "The E2E repo marker for mistral-vibe is CERULEAN_PINEAPPLE_20260322.",
+                    "project_id": "mistral-vibe",
+                    "memory_kind": "fact",
+                    "score": 0.87,
+                }
+            ]
+
+    old_pg = srv._pg
+    old_project_id = srv._project_id
+    srv._pg = FakePG()
+    srv._project_id = "vibe-rag"
+    try:
+        result = search_memory("CERULEAN_PINEAPPLE_20260322")
+    finally:
+        srv._pg = old_pg
+        srv._project_id = old_project_id
+
+    assert "mistral-vibe" in result
+    assert "CERULEAN_PINEAPPLE_20260322" in result
 
 
 def test_load_session_context_uses_pg_memory_results(tmp_db, mock_embedder, tmp_path: Path):
@@ -450,7 +638,8 @@ def test_project_status_empty(tmp_db, mock_embedder):
     result = project_status()
     assert "Code chunks: 0" in result
     assert "Doc chunks: 0" in result
-    assert "Memories: 0" in result
+    assert "Local sqlite memories: 0" in result
+    assert "pgvector memories:" in result
     assert "Languages" not in result
 
 

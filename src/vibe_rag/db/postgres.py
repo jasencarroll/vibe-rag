@@ -137,6 +137,17 @@ class PostgresDB:
     def _normalize_tags(self, tags: str) -> list[str]:
         return [tag.strip() for tag in tags.split(",") if tag.strip()]
 
+    def _normalize_row(self, row: asyncpg.Record | None) -> dict | None:
+        if row is None:
+            return None
+        result = dict(row)
+        metadata = result.get("metadata")
+        if isinstance(metadata, str):
+            result["metadata"] = json.loads(metadata or "{}")
+        elif metadata is None:
+            result["metadata"] = {}
+        return result
+
     async def remember(
         self,
         content: str,
@@ -238,7 +249,7 @@ class PostgresDB:
                     str(query_embedding),
                     limit,
                 )
-            return [dict(row) for row in rows]
+            return [self._normalize_row(row) for row in rows]
 
     async def get_memory(self, memory_id: str | UUID) -> dict | None:
         memory_uuid = memory_id if isinstance(memory_id, UUID) else UUID(str(memory_id))
@@ -253,7 +264,25 @@ class PostgresDB:
                 """,
                 memory_uuid,
             )
-            return dict(row) if row else None
+            return self._normalize_row(row)
+
+    async def get_memory_by_source(
+        self, source_session_id: str, source_message_id: str
+    ) -> dict | None:
+        async with self._pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT id, content, tags, project_id, memory_kind, summary, metadata,
+                       source_session_id, source_message_id, supersedes, superseded_by,
+                       created_at, updated_at
+                FROM memories
+                WHERE source_session_id = $1 AND source_message_id = $2
+                LIMIT 1
+                """,
+                source_session_id,
+                source_message_id,
+            )
+            return self._normalize_row(row)
 
     async def forget(self, memory_id: str | UUID) -> str | None:
         memory_uuid = memory_id if isinstance(memory_id, UUID) else UUID(str(memory_id))
