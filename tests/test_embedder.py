@@ -46,3 +46,18 @@ def test_embed_batches_large_input(embedder, httpx_mock):
     result = embedder.embed_text_sync(texts)
     assert len(result) == 35
     assert len(httpx_mock.get_requests()) == 3
+
+
+def test_embed_truncates_long_input(embedder, httpx_mock):
+    httpx_mock.add_response(
+        url="https://api.mistral.ai/v1/embeddings",
+        json={"data": [{"embedding": [0.1] * 1024}]},
+    )
+    long_text = "x" * 50_000  # way over 16K limit
+    result = embedder.embed_text_sync([long_text])
+    assert len(result) == 1
+    # Verify the request was truncated
+    request = httpx_mock.get_request()
+    import json
+    body = json.loads(request.content)
+    assert len(body["input"][0]) == 16_000
