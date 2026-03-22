@@ -10,40 +10,46 @@ Use the memory MCP tools first when the task is about understanding the project,
 
 Use these tools in this order:
 
-1. `memory_index_project`
+1. `memory_load_session_context`
+   Use first for a new task or a resumed session.
+   Pass the current task in plain English.
+   Use `refresh_index: true` if the repo may be stale.
+
+2. `memory_index_project`
    Re-index after pulling changes, after large edits, or any time the project index may be stale.
    Use `paths: ["."]` for the current project root.
 
-2. `memory_search_code`
+3. `memory_search_code`
    Use for semantic questions like:
    - "where do we handle auth?"
    - "show me the builder install logic"
    - "find the part that writes config"
 
-3. `memory_search_docs`
+4. `memory_search_docs`
    Use for README, plans, specs, and markdown/text docs when the question is conceptual or process-oriented.
 
-4. `memory_search_memory`
+5. `memory_search_memory`
    Use before asking the user to repeat prior decisions, architecture notes, or cross-session context.
 
-5. `read_file`
+6. `read_file`
    After memory search narrows the target, read the specific files you need.
 
-6. `grep`
+7. `grep`
    Use only when you already know the exact string, symbol, filename, or pattern to match.
 
 ## Default workflow
 
 For repo understanding:
 
-1. Run `memory_index_project` if the index is missing or stale.
-2. Run `memory_search_code` or `memory_search_docs`.
-3. Read the most relevant files.
-4. Make changes only after reading the target files.
+1. Run `memory_load_session_context` with the current task.
+2. Re-index if needed with `refresh_index: true` or `memory_index_project`.
+3. Run `memory_search_code` or `memory_search_docs` for deeper follow-up.
+4. Read the most relevant files.
+5. Make changes only after reading the target files.
 
 For remembered context:
 
-1. Run `memory_search_memory` first.
+1. Run `memory_load_session_context` or `memory_search_memory` first.
 2. If a new decision is made, store it with `memory_remember`.
 
 ## When to prefer memory tools over grep
@@ -71,6 +77,13 @@ Store durable information with `memory_remember`:
 - migration notes
 - repo-specific gotchas
 
+Prefer `memory_remember_structured` when the host or workflow wants:
+
+- a short summary plus supporting details
+- a memory kind like `decision`, `constraint`, or `todo`
+- source session metadata
+- later supersession with `memory_supersede_memory`
+
 Do not store:
 
 - secrets
@@ -80,6 +93,7 @@ Do not store:
 ## Prompt patterns that work well
 
 - "index this project"
+- "load session context for continuing the auth refactor"
 - "search the code for authentication handling"
 - "search docs for release steps"
 - "remember that we use pgvector for cross-repo memory"

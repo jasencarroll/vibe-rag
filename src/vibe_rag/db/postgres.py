@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import json
 from uuid import UUID, uuid4
 
 import asyncpg
@@ -57,6 +58,7 @@ class PostgresDB:
                 await self._create_memories_table(conn)
                 return
 
+            await self._ensure_columns(conn, column_types)
             await self._ensure_indexes(conn)
 
     async def _archive_legacy_table(self, conn: asyncpg.Connection) -> None:
@@ -80,12 +82,37 @@ class PostgresDB:
                 embedding vector(1536) NOT NULL,
                 tags TEXT[] DEFAULT '{}',
                 project_id TEXT,
+                memory_kind TEXT DEFAULT 'note',
+                summary TEXT,
+                metadata JSONB DEFAULT '{}'::jsonb,
+                source_session_id TEXT,
+                source_message_id TEXT,
+                supersedes UUID,
+                superseded_by UUID,
                 created_at TIMESTAMPTZ DEFAULT now(),
                 updated_at TIMESTAMPTZ DEFAULT now()
             )
             """
         )
         await self._ensure_indexes(conn)
+
+    async def _ensure_columns(self, conn: asyncpg.Connection, column_types: dict[str, str]) -> None:
+        if "memory_kind" not in column_types:
+            await conn.execute("ALTER TABLE memories ADD COLUMN memory_kind TEXT DEFAULT 'note'")
+        if "summary" not in column_types:
+            await conn.execute("ALTER TABLE memories ADD COLUMN summary TEXT")
+        if "metadata" not in column_types:
+            await conn.execute("ALTER TABLE memories ADD COLUMN metadata JSONB DEFAULT '{}'::jsonb")
+        if "source_session_id" not in column_types:
+            await conn.execute("ALTER TABLE memories ADD COLUMN source_session_id TEXT")
+        if "source_message_id" not in column_types:
+            await conn.execute("ALTER TABLE memories ADD COLUMN source_message_id TEXT")
+        if "supersedes" not in column_types:
+            await conn.execute("ALTER TABLE memories ADD COLUMN supersedes UUID")
+        if "superseded_by" not in column_types:
+            await conn.execute("ALTER TABLE memories ADD COLUMN superseded_by UUID")
+        if "updated_at" not in column_types:
+            await conn.execute("ALTER TABLE memories ADD COLUMN updated_at TIMESTAMPTZ DEFAULT now()")
 
     async def _ensure_indexes(self, conn: asyncpg.Connection) -> None:
         await conn.execute(
@@ -100,6 +127,12 @@ class PostgresDB:
             ON memories USING btree (project_id)
             """
         )
+        await conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_memories_superseded_by
+            ON memories USING btree (superseded_by)
+            """
+        )
 
     def _normalize_tags(self, tags: str) -> list[str]:
         return [tag.strip() for tag in tags.split(",") if tag.strip()]
@@ -111,12 +144,38 @@ class PostgresDB:
         tags: str = "",
         project_id: str | None = None,
     ) -> str:
+        return await self.remember_structured(
+            summary=content[:200],
+            content=content,
+            embedding=embedding,
+            tags=tags,
+            project_id=project_id,
+            memory_kind="note",
+        )
+
+    async def remember_structured(
+        self,
+        summary: str,
+        content: str,
+        embedding: list[float],
+        tags: str = "",
+        project_id: str | None = None,
+        memory_kind: str = "note",
+        metadata: dict | None = None,
+        source_session_id: str | None = None,
+        source_message_id: str | None = None,
+        supersedes: str | UUID | None = None,
+    ) -> str:
         memory_id = uuid4()
+        supersedes_uuid = None if supersedes is None else (supersedes if isinstance(supersedes, UUID) else UUID(str(supersedes)))
         async with self._pool.acquire() as conn:
             row = await conn.fetchrow(
                 """
-                INSERT INTO memories (id, content, embedding, tags, project_id)
-                VALUES ($1, $2, $3::vector, $4::text[], $5)
+                INSERT INTO memories (
+                    id, content, embedding, tags, project_id, memory_kind, summary,
+                    metadata, source_session_id, source_message_id, supersedes, updated_at
+                )
+                VALUES ($1, $2, $3::vector, $4::text[], $5, $6, $7, $8::jsonb, $9, $10, $11, now())
                 RETURNING id
                 """,
                 memory_id,
@@ -124,7 +183,19 @@ class PostgresDB:
                 str(embedding),
                 self._normalize_tags(tags),
                 project_id,
+                memory_kind,
+                summary,
+                json.dumps(metadata or {}),
+                source_session_id,
+                source_message_id,
+                supersedes_uuid,
             )
+            if supersedes_uuid is not None:
+                await conn.execute(
+                    "UPDATE memories SET superseded_by = $2, updated_at = now() WHERE id = $1",
+                    supersedes_uuid,
+                    memory_id,
+                )
             return str(row["id"])
 
     async def search_memories(
@@ -132,15 +203,19 @@ class PostgresDB:
         query_embedding: list[float],
         limit: int = 10,
         project_id: str | None = None,
+        include_superseded: bool = False,
     ) -> list[dict]:
         async with self._pool.acquire() as conn:
+            superseded_filter = "" if include_superseded else "AND superseded_by IS NULL"
             if project_id:
                 rows = await conn.fetch(
-                    """
-                    SELECT id, content, tags, project_id, created_at,
+                    f"""
+                    SELECT id, content, tags, project_id, memory_kind, summary, metadata,
+                           source_session_id, source_message_id, supersedes, superseded_by,
+                           created_at, updated_at,
                            1 - (embedding <=> $1::vector) as score
                     FROM memories
-                    WHERE project_id = $3 OR project_id IS NULL
+                    WHERE (project_id = $3 OR project_id IS NULL) {superseded_filter}
                     ORDER BY embedding <=> $1::vector
                     LIMIT $2
                     """,
@@ -150,10 +225,13 @@ class PostgresDB:
                 )
             else:
                 rows = await conn.fetch(
-                    """
-                    SELECT id, content, tags, project_id, created_at,
+                    f"""
+                    SELECT id, content, tags, project_id, memory_kind, summary, metadata,
+                           source_session_id, source_message_id, supersedes, superseded_by,
+                           created_at, updated_at,
                            1 - (embedding <=> $1::vector) as score
                     FROM memories
+                    WHERE TRUE {superseded_filter}
                     ORDER BY embedding <=> $1::vector
                     LIMIT $2
                     """,
@@ -161,6 +239,21 @@ class PostgresDB:
                     limit,
                 )
             return [dict(row) for row in rows]
+
+    async def get_memory(self, memory_id: str | UUID) -> dict | None:
+        memory_uuid = memory_id if isinstance(memory_id, UUID) else UUID(str(memory_id))
+        async with self._pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT id, content, tags, project_id, memory_kind, summary, metadata,
+                       source_session_id, source_message_id, supersedes, superseded_by,
+                       created_at, updated_at
+                FROM memories
+                WHERE id = $1
+                """,
+                memory_uuid,
+            )
+            return dict(row) if row else None
 
     async def forget(self, memory_id: str | UUID) -> str | None:
         memory_uuid = memory_id if isinstance(memory_id, UUID) else UUID(str(memory_id))
@@ -171,6 +264,8 @@ class PostgresDB:
             )
             return row["content"] if row else None
 
-    async def memory_count(self) -> int:
+    async def memory_count(self, include_superseded: bool = False) -> int:
         async with self._pool.acquire() as conn:
-            return await conn.fetchval("SELECT COUNT(*) FROM memories")
+            if include_superseded:
+                return await conn.fetchval("SELECT COUNT(*) FROM memories")
+            return await conn.fetchval("SELECT COUNT(*) FROM memories WHERE superseded_by IS NULL")

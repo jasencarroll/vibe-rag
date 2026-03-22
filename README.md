@@ -37,6 +37,7 @@ Inside Vibe:
 
 ```
 index this project
+load session context for continuing the auth refactor
 search the code for authentication handling
 search docs for deployment instructions
 remember we decided to use JWT for auth
@@ -46,7 +47,7 @@ The generated scaffold includes:
 
 - an `AGENTS.md` that explains the memory-first workflow
 - a `.vibe/skills/semantic-repo-search` skill that steers Vibe toward `memory_index_project`,
-  `memory_search_code`, `memory_search_docs`, and `memory_search_memory` before exact-match tools
+  `memory_load_session_context`, `memory_search_code`, `memory_search_docs`, and `memory_search_memory` before exact-match tools
 
 ## Features
 
@@ -59,6 +60,7 @@ The generated scaffold includes:
 - Remember decisions, insights, and context across sessions
 - Search your memories semantically
 - Hybrid storage: sqlite for local, pgvector for cross-repo (optional)
+- Structured session bootstrap: `memory_load_session_context` can retrieve prior memories, code, and docs in one call
 
 ### Language support
 - Python, JavaScript, TypeScript, Rust, Go, Java, C++, C, Ruby, PHP
@@ -156,6 +158,15 @@ uv build
 ## Changelog
 
 See [CHANGELOG.md](CHANGELOG.md) for detailed release notes.
+
+## User Guide
+
+See [docs/user-guide.md](docs/user-guide.md) for the day-to-day workflow:
+
+- how to talk to Vibe across sessions
+- when to use `remember` vs `index this project`
+- where to put `MISTRAL_API_KEY` and `DATABASE_URL`
+- how pgvector cross-session memory works
 
 ## License
 

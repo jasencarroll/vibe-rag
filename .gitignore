@@ -28,7 +28,7 @@ htmlcov/
 .ruff_cache/
 
 # vibe-rag
-.vibe/index.db
+.vibe/
 
 # Internal docs (specs, plans, design docs)
 docs/superpowers/

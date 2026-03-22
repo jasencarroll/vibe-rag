@@ -79,6 +79,7 @@ def test_cli_init_writes_memory_first_agents_guide():
         assert result.exit_code == 0
 
         agents_text = Path("demo/AGENTS.md").read_text()
+        assert "memory_load_session_context" in agents_text
         assert "memory_index_project" in agents_text
         assert "memory_search_code" in agents_text
         assert "memory_search_memory" in agents_text
@@ -94,5 +95,6 @@ def test_cli_init_installs_semantic_repo_search_skill():
 
         skill_text = Path("demo/.vibe/skills/semantic-repo-search/SKILL.md").read_text()
         assert "name: semantic-repo-search" in skill_text
+        assert "memory_load_session_context" in skill_text
         assert "memory_search_code" in skill_text
         assert "Prefer memory tools over `grep`" in skill_text

@@ -3,11 +3,14 @@ from pathlib import Path
 from vibe_rag.tools import (
     forget,
     index_project,
+    load_session_context,
     project_status,
     remember,
+    remember_structured,
     search_code,
     search_docs,
     search_memory,
+    supersede_memory,
 )
 
 
@@ -126,6 +129,28 @@ def test_search_docs_after_index(tmp_db, mock_embedder, tmp_path: Path):
     assert "guide.md" in result
 
 
+def test_load_session_context_bundles_memory_code_and_docs(tmp_db, mock_embedder, tmp_path: Path):
+    import os
+
+    (tmp_path / "billing.py").write_text("def create_invoice(customer_id):\n    return customer_id\n")
+    (tmp_path / "billing.md").write_text("## Billing\n\nInvoices are created in the billing flow.\n")
+
+    old_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        index_project()
+        remember("billing uses invoices and customer ids")
+        result = load_session_context("continue the billing flow", memory_limit=3, code_limit=3, docs_limit=2)
+    finally:
+        os.chdir(old_cwd)
+
+    assert result["ok"] is True
+    assert result["memories"][0]["content"] == "billing uses invoices and customer ids"
+    assert result["code"][0]["file_path"] == "billing.py"
+    assert result["code"][0]["start_line"] == 1
+    assert result["docs"][0]["file_path"] == "billing.md"
+
+
 # --- Edge case tests ---
 
 
@@ -191,6 +216,22 @@ def test_remember_with_tags(tmp_db, mock_embedder):
     assert "JWT" in result
 
 
+def test_remember_structured_returns_memory_payload(tmp_db, mock_embedder):
+    result = remember_structured(
+        summary="auth decisions live in the gateway",
+        details="The API gateway validates JWT tokens before forwarding requests.",
+        memory_kind="decision",
+        tags="auth,architecture",
+        metadata={"confidence": "high"},
+        source_session_id="sess-1",
+    )
+
+    assert result["ok"] is True
+    assert result["memory"]["summary"] == "auth decisions live in the gateway"
+    assert result["memory"]["memory_kind"] == "decision"
+    assert result["memory"]["metadata"]["confidence"] == "high"
+
+
 def test_pg_memory_tools_work_inside_running_event_loop(tmp_db, mock_embedder):
     import asyncio
     import vibe_rag.server as srv
@@ -236,6 +277,60 @@ def test_pg_memory_tools_work_inside_running_event_loop(tmp_db, mock_embedder):
     assert "Deleted from pgvector" in deleted
 
 
+def test_load_session_context_uses_pg_memory_results(tmp_db, mock_embedder, tmp_path: Path):
+    import os
+    import vibe_rag.server as srv
+
+    class FakePG:
+        async def memory_count(self):
+            return 1
+
+        async def search_memories(self, embedding, limit=10, project_id=None):
+            return [
+                {
+                    "id": "abc-123",
+                    "content": "gateway owns auth validation",
+                    "summary": "gateway owns auth validation",
+                    "project_id": project_id,
+                    "memory_kind": "decision",
+                    "metadata": {"source": "session"},
+                    "score": 0.88,
+                }
+            ]
+
+    (tmp_path / "auth.py").write_text("def validate_token(token):\n    return token\n")
+
+    old_cwd = os.getcwd()
+    old_pg = srv._pg
+    old_project_id = srv._project_id
+    os.chdir(tmp_path)
+    srv._pg = FakePG()
+    srv._project_id = "test-project"
+    try:
+        index_project()
+        result = load_session_context("continue auth validation", memory_limit=3, code_limit=2, docs_limit=1)
+    finally:
+        os.chdir(old_cwd)
+        srv._pg = old_pg
+        srv._project_id = old_project_id
+
+    assert result["memories"][0]["summary"] == "gateway owns auth validation"
+    assert result["memories"][0]["metadata"]["source"] == "session"
+    assert result["code"][0]["file_path"] == "auth.py"
+
+
+def test_supersede_memory_marks_replacement(tmp_db, mock_embedder):
+    first = remember_structured(summary="use sqlite for local search", memory_kind="decision")
+    replacement = supersede_memory(
+        old_memory_id=first["memory"]["id"],
+        summary="use sqlite for local search and pgvector for shared memory",
+        memory_kind="decision",
+    )
+
+    assert replacement["ok"] is True
+    assert replacement["memory"]["supersedes"] == first["memory"]["id"]
+
+
 def test_remember_empty_content(tmp_db, mock_embedder):
     result = remember("")
     assert "Error" in result
@@ -245,6 +340,23 @@ def test_remember_empty_content(tmp_db, mock_embedder):
 def test_search_memory_empty_db(tmp_db, mock_embedder):
     result = search_memory("anything")
     assert "No memories" in result
+
+
+def test_load_session_context_reports_empty_memory(tmp_db, mock_embedder, tmp_path: Path):
+    import os
+
+    (tmp_path / "notes.md").write_text("## Auth\n\nGateway validates tokens.\n")
+
+    old_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        index_project()
+        result = load_session_context("continue auth work", docs_limit=2)
+    finally:
+        os.chdir(old_cwd)
+
+    assert result["memory_status"] == "No memories stored yet."
+    assert result["docs"][0]["file_path"] == "notes.md"
 
 
 # --- Input validation tests ---

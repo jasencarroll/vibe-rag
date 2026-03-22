@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 
@@ -25,7 +26,8 @@ class SqliteVecDB:
 
     def initialize(self) -> None:
         conn = self._get_conn()
-        conn.executescript("""
+        conn.executescript(
+            """
             CREATE TABLE IF NOT EXISTS code_chunks (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 file_path TEXT NOT NULL,
@@ -48,7 +50,15 @@ class SqliteVecDB:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 content TEXT NOT NULL,
                 tags TEXT,
-                created_at TEXT DEFAULT (datetime('now'))
+                memory_kind TEXT DEFAULT 'note',
+                summary TEXT,
+                metadata_json TEXT DEFAULT '{}',
+                source_session_id TEXT,
+                source_message_id TEXT,
+                supersedes TEXT,
+                superseded_by TEXT,
+                created_at TEXT DEFAULT (datetime('now')),
+                updated_at TEXT DEFAULT (datetime('now'))
             );
 
             CREATE VIRTUAL TABLE IF NOT EXISTS memories_vec USING vec0(
@@ -75,8 +85,27 @@ class SqliteVecDB:
                 content_hash TEXT NOT NULL,
                 kind TEXT NOT NULL
             );
-        """)
+            """
+        )
+        self._ensure_memory_columns(conn)
         conn.commit()
+
+    def _ensure_memory_columns(self, conn: sqlite3.Connection) -> None:
+        rows = conn.execute("PRAGMA table_info(memories)").fetchall()
+        columns = {row["name"] for row in rows}
+        additions = {
+            "memory_kind": "ALTER TABLE memories ADD COLUMN memory_kind TEXT DEFAULT 'note'",
+            "summary": "ALTER TABLE memories ADD COLUMN summary TEXT",
+            "metadata_json": "ALTER TABLE memories ADD COLUMN metadata_json TEXT DEFAULT '{}'",
+            "source_session_id": "ALTER TABLE memories ADD COLUMN source_session_id TEXT",
+            "source_message_id": "ALTER TABLE memories ADD COLUMN source_message_id TEXT",
+            "supersedes": "ALTER TABLE memories ADD COLUMN supersedes TEXT",
+            "superseded_by": "ALTER TABLE memories ADD COLUMN superseded_by TEXT",
+            "updated_at": "ALTER TABLE memories ADD COLUMN updated_at TEXT DEFAULT (datetime('now'))",
+        }
+        for name, statement in additions.items():
+            if name not in columns:
+                conn.execute(statement)
 
     # --- Code chunks ---
 
@@ -87,8 +116,15 @@ class SqliteVecDB:
                 """INSERT OR REPLACE INTO code_chunks
                    (file_path, chunk_index, content, language, symbol, start_line, end_line)
                    VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (chunk["file_path"], chunk["chunk_index"], chunk["content"],
-                 chunk["language"], chunk["symbol"], chunk["start_line"], chunk["end_line"]),
+                (
+                    chunk["file_path"],
+                    chunk["chunk_index"],
+                    chunk["content"],
+                    chunk["language"],
+                    chunk["symbol"],
+                    chunk["start_line"],
+                    chunk["end_line"],
+                ),
             )
             row_id = cursor.lastrowid
             conn.execute(
@@ -138,31 +174,88 @@ class SqliteVecDB:
     # --- Memories ---
 
     def remember(self, content: str, embedding: list[float], tags: str = "") -> int:
+        return self.remember_structured(
+            summary=content[:200],
+            content=content,
+            embedding=embedding,
+            tags=tags,
+            memory_kind="note",
+        )
+
+    def remember_structured(
+        self,
+        summary: str,
+        content: str,
+        embedding: list[float],
+        tags: str = "",
+        memory_kind: str = "note",
+        metadata: dict | None = None,
+        source_session_id: str | None = None,
+        source_message_id: str | None = None,
+        supersedes: str | None = None,
+    ) -> int:
         conn = self._get_conn()
         cursor = conn.execute(
-            "INSERT INTO memories (content, tags) VALUES (?, ?)",
-            (content, tags),
+            """
+            INSERT INTO memories (
+                content, tags, memory_kind, summary, metadata_json,
+                source_session_id, source_message_id, supersedes, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+            """,
+            (
+                content,
+                tags,
+                memory_kind,
+                summary,
+                json.dumps(metadata or {}),
+                source_session_id,
+                source_message_id,
+                supersedes,
+            ),
         )
         row_id = cursor.lastrowid
         conn.execute(
             "INSERT INTO memories_vec (id, embedding) VALUES (?, ?)",
             (row_id, sqlite_vec.serialize_float32(embedding)),
         )
+        if supersedes is not None:
+            conn.execute(
+                "UPDATE memories SET superseded_by = ?, updated_at = datetime('now') WHERE id = ?",
+                (str(row_id), supersedes),
+            )
         conn.commit()
         return row_id
 
-    def search_memories(self, query_embedding: list[float], limit: int = 10) -> list[dict]:
+    def search_memories(self, query_embedding: list[float], limit: int = 10, include_superseded: bool = False) -> list[dict]:
         conn = self._get_conn()
         serialized = sqlite_vec.serialize_float32(query_embedding)
+        superseded_filter = "" if include_superseded else "AND m.superseded_by IS NULL"
         rows = conn.execute(
-            """SELECT m.id, m.content, m.tags, m.created_at, v.distance
-               FROM memories_vec v
-               JOIN memories m ON m.id = v.id
-               WHERE v.embedding MATCH ? AND k = ?
-               ORDER BY v.distance""",
+            f"""SELECT m.id, m.content, m.tags, m.memory_kind, m.summary, m.metadata_json,
+                       m.source_session_id, m.source_message_id, m.supersedes, m.superseded_by,
+                       m.created_at, m.updated_at, v.distance
+                FROM memories_vec v
+                JOIN memories m ON m.id = v.id
+                WHERE v.embedding MATCH ? AND k = ? {superseded_filter}
+                ORDER BY v.distance""",
             (serialized, limit),
         ).fetchall()
-        return [dict(row) for row in rows]
+        results = []
+        for row in rows:
+            result = dict(row)
+            result["metadata"] = json.loads(result.pop("metadata_json") or "{}")
+            results.append(result)
+        return results
+
+    def get_memory(self, memory_id: int) -> dict | None:
+        conn = self._get_conn()
+        row = conn.execute("SELECT * FROM memories WHERE id = ?", (memory_id,)).fetchone()
+        if not row:
+            return None
+        result = dict(row)
+        result["metadata"] = json.loads(result.pop("metadata_json") or "{}")
+        return result
 
     def forget(self, memory_id: int) -> str | None:
         conn = self._get_conn()
@@ -175,9 +268,11 @@ class SqliteVecDB:
         conn.commit()
         return content
 
-    def memory_count(self) -> int:
+    def memory_count(self, include_superseded: bool = False) -> int:
         conn = self._get_conn()
-        return conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0]
+        if include_superseded:
+            return conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0]
+        return conn.execute("SELECT COUNT(*) FROM memories WHERE superseded_by IS NULL").fetchone()[0]
 
     # --- Docs ---
 

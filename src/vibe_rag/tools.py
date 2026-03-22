@@ -19,6 +19,7 @@ from vibe_rag.server import (
 MAX_QUERY_LENGTH = 10_000
 MAX_MEMORY_LENGTH = 10_000
 MAX_TAGS_LENGTH = 512
+ALLOWED_MEMORY_KINDS = {"note", "decision", "constraint", "todo", "summary", "fact"}
 
 
 def _normalize_paths(paths: list[str] | str | None) -> tuple[list[Path], Path] | str:
@@ -74,6 +75,13 @@ def _validate_tags(tags: str) -> str | None:
     return None
 
 
+def _validate_memory_kind(memory_kind: str) -> str | None:
+    if memory_kind not in ALLOWED_MEMORY_KINDS:
+        allowed = ", ".join(sorted(ALLOWED_MEMORY_KINDS))
+        return f"Error: memory_kind must be one of {allowed}."
+    return None
+
+
 def _score(result: dict) -> float:
     if result.get("score") is not None:
         return float(result["score"])
@@ -81,6 +89,117 @@ def _score(result: dict) -> float:
     if distance is None:
         return 1.0
     return 1.0 - float(distance)
+
+
+def _memory_payload(result: dict) -> dict:
+    payload = {
+        "id": str(result["id"]),
+        "summary": result.get("summary") or result.get("content", "")[:200],
+        "content": result.get("content", ""),
+        "score": round(_score(result), 4),
+        "project_id": result.get("project_id"),
+        "memory_kind": result.get("memory_kind", "note"),
+        "tags": result.get("tags") or [],
+        "created_at": str(result.get("created_at")) if result.get("created_at") is not None else None,
+        "updated_at": str(result.get("updated_at")) if result.get("updated_at") is not None else None,
+        "source_session_id": result.get("source_session_id"),
+        "source_message_id": result.get("source_message_id"),
+        "supersedes": str(result["supersedes"]) if result.get("supersedes") is not None else None,
+        "superseded_by": str(result["superseded_by"]) if result.get("superseded_by") is not None else None,
+        "metadata": result.get("metadata") or {},
+    }
+    if isinstance(payload["tags"], str):
+        payload["tags"] = [tag.strip() for tag in payload["tags"].split(",") if tag.strip()]
+    return payload
+
+
+def _search_code_results(
+    query: str,
+    limit: int = 10,
+    language: str | None = None,
+    min_score: float = 0.0,
+) -> tuple[str | None, list[dict]]:
+    error = _validate_query(query)
+    if error:
+        return error, []
+
+    if language and language not in set(EXT_TO_LANG.values()):
+        return f"Error: Unknown language '{language}'.", []
+
+    db = _get_db()
+    if db.code_chunk_count() == 0:
+        return "No code index. Run index_project first.", []
+
+    try:
+        embeddings = _get_embedder().embed_code_sync([query])
+    except Exception as e:
+        return f"Embedding failed: {e}", []
+
+    results = db.search_code(embeddings[0], limit=limit, language=language)
+    filtered = [result for result in results if _score(result) >= min_score]
+    if not filtered:
+        return "No matching code found.", []
+    return None, filtered
+
+
+def _search_docs_results(query: str, limit: int = 10) -> tuple[str | None, list[dict]]:
+    error = _validate_query(query)
+    if error:
+        return error, []
+
+    db = _get_db()
+    if db.doc_count() == 0:
+        return "No docs indexed. Run index_project first.", []
+
+    try:
+        embeddings = _get_embedder().embed_text_sync([query])
+    except Exception as e:
+        return f"Embedding failed: {e}", []
+
+    results = db.search_docs(embeddings[0], limit=limit)
+    if not results:
+        return "No matching docs found.", []
+    return None, results
+
+
+def _search_memory_results(query: str, limit: int = 10) -> tuple[str | None, list[dict]]:
+    error = _validate_query(query)
+    if error:
+        return error, []
+
+    pg = _get_pg()
+    if pg:
+        try:
+            count = _run_async(pg.memory_count())
+        except Exception as e:
+            return f"Error checking pgvector memories: {e}", []
+        if count == 0:
+            return "No memories stored yet.", []
+        try:
+            embeddings = _get_embedder().embed_text_sync([query])
+        except Exception as e:
+            return f"Embedding failed: {e}", []
+        try:
+            results = _run_async(
+                pg.search_memories(embeddings[0], limit=limit, project_id=_ensure_project_id())
+            )
+        except Exception as e:
+            return f"Error searching pgvector memories: {e}", []
+        if not results:
+            return "No matching memories found.", []
+        return None, results
+
+    db = _get_db()
+    if db.memory_count() == 0:
+        return "No memories stored yet.", []
+    try:
+        embeddings = _get_embedder().embed_text_sync([query])
+    except Exception as e:
+        return f"Embedding failed: {e}", []
+    results = db.search_memories(embeddings[0], limit=limit)
+    if not results:
+        return "No matching memories found.", []
+    return None, results
 
 
 @mcp.tool()
@@ -105,6 +224,12 @@ def index_project(paths: list[str] | str | None = None) -> str:
     db = _get_db()
     code_hashes = db.get_file_hashes("code")
     doc_hashes = db.get_file_hashes("doc")
+    if code_hashes and db.code_chunk_count() == 0:
+        db.delete_file_hashes(list(code_hashes), kind="code")
+        code_hashes = {}
+    if doc_hashes and db.doc_count() == 0:
+        db.delete_file_hashes(list(doc_hashes), kind="doc")
+        doc_hashes = {}
     current_code_paths = {_relative_to_project(path, project_root) for path in code_files}
     current_doc_paths = {_relative_to_project(path, project_root) for path in doc_files}
 
@@ -180,26 +305,9 @@ def search_code(
     min_score: float = 0.0,
 ) -> str:
     """Semantic code search. Prefer this over grep when you know behavior but not exact symbols or filenames."""
-    error = _validate_query(query)
+    error, filtered = _search_code_results(query, limit=limit, language=language, min_score=min_score)
     if error:
         return error
-
-    if language and language not in set(EXT_TO_LANG.values()):
-        return f"Error: Unknown language '{language}'."
-
-    db = _get_db()
-    if db.code_chunk_count() == 0:
-        return "No code index. Run index_project first."
-
-    try:
-        embeddings = _get_embedder().embed_code_sync([query])
-    except Exception as e:
-        return f"Embedding failed: {e}"
-
-    results = db.search_code(embeddings[0], limit=limit, language=language)
-    filtered = [result for result in results if _score(result) >= min_score]
-    if not filtered:
-        return "No matching code found."
 
     output = []
     for result in filtered:
@@ -213,22 +321,9 @@ def search_code(
 @mcp.tool()
 def search_docs(query: str, limit: int = 10) -> str:
     """Semantic docs search for README, plans, specs, and other text files."""
-    error = _validate_query(query)
+    error, results = _search_docs_results(query, limit=limit)
     if error:
         return error
-
-    db = _get_db()
-    if db.doc_count() == 0:
-        return "No docs indexed. Run index_project first."
-
-    try:
-        embeddings = _get_embedder().embed_text_sync([query])
-    except Exception as e:
-        return f"Embedding failed: {e}"
-
-    results = db.search_docs(embeddings[0], limit=limit)
-    if not results:
-        return "No matching docs found."
 
     output = []
     for result in results:
@@ -268,50 +363,276 @@ def remember(content: str, tags: str = "") -> str:
 @mcp.tool()
 def search_memory(query: str, limit: int = 10) -> str:
     """Semantic memory search across remembered project decisions and notes."""
-    error = _validate_query(query)
+    error, results = _search_memory_results(query, limit=limit)
     if error:
         return error
+
+    output = []
+    for result in results:
+        project = f" [{result['project_id']}]" if result.get("project_id") else ""
+        summary = result.get("summary") or result.get("content", "")
+        kind = result.get("memory_kind")
+        kind_prefix = f"{kind} " if kind else ""
+        output.append(f"[id={result['id']}{project} score={_score(result):.2f}] {kind_prefix}{summary}")
+    return "\n\n".join(output)
+
+
+@mcp.tool()
+def load_session_context(
+    task: str,
+    refresh_index: bool = False,
+    memory_limit: int = 5,
+    code_limit: int = 5,
+    docs_limit: int = 3,
+) -> dict:
+    """Bootstrap likely context for a new task by retrieving related memories, code, and docs in one call."""
+    error = _validate_query(task)
+    if error:
+        return {"ok": False, "error": error, "task": task}
+
+    payload: dict = {
+        "ok": True,
+        "task": task,
+        "project_id": _ensure_project_id(),
+        "index": None,
+        "memories": [],
+        "code": [],
+        "docs": [],
+    }
+
+    if refresh_index:
+        payload["index"] = index_project(paths=".")
+
+    memory_error, memory_results = _search_memory_results(task, limit=memory_limit)
+    if memory_error:
+        payload["memory_status"] = memory_error
+    else:
+        payload["memories"] = [_memory_payload(result) for result in memory_results]
+
+    code_error, code_results = _search_code_results(task, limit=code_limit)
+    if code_error:
+        payload["code_status"] = code_error
+    else:
+        for result in code_results:
+            payload["code"].append(
+                {
+                    "file_path": result["file_path"],
+                    "start_line": result["start_line"],
+                    "end_line": result["end_line"],
+                    "symbol": result.get("symbol"),
+                    "language": result.get("language"),
+                    "score": round(_score(result), 4),
+                    "content": result["content"],
+                }
+            )
+
+    docs_error, docs_results = _search_docs_results(task, limit=docs_limit)
+    if docs_error:
+        payload["docs_status"] = docs_error
+    else:
+        for result in docs_results:
+            payload["docs"].append(
+                {
+                    "file_path": result["file_path"],
+                    "chunk_index": result["chunk_index"],
+                    "score": round(_score(result), 4),
+                    "content": result["content"],
+                    "preview": result["content"].replace("\n", " ")[:160],
+                }
+            )
+
+    return payload
+
+
+@mcp.tool()
+def remember_structured(
+    summary: str,
+    details: str = "",
+    memory_kind: str = "decision",
+    tags: str = "",
+    source_session_id: str = "",
+    source_message_id: str = "",
+    metadata: dict | None = None,
+) -> dict:
+    """Store a structured durable memory for later automatic retrieval."""
+    error = _validate_memory_content(summary)
+    if error:
+        return {"ok": False, "error": error}
+    details_error = _validate_memory_content(details) if details else None
+    if details_error:
+        return {"ok": False, "error": details_error}
+    tags_error = _validate_tags(tags)
+    if tags_error:
+        return {"ok": False, "error": tags_error}
+    kind_error = _validate_memory_kind(memory_kind)
+    if kind_error:
+        return {"ok": False, "error": kind_error}
+
+    content = summary if not details else f"{summary}\n\n{details}"
+    try:
+        embeddings = _get_embedder().embed_text_sync([content])
+    except Exception as e:
+        return {"ok": False, "error": f"Embedding failed: {e}"}
 
     pg = _get_pg()
     if pg:
         try:
-            count = _run_async(pg.memory_count())
-        except Exception as e:
-            return f"Error checking pgvector memories: {e}"
-        if count == 0:
-            return "No memories stored yet."
-        try:
-            embeddings = _get_embedder().embed_text_sync([query])
-        except Exception as e:
-            return f"Embedding failed: {e}"
-        try:
-            results = _run_async(
-                pg.search_memories(embeddings[0], limit=limit, project_id=_ensure_project_id())
+            memory_id = _run_async(
+                pg.remember_structured(
+                    summary=summary,
+                    content=content,
+                    embedding=embeddings[0],
+                    tags=tags,
+                    project_id=_ensure_project_id(),
+                    memory_kind=memory_kind,
+                    metadata=metadata,
+                    source_session_id=source_session_id or None,
+                    source_message_id=source_message_id or None,
+                )
             )
         except Exception as e:
-            return f"Error searching pgvector memories: {e}"
-        if not results:
-            return "No matching memories found."
-        output = []
-        for result in results:
-            project = f" [{result['project_id']}]" if result.get("project_id") else " [global]"
-            output.append(f"[id={result['id']}{project} score={_score(result):.2f}] {result['content']}")
-        return "\n\n".join(output)
+            return {"ok": False, "error": f"Error storing in pgvector: {e}"}
+        return {
+            "ok": True,
+            "backend": "pgvector",
+            "memory": {
+                "id": str(memory_id),
+                "summary": summary,
+                "content": content,
+                "project_id": _ensure_project_id(),
+                "memory_kind": memory_kind,
+                "tags": [tag.strip() for tag in tags.split(",") if tag.strip()],
+                "metadata": metadata or {},
+                "source_session_id": source_session_id or None,
+                "source_message_id": source_message_id or None,
+            },
+        }
 
     db = _get_db()
-    if db.memory_count() == 0:
-        return "No memories stored yet."
+    memory_id = db.remember_structured(
+        summary=summary,
+        content=content,
+        embedding=embeddings[0],
+        tags=tags,
+        memory_kind=memory_kind,
+        metadata=metadata,
+        source_session_id=source_session_id or None,
+        source_message_id=source_message_id or None,
+    )
+    return {
+        "ok": True,
+        "backend": "sqlite",
+        "memory": {
+            "id": str(memory_id),
+            "summary": summary,
+            "content": content,
+            "project_id": _ensure_project_id(),
+            "memory_kind": memory_kind,
+            "tags": [tag.strip() for tag in tags.split(",") if tag.strip()],
+            "metadata": metadata or {},
+            "source_session_id": source_session_id or None,
+            "source_message_id": source_message_id or None,
+        },
+    }
+
+
+@mcp.tool()
+def supersede_memory(
+    old_memory_id: str,
+    summary: str,
+    details: str = "",
+    memory_kind: str = "decision",
+    tags: str = "",
+    source_session_id: str = "",
+    source_message_id: str = "",
+    metadata: dict | None = None,
+) -> dict:
+    """Create a new structured memory that supersedes an older one."""
+    if not old_memory_id:
+        return {"ok": False, "error": "Error: old_memory_id is required."}
+    error = _validate_memory_content(summary)
+    if error:
+        return {"ok": False, "error": error}
+    details_error = _validate_memory_content(details) if details else None
+    if details_error:
+        return {"ok": False, "error": details_error}
+    tags_error = _validate_tags(tags)
+    if tags_error:
+        return {"ok": False, "error": tags_error}
+    kind_error = _validate_memory_kind(memory_kind)
+    if kind_error:
+        return {"ok": False, "error": kind_error}
+
+    content = summary if not details else f"{summary}\n\n{details}"
     try:
-        embeddings = _get_embedder().embed_text_sync([query])
+        embedding = _get_embedder().embed_text_sync([content])[0]
     except Exception as e:
-        return f"Embedding failed: {e}"
-    results = db.search_memories(embeddings[0], limit=limit)
-    if not results:
-        return "No matching memories found."
-    output = []
-    for result in results:
-        output.append(f"[id={result['id']} score={_score(result):.2f}] {result['content']}")
-    return "\n\n".join(output)
+        return {"ok": False, "error": f"Embedding failed: {e}"}
+
+    pg = _get_pg()
+    if pg:
+        try:
+            new_memory_id = _run_async(
+                pg.remember_structured(
+                    summary=summary,
+                    content=content,
+                    embedding=embedding,
+                    tags=tags,
+                    project_id=_ensure_project_id(),
+                    memory_kind=memory_kind,
+                    metadata=metadata,
+                    source_session_id=source_session_id or None,
+                    source_message_id=source_message_id or None,
+                    supersedes=old_memory_id,
+                )
+            )
+        except Exception as e:
+            return {"ok": False, "error": f"Error superseding in pgvector: {e}"}
+        return {
+            "ok": True,
+            "backend": "pgvector",
+            "memory": {
+                "id": str(new_memory_id),
+                "summary": summary,
+                "content": content,
+                "project_id": _ensure_project_id(),
+                "memory_kind": memory_kind,
+                "tags": [tag.strip() for tag in tags.split(",") if tag.strip()],
+                "metadata": metadata or {},
+                "source_session_id": source_session_id or None,
+                "source_message_id": source_message_id or None,
+                "supersedes": old_memory_id,
+            },
+        }
+
+    db = _get_db()
+    new_memory_id = db.remember_structured(
+        summary=summary,
+        content=content,
+        embedding=embedding,
+        tags=tags,
+        memory_kind=memory_kind,
+        metadata=metadata,
+        source_session_id=source_session_id or None,
+        source_message_id=source_message_id or None,
+        supersedes=old_memory_id,
+    )
+    return {
+        "ok": True,
+        "backend": "sqlite",
+        "memory": {
+            "id": str(new_memory_id),
+            "summary": summary,
+            "content": content,
+            "project_id": _ensure_project_id(),
+            "memory_kind": memory_kind,
+            "tags": [tag.strip() for tag in tags.split(",") if tag.strip()],
+            "metadata": metadata or {},
+            "source_session_id": source_session_id or None,
+            "source_message_id": source_message_id or None,
+            "supersedes": old_memory_id,
+        },
+    }
 
 
 @mcp.tool()
