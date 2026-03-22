@@ -1,6 +1,6 @@
 # vibe-rag User Guide
 
-This is the day-to-day workflow guide after setup is done.
+Day-to-day workflow after setup.
 
 If you have not installed Vibe, `vibe-rag`, PostgreSQL, and the MCP config yet, start here first:
 
@@ -15,13 +15,13 @@ Use `vibe-rag` as two systems:
 | Project index | semantic code and docs retrieval in the current repo | `.vibe/index.db` |
 | Durable memory | cross-session decisions, conventions, constraints, TODO context | PostgreSQL via `pgvector` |
 
-In practice:
+Use it like this:
 
 - `index this project` teaches Vibe the current repo
 - `remember ...` stores something worth keeping
 - `load session context for ...` gives Vibe one retrieval step that bundles likely memory, code, and docs context
 
-Important distinction:
+Do not mix these up:
 
 - `index this project` helps Vibe understand the current repo now
 - `remember ...` helps Vibe remember something later
@@ -38,7 +38,7 @@ search the code for authentication handling
 search docs for deployment instructions
 ```
 
-If the repo is large or changed recently, `index this project` is not optional.
+If the repo is large or changed recently, run `index this project`.
 
 If you skip indexing, Vibe may still have durable memory, but code/docs retrieval quality will be worse.
 
@@ -60,7 +60,7 @@ Do not remember:
 - transient debugging notes
 - things already obvious from a single file
 
-Rule of thumb:
+Rule:
 
 If you would want the same fact available next week without rereading the whole repo, store it.
 
@@ -111,7 +111,7 @@ Use structured memory for things like:
 - `summary`
 - `fact`
 
-Use supersession when an old decision is no longer valid. That is better than keeping contradictory notes alive forever.
+Use supersession when an old decision is no longer valid.
 
 ## How to Think About Search
 
@@ -134,7 +134,7 @@ Use `search_memory` when:
 
 Use `grep` only when you already know the literal string or identifier.
 
-If Vibe keeps defaulting to `grep`, nudge it with a more semantic prompt:
+If Vibe keeps defaulting to `grep`, use a more semantic prompt:
 
 ```text
 search the code for where auth tokens are validated
@@ -188,7 +188,7 @@ If durable memory is backed by pgvector, ids are UUID-like. If you only have loc
 
 ## Default Workflow
 
-A solid default loop is:
+Default loop:
 
 1. `load session context for ...`
 2. `index this project`

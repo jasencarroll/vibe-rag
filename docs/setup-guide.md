@@ -1,6 +1,6 @@
 # vibe-rag Setup Guide
 
-This guide is for a developer who wants the whole experience working on the first pass:
+Target state:
 
 - packaged `vibe`
 - packaged `vibe-rag`
@@ -10,7 +10,7 @@ This guide is for a developer who wants the whole experience working on the firs
 
 ## Known-Good Outcome
 
-At the end of this guide, all of these should be true:
+At the end:
 
 - `vibe --version` works from the forked install
 - `vibe-rag --version` works from the packaged install
@@ -22,21 +22,21 @@ At the end of this guide, all of these should be true:
 
 ## Fast Path
 
-If you already have all of these working:
+If you already have:
 
 - local PostgreSQL is running
 - `psql` works
 - `CREATE EXTENSION vector;` works in your target database
 
-skip directly to:
+skip to:
 
 - [4. Choose a DATABASE_URL](#4-choose-a-database_url)
 
-If any of those are not true, keep going from section 1.
+Otherwise start at section 1.
 
 ## 1. Install the Tools
 
-Install the Vibe fork that includes the background MCP hook:
+Install the Vibe fork with the background MCP hook:
 
 ```bash
 uv tool uninstall mistral-vibe || true
@@ -61,30 +61,30 @@ uv tool install --python 3.12 vibe-rag
 
 You need a local PostgreSQL server with the `vector` extension available.
 
-This guide assumes:
+Assumptions:
 
 - PostgreSQL is already running locally
 - you can connect with `psql`
 - `pgvector` is installed into that Postgres instance
 
-If you prefer a simple local setup, use Postgres.app or any local PostgreSQL distribution that includes `pgvector` or lets you install it.
+Use Postgres.app or another local PostgreSQL distribution that supports `pgvector`.
 
-Quick sanity checks before continuing:
+Checks:
 
 ```bash
 psql --version
 pg_isready
 ```
 
-If `psql` is missing, stop here and install PostgreSQL client tools first.
+If `psql` is missing, install PostgreSQL client tools first.
 
 ## 2A. Known-Good Local PostgreSQL Setups
 
-Pick one path and finish it before continuing.
+Pick one path.
 
 ### Option A: Postgres.app on macOS
 
-This is the easiest path if you want the least friction.
+Simplest path.
 
 1. Install and launch Postgres.app.
 2. Make sure its binaries are on your `PATH`:
@@ -101,11 +101,11 @@ psql --version
 pg_isready
 ```
 
-4. If Postgres.app already includes `pgvector` in your install, great. If not, stop here and install a PostgreSQL distribution that does.
+4. If Postgres.app does not include `pgvector`, stop and use a PostgreSQL distribution that does.
 
 ### Option B: Homebrew PostgreSQL
 
-Use this if you prefer managing PostgreSQL with Homebrew.
+Use this if you manage local services with Homebrew.
 
 Install PostgreSQL:
 
@@ -128,14 +128,14 @@ psql --version
 pg_isready
 ```
 
-Important:
+Notes:
 
 - PostgreSQL alone is not enough.
 - You still need the `vector` extension available inside that server.
 
-If `CREATE EXTENSION vector` fails later, your PostgreSQL install does not have `pgvector` available yet.
+If `CREATE EXTENSION vector` fails later, your PostgreSQL install does not have `pgvector`.
 
-### Quick Decision Rule
+### Decision Rule
 
 - If you want the simplest GUI-first local DB setup, use Postgres.app.
 - If you already use Homebrew for local infra, use Homebrew PostgreSQL.
@@ -155,7 +155,7 @@ Create a role if you do not already have one:
 CREATE ROLE jasen LOGIN SUPERUSER;
 ```
 
-If you already have a local role you use for development, reuse that instead of creating `jasen`.
+If you already have a local development role, reuse it.
 
 Create the database:
 
@@ -175,7 +175,7 @@ Enable `pgvector`:
 CREATE EXTENSION IF NOT EXISTS vector;
 ```
 
-If this fails with “extension `vector` is not available”, the problem is your PostgreSQL installation, not `vibe-rag`.
+If this fails with `extension "vector" is not available`, the issue is PostgreSQL setup, not `vibe-rag`.
 
 Check that it worked:
 
@@ -205,7 +205,7 @@ Verify it:
 psql "$DATABASE_URL" -c '\dx'
 ```
 
-If this command cannot connect, do not move on to the Vibe setup yet. Fix database access first.
+If this command cannot connect, fix database access first.
 
 ## 5. Set Your Mistral Key
 
@@ -220,7 +220,7 @@ printenv MISTRAL_API_KEY
 printenv DATABASE_URL
 ```
 
-If either variable is empty, Vibe will fail later in a less obvious way.
+If either variable is empty, fix that first.
 
 ## 6. Scaffold a Project
 
@@ -231,7 +231,7 @@ vibe-rag init demo-memory-project
 cd demo-memory-project
 ```
 
-That gives you:
+This creates:
 
 - `AGENTS.md`
 - `.vibe/config.toml`
@@ -247,7 +247,7 @@ You want `0.0.11` or later.
 
 ## 7. Configure `.vibe/config.toml`
 
-Start from the generated file and make it explicit:
+Use:
 
 ```toml
 active_model = "devstral-2"
@@ -269,20 +269,20 @@ tool_name = "memory_load_session_context"
 task_arg = "task"
 ```
 
-Important:
+Rules:
 
 - put both `MISTRAL_API_KEY` and `DATABASE_URL` inside the MCP server `env`
 - do not rely on shell inheritance if you launch Vibe from mixed terminals or apps
 - `background_mcp_hook` belongs at top level in this config
 
-This is the most common configuration failure in real use:
+Common failure:
 
 - shell env is set
 - Vibe launches from somewhere else
 - MCP server starts without `DATABASE_URL`
 - `remember` appears to work, but durable memory is not shared
 
-Putting both vars in the MCP `env` block avoids that.
+Put both vars in the MCP `env` block.
 
 ## 8. Trust the Repo in Vibe
 
@@ -292,7 +292,7 @@ When Vibe asks whether to trust the folder, say yes.
 
 If you are testing under `/tmp` on macOS, the real path may resolve under `/private/tmp/...`. Trust the resolved path, not just the symlinked one.
 
-You can check the real path with:
+Check the real path with:
 
 ```bash
 pwd -P
@@ -325,7 +325,7 @@ Run Vibe:
 vibe
 ```
 
-Use these prompts:
+Run:
 
 ```text
 load session context for understanding this demo project
@@ -336,7 +336,7 @@ remember that greeting_for delegates to format_greeting
 search memory for format_greeting
 ```
 
-You should see:
+Expect:
 
 - code search find `format_greeting`
 - docs search find `docs/deployment.md`
@@ -354,9 +354,9 @@ Ask:
 What durable note exists for this project, and what deployment step is documented?
 ```
 
-If the hook is working, Vibe can answer from injected context before you manually invoke memory tools.
+If the hook works, Vibe can answer from injected context before manual memory calls.
 
-If it cannot, check this order:
+If not:
 
 1. the repo is trusted
 2. the repo has been indexed
@@ -392,7 +392,7 @@ ORDER BY created_at DESC
 LIMIT 20;
 ```
 
-If you want to inspect the raw content:
+Raw content:
 
 ```sql
 SELECT id, content
@@ -409,14 +409,14 @@ From the repo root:
 vibe-rag status
 ```
 
-That shows:
+Shows:
 
 - local sqlite index path
 - code chunk count
 - doc chunk count
 - pgvector memory count if `DATABASE_URL` is set
 
-Healthy output should show non-zero code/doc counts after indexing.
+Expected: non-zero code/doc counts after indexing.
 
 ## Troubleshooting
 
@@ -478,4 +478,4 @@ Wait and retry.
 1. Test in a disposable repo.
 2. Test in a repo you know well.
 3. Add durable notes for architecture conventions.
-4. Start opening new tasks with `load session context for ...`.
+4. Open new tasks with `load session context for ...`.

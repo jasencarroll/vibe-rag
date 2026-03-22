@@ -2,13 +2,13 @@
 
 `vibe-rag` is a memory and semantic search MCP server for Vibe.
 
-It gives Vibe three things that stock repo tools do not do well:
+It adds:
 
 - semantic code search
 - semantic docs search
 - durable project memory across sessions
 
-Code and docs search live in local sqlite inside the repo. Durable memory can also live in PostgreSQL with `pgvector`, which is what enables cross-session and cross-repo recall.
+Code and docs search live in local sqlite in the repo. Durable memory can live in PostgreSQL with `pgvector`.
 
 ## What You Need
 
@@ -16,9 +16,9 @@ Code and docs search live in local sqlite inside the repo. Durable memory can al
 - `uv`
 - a Mistral API key
 - Vibe
-- optional but recommended: local PostgreSQL with `pgvector`
+- local PostgreSQL with `pgvector` if you want durable cross-session memory
 
-Reality notes:
+Notes:
 
 - Use Python 3.12 for `uv tool install`. In this environment, `tree-sitter-languages` does not have cp313 wheels.
 - If you only install `vibe-rag` and skip PostgreSQL, semantic code/docs search still works, but durable cross-session memory will be weaker and local-only.
@@ -38,9 +38,7 @@ uv tool install git+https://github.com/jasencarroll/mistral-vibe.git
 vibe --version
 ```
 
-Expected result:
-
-- `vibe --version` prints `2.5.0` or later from the forked install
+Expected: `vibe --version` prints `2.5.0` or later.
 
 ## Install vibe-rag
 
@@ -49,7 +47,7 @@ uv tool install vibe-rag
 vibe-rag --version
 ```
 
-If you want a pinned release:
+Pinned release:
 
 ```bash
 uv tool install vibe-rag@0.0.11
@@ -63,7 +61,7 @@ uv tool install --python 3.12 vibe-rag
 
 ## Quick Start
 
-Use this exact order:
+Use this order:
 
 1. Install the Vibe fork.
 2. Install `vibe-rag`.
@@ -72,14 +70,14 @@ Use this exact order:
 5. Add `MISTRAL_API_KEY`, `DATABASE_URL`, and `background_mcp_hook` to `.vibe/config.toml`.
 6. Launch Vibe and run the smoke-test prompts.
 
-Project scaffold:
+Scaffold:
 
 ```bash
 vibe-rag init my-project
 cd my-project
 ```
 
-2. Add credentials to `.vibe/config.toml`:
+Config:
 
 ```toml
 active_model = "devstral-2"
@@ -117,11 +115,11 @@ search docs for deployment instructions
 remember that auth tokens are validated in the API gateway
 ```
 
-If PostgreSQL is not already working on your machine, do not guess your way through it. Use the setup guide:
+If PostgreSQL is not already working, use:
 
 - [Setup Guide](docs/setup-guide.md)
 
-What success looks like:
+Success:
 
 - `index this project` reports code and docs indexed
 - `search the code for ...` returns a relevant file/snippet
@@ -138,15 +136,15 @@ What success looks like:
 | Project index | semantic code/docs search in the current repo | `.vibe/index.db` | `index_project`, `search_code`, `search_docs` |
 | Durable memory | decisions, constraints, conventions, session carry-over | PostgreSQL via `pgvector` when `DATABASE_URL` is set | `remember`, `search_memory`, `forget`, `load_session_context` |
 
-If `DATABASE_URL` is not set, memory falls back to local sqlite. That still works, but it is not the cross-session setup this project is optimized for.
+If `DATABASE_URL` is not set, memory falls back to local sqlite.
 
 ## Setup Guide
 
-Use the full onboarding guide if you want the whole stack working cleanly:
+Full setup:
 
 - [Setup Guide](docs/setup-guide.md)
 
-It covers:
+Includes:
 
 - installing the required Vibe fork
 - creating the PostgreSQL database
@@ -156,7 +154,7 @@ It covers:
 - first-run verification
 - common failure modes
 
-If you want the shortest path to a real green check, follow:
+Shortest path:
 
 - install the Vibe fork
 - install `vibe-rag`
@@ -164,18 +162,18 @@ If you want the shortest path to a real green check, follow:
 - scaffold a demo repo
 - run the smoke test prompts
 
-If you are setting up local PostgreSQL for the first time, start with the “Known-Good Local PostgreSQL Setups” section in the setup guide. It includes concrete paths for:
+If local PostgreSQL is not set up yet, start with the “Known-Good Local PostgreSQL Setups” section:
 
 - Postgres.app
 - Homebrew PostgreSQL
 
 ## Daily Workflow
 
-Use the day-to-day operator guide here:
+Daily workflow:
 
 - [User Guide](docs/user-guide.md)
 
-It covers:
+Includes:
 
 - when to index
 - when to remember
@@ -190,7 +188,7 @@ It covers:
 - `.vibe/config.toml` scaffold
 - `.vibe/skills/semantic-repo-search/SKILL.md`
 
-The generated skill tells Vibe to prefer:
+The generated skill prefers:
 
 - `memory_load_session_context`
 - `memory_index_project`
@@ -198,9 +196,9 @@ The generated skill tells Vibe to prefer:
 - `memory_search_docs`
 - `memory_search_memory`
 
-before falling back to exact-match tools like `grep`.
+before `grep`.
 
-The expectation for a generated repo is:
+Expected:
 
 - the developer adds `MISTRAL_API_KEY` and `DATABASE_URL` to `.vibe/config.toml`
 - the repo is trusted in Vibe
