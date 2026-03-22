@@ -1,7 +1,15 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 import asyncpg
 from vibe_memory.db.migrations import run_migrations
+
+
+def _parse_ts(val: str | datetime | None) -> datetime | None:
+    if val is None or isinstance(val, datetime):
+        return val
+    return datetime.fromisoformat(val.replace("Z", "+00:00"))
 
 
 class PostgresDB:
@@ -143,7 +151,7 @@ class PostgresDB:
                          embedding = EXCLUDED.embedding""",
                     chunk["session_id"], chunk["chunk_index"], chunk["content"],
                     str(embedding), chunk["project_id"], chunk["summary"],
-                    chunk["session_start"], chunk["session_end"],
+                    _parse_ts(chunk["session_start"]), _parse_ts(chunk["session_end"]),
                 )
 
     async def upsert_doc_chunks(self, source: str, chunks: list[str],
