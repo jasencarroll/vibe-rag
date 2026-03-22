@@ -2,7 +2,7 @@
 
 ## What this is
 
-<!-- Replace this section with your project's purpose -->
+<!-- REPLACE THIS: Describe your project in 2-3 sentences. What does it do? Who is it for? -->
 A Python-first monolithic web application. The backend is the source of truth. Frontend is server-rendered HTML with progressive enhancement — not a SPA.
 
 ## Stack
@@ -102,13 +102,13 @@ HTTP request
 │       ├── services/            # Business logic, one module per domain
 │       │   ├── auth.py
 │       │   └── users.py
-│       ├── models/              # Pydantic models for validation + serialization
+│       ├── models/              # SQLModel models (validation + database tables)
 │       │   ├── auth.py
 │       │   └── users.py
 │       ├── db/                  # Database layer
 │       │   ├── engine.py        # Async engine + session factory
 │       │   └── models.py        # SQLModel table definitions
-│       └── config.py            # Settings from env vars via Pydantic
+│       └── config.py            # Settings from env vars via pydantic-settings
 ├── templates/                   # Jinja2 templates (frontend builds here)
 │   ├── base.html                # Base layout
 │   ├── components/              # Reusable template fragments
@@ -152,8 +152,8 @@ HTTP request
 - Comprehensions over `map()`/`filter()` when readable
 - Context managers (`with`) for all resource management
 - Early returns and guard clauses — never nest more than 2 levels
-- Pydantic v2 for all validation: `model_validate`, `field_validator`
 - `StrEnum` with `auto()` and UPPERCASE members for all enums
+- Validation happens via SQLModel (which is Pydantic v2) — don't import Pydantic separately
 - No `# type: ignore`, no `# noqa` — fix the underlying issue
 - No dead code, no commented-out code — git has history
 
