@@ -29,7 +29,7 @@ vibe-rag init my-project
 cd my-project
 
 # Launch Vibe
-vibe --agent builder
+vibe
 ```
 
 Inside Vibe:
@@ -76,6 +76,8 @@ For cross-repo memory (optional):
 ```bash
 export DATABASE_URL=postgresql://user:pass@localhost:5432/vibe_rag
 ```
+
+`vibe-rag init` keeps `.vibe/config.toml` free of credentials. Launch Vibe from a shell or environment that already exports the variables you want the MCP server to inherit.
 
 ## Architecture
 

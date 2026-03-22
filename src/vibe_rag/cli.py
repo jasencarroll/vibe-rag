@@ -17,7 +17,7 @@ def main():
 @main.command()
 @click.argument("name", required=False)
 def init(name: str | None):
-    """Create a new Vibe project with memory and agents."""
+    """Create a new Vibe project with vibe-rag configured."""
     from importlib.resources import files as pkg_files
 
     templates_dir = Path(str(pkg_files("vibe_rag") / "templates"))
@@ -55,22 +55,10 @@ def init(name: str | None):
     vibe_dir.mkdir(exist_ok=True)
     config_text = (templates_dir / ".vibe" / "config.toml").read_text()
 
-    database_url = os.environ.get("DATABASE_URL", "")
-    config_text = config_text.replace("__DATABASE_URL__", database_url)
-
     vibe_rag_bin = shutil.which("vibe-rag") or "vibe-rag"
     config_text = config_text.replace("__VIBE_RAG_BIN__", vibe_rag_bin)
 
     (vibe_dir / "config.toml").write_text(config_text)
-
-    # Global agents (once)
-    global_agents = Path.home() / ".vibe" / "agents"
-    agents_src = templates_dir / "agents"
-    if agents_src.exists() and (not global_agents.exists() or not any(global_agents.iterdir())):
-        global_agents.mkdir(parents=True, exist_ok=True)
-        for f in agents_src.glob("*.toml"):
-            shutil.copy2(f, global_agents / f.name)
-        click.echo("  Installed agents to ~/.vibe/agents/")
 
     # .gitignore
     gitignore = target / ".gitignore"
@@ -82,11 +70,11 @@ def init(name: str | None):
         gitignore.write_text(".vibe/index.db\n")
 
     click.echo(f"\n  ✓ {name} created at {target}\n")
-    click.echo(f"    AGENTS.md          — coding rules")
+    click.echo(f"    AGENTS.md          — project coding rules")
     click.echo(f"    .vibe/config.toml  — vibe-rag MCP server")
     click.echo(f"\n  Next:")
     click.echo(f"    cd {target}")
-    click.echo(f"    vibe --agent builder")
+    click.echo(f"    vibe")
 
 
 async def _pg_count(pg: PostgresDB) -> int:

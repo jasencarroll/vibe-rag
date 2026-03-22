@@ -6,4 +6,3 @@ name = "memory"
 transport = "stdio"
 command = "__VIBE_RAG_BIN__"
 args = ["serve"]
-env = { "DATABASE_URL" = "__DATABASE_URL__" }
