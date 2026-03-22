@@ -24,7 +24,7 @@ class PostgresDB:
                 CREATE TABLE IF NOT EXISTS memories (
                     id SERIAL PRIMARY KEY,
                     content TEXT NOT NULL,
-                    embedding vector(1024) NOT NULL,
+                    embedding vector(1536) NOT NULL,
                     tags TEXT DEFAULT '',
                     project_id TEXT,
                     created_at TIMESTAMPTZ DEFAULT now()

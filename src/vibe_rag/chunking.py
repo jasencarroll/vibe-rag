@@ -1,7 +1,7 @@
 from __future__ import annotations
 import re
 from pathlib import Path
-from vibe_rag.constants import CODE_EXTENSIONS, DOC_EXTENSIONS, SKIP_DIRS, MAX_FILE_SIZE
+from vibe_rag.constants import CODE_EXTENSIONS, DOC_EXTENSIONS, SKIP_DIRS, MAX_FILE_SIZE, DOC_CHUNK_SIZE, DOC_CHUNK_OVERLAP
 
 
 def chunk_markdown(text: str, file_path: str) -> list[dict]:
@@ -9,15 +9,15 @@ def chunk_markdown(text: str, file_path: str) -> list[dict]:
     sections = [s.strip() for s in sections if s.strip()]
     chunks = []
     for section in sections:
-        if len(section) <= 2000:
+        if len(section) <= DOC_CHUNK_SIZE:
             chunks.append(section)
         else:
             paragraphs = re.split(r"\n\n+", section)
             current = ""
             for para in paragraphs:
-                if len(current) + len(para) + 2 > 2000 and current:
+                if len(current) + len(para) + 2 > DOC_CHUNK_SIZE and current:
                     chunks.append(current.strip())
-                    current = current[-200:] + "\n\n" + para
+                    current = current[-DOC_CHUNK_OVERLAP:] + "\n\n" + para
                 else:
                     current = current + "\n\n" + para if current else para
             if current.strip():
@@ -33,12 +33,12 @@ def chunk_plain_text(text: str, file_path: str) -> list[dict]:
     start = 0
     idx = 0
     while start < len(text):
-        end = min(start + 2000, len(text))
+        end = min(start + DOC_CHUNK_SIZE, len(text))
         chunks.append({"file_path": file_path, "chunk_index": idx, "content": text[start:end]})
         idx += 1
         if end >= len(text):
             break
-        start += 1800  # 2000 - 200 overlap
+        start += DOC_CHUNK_SIZE - DOC_CHUNK_OVERLAP
     return chunks
 
 
@@ -49,49 +49,36 @@ def chunk_doc(content: str, file_path: str) -> list[dict]:
 
 
 def collect_files(root_paths: list[Path]) -> tuple[list[Path], list[Path]]:
-    """Collect code and documentation files from root paths, excluding skipped directories.
-    
-    This function uses more efficient glob patterns instead of rglob('*') for better performance
-    on large directories. It also checks file size and type before including files.
-    """
+    """Collect code and doc files in a single directory traversal."""
     code_files: list[Path] = []
     doc_files: list[Path] = []
-    
-    # Combine all code extensions into glob patterns
-    code_patterns = [f"**/*{ext}" for ext in CODE_EXTENSIONS]
-    doc_patterns = [f"**/*{ext}" for ext in DOC_EXTENSIONS]
-    
+    all_extensions = CODE_EXTENSIONS | DOC_EXTENSIONS
+
     for root in root_paths:
-        # Collect code files
-        for pattern in code_patterns:
-            for path in root.glob(pattern):
-                if _should_include_file(path):
-                    code_files.append(path)
-        
-        # Collect doc files
-        for pattern in doc_patterns:
-            for path in root.glob(pattern):
-                if _should_include_file(path):
-                    doc_files.append(path)
-    
+        for path in root.rglob("*"):
+            if path.suffix not in all_extensions:
+                continue
+            if not _should_include_file(path):
+                continue
+            if path.suffix in CODE_EXTENSIONS:
+                code_files.append(path)
+            else:
+                doc_files.append(path)
+
     return code_files, doc_files
 
 
 def _should_include_file(path: Path) -> bool:
     """Check if a file should be included in indexing."""
-    # Skip directories and non-files
     if not path.is_file():
         return False
-    
-    # Skip files that are too large
+    if path.is_symlink():
+        return False
+    if any(skip in path.parts for skip in SKIP_DIRS):
+        return False
     try:
         if path.stat().st_size > MAX_FILE_SIZE:
             return False
     except (OSError, PermissionError):
         return False
-    
-    # Skip files in excluded directories
-    if any(skip in path.parts for skip in SKIP_DIRS):
-        return False
-    
     return True

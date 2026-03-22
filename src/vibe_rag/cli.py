@@ -60,6 +60,10 @@ def init(name: str | None):
 
     (vibe_dir / "config.toml").write_text(config_text)
 
+    skills_template_dir = templates_dir / ".vibe" / "skills"
+    if skills_template_dir.exists():
+        shutil.copytree(skills_template_dir, vibe_dir / "skills", dirs_exist_ok=True)
+
     # .gitignore
     gitignore = target / ".gitignore"
     if gitignore.exists():

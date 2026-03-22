@@ -15,6 +15,8 @@ class SqliteVecDB:
         if self._conn is None:
             self._path.parent.mkdir(parents=True, exist_ok=True)
             self._conn = sqlite3.connect(str(self._path))
+            self._conn.execute("PRAGMA journal_mode=WAL")
+            self._conn.execute("PRAGMA synchronous=NORMAL")
             self._conn.row_factory = sqlite3.Row
             self._conn.enable_load_extension(True)
             sqlite_vec.load(self._conn)
@@ -66,6 +68,12 @@ class SqliteVecDB:
             CREATE VIRTUAL TABLE IF NOT EXISTS docs_vec USING vec0(
                 id INTEGER PRIMARY KEY,
                 embedding float[1536]
+            );
+
+            CREATE TABLE IF NOT EXISTS file_hashes (
+                file_path TEXT PRIMARY KEY,
+                content_hash TEXT NOT NULL,
+                kind TEXT NOT NULL
             );
         """)
         conn.commit()
@@ -209,6 +217,61 @@ class SqliteVecDB:
     def doc_count(self) -> int:
         conn = self._get_conn()
         return conn.execute("SELECT COUNT(*) FROM docs").fetchone()[0]
+
+    def language_stats(self) -> dict[str, int]:
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT language, COUNT(*) as cnt FROM code_chunks GROUP BY language"
+        ).fetchall()
+        return {row["language"]: row["cnt"] for row in rows}
+
+    # --- File hashes (incremental indexing) ---
+
+    def get_file_hashes(self, kind: str) -> dict[str, str]:
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT file_path, content_hash FROM file_hashes WHERE kind = ?",
+            (kind,),
+        ).fetchall()
+        return {row["file_path"]: row["content_hash"] for row in rows}
+
+    def set_file_hash(self, file_path: str, content_hash: str, kind: str) -> None:
+        conn = self._get_conn()
+        conn.execute(
+            "INSERT OR REPLACE INTO file_hashes (file_path, content_hash, kind) VALUES (?, ?, ?)",
+            (file_path, content_hash, kind),
+        )
+        conn.commit()
+
+    def delete_file_chunks(self, file_path: str, kind: str = "code") -> None:
+        conn = self._get_conn()
+        if kind == "code":
+            ids = [r[0] for r in conn.execute(
+                "SELECT id FROM code_chunks WHERE file_path = ?", (file_path,)
+            ).fetchall()]
+            if ids:
+                placeholders = ",".join("?" * len(ids))
+                conn.execute(f"DELETE FROM code_chunks_vec WHERE id IN ({placeholders})", ids)
+                conn.execute(f"DELETE FROM code_chunks WHERE id IN ({placeholders})", ids)
+        else:
+            ids = [r[0] for r in conn.execute(
+                "SELECT id FROM docs WHERE file_path = ?", (file_path,)
+            ).fetchall()]
+            if ids:
+                placeholders = ",".join("?" * len(ids))
+                conn.execute(f"DELETE FROM docs_vec WHERE id IN ({placeholders})", ids)
+                conn.execute(f"DELETE FROM docs WHERE id IN ({placeholders})", ids)
+        conn.execute("DELETE FROM file_hashes WHERE file_path = ? AND kind = ?", (file_path, kind))
+        conn.commit()
+
+    def delete_file_hashes(self, file_paths: list[str], kind: str) -> None:
+        conn = self._get_conn()
+        for fp in file_paths:
+            conn.execute(
+                "DELETE FROM file_hashes WHERE file_path = ? AND kind = ?",
+                (fp, kind),
+            )
+        conn.commit()
 
     # --- Compat aliases ---
 

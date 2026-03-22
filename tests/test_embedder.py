@@ -35,17 +35,18 @@ def test_embed_code_calls_codestral(embedder, httpx_mock):
     assert "codestral-embed" in body
 
 
-def test_embed_batches_large_input(embedder, httpx_mock):
-    # Batch size is 16, so 35 texts = 3 batches (16 + 16 + 3)
-    for count in [16, 16, 3]:
+def test_embed_batches_large_input(httpx_mock):
+    # Batch size is 64, so 100 texts = 2 batches (64 + 36)
+    embedder = Embedder(api_key="test-key")
+    for count in [64, 36]:
         httpx_mock.add_response(
             url="https://api.mistral.ai/v1/embeddings",
             json={"data": [{"embedding": [0.1] * 1536} for _ in range(count)]},
         )
-    texts = [f"text {i}" for i in range(35)]
+    texts = [f"text {i}" for i in range(100)]
     result = embedder.embed_text_sync(texts)
-    assert len(result) == 35
-    assert len(httpx_mock.get_requests()) == 3
+    assert len(result) == 100
+    assert len(httpx_mock.get_requests()) == 2
 
 
 def test_embed_truncates_long_input(embedder, httpx_mock):
