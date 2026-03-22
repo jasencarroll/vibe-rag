@@ -1,7 +1,6 @@
 from __future__ import annotations
 import os
 import shutil
-import subprocess
 from pathlib import Path
 
 import click
@@ -56,11 +55,11 @@ def init(name: str | None):
     vibe_dir.mkdir(exist_ok=True)
     config_text = (templates_dir / ".vibe" / "config.toml").read_text()
 
-    console_key = os.environ.get("MISTRAL_CONSOLE_KEY", os.environ.get("MISTRAL_API_KEY", ""))
-    config_text = config_text.replace("__MISTRAL_CONSOLE_KEY__", console_key)
+    api_key = os.environ.get("MISTRAL_API_KEY", "")
+    config_text = config_text.replace("__MISTRAL_API_KEY__", api_key)
 
-    vibe_rag_bin = shutil.which("vibe-rag") or str(Path(__file__).resolve().parent.parent.parent / ".venv" / "bin" / "vibe-rag")
-    config_text = config_text.replace("__VIBE_MEMORY_BIN__", vibe_rag_bin)
+    vibe_rag_bin = shutil.which("vibe-rag") or "vibe-rag"
+    config_text = config_text.replace("__VIBE_RAG_BIN__", vibe_rag_bin)
 
     (vibe_dir / "config.toml").write_text(config_text)
 
@@ -81,10 +80,6 @@ def init(name: str | None):
             gitignore.write_text(text.rstrip() + "\n.vibe/index.db\n")
     else:
         gitignore.write_text(".vibe/index.db\n")
-
-    # git init
-    if not (target / ".git").exists():
-        subprocess.run(["git", "init", "-q"], cwd=target, capture_output=True)
 
     click.echo(f"\n  ✓ {name} created at {target}\n")
     click.echo(f"    AGENTS.md          — coding rules")
@@ -107,6 +102,7 @@ def status():
         db = SqliteVecDB(db_path)
         db.initialize()
         click.echo(f"  Code chunks: {db.code_chunk_count()}")
+        click.echo(f"  Doc chunks:  {db.doc_count()}")
         click.echo(f"  Memories:    {db.memory_count()}")
         db.close()
     else:

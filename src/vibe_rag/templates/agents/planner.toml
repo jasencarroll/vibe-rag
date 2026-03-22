@@ -13,5 +13,4 @@ enabled_tools = [
   "todo",
   "ask_user_question",
   "memory_*",
-  "context7_*",
 ]

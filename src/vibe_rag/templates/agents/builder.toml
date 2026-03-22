@@ -17,6 +17,4 @@ enabled_tools = [
   "ask_user_question",
   # MCP tools (wildcard matches all tools from each server)
   "memory_*",
-  "playwright_*",
-  "context7_*",
 ]

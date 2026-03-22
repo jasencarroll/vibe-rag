@@ -10,5 +10,4 @@ enabled_tools = [
   "grep",
   "bash",
   "memory_*",
-  "context7_*",
 ]

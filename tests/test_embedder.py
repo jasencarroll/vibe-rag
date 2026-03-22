@@ -6,7 +6,7 @@ from vibe_rag.indexing.embedder import Embedder
 
 @pytest.fixture
 def embedder():
-    return Embedder(mistral_api_key="mk-test", codestral_api_key="ck-test")
+    return Embedder(api_key="test-key")
 
 
 def test_embed_text_calls_mistral(embedder, httpx_mock):

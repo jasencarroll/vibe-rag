@@ -4,6 +4,6 @@ active_model = "devstral-2"
 [[mcp_servers]]
 name = "memory"
 transport = "stdio"
-command = "__VIBE_MEMORY_BIN__"
+command = "__VIBE_RAG_BIN__"
 args = ["serve"]
-env = { "MISTRAL_API_KEY" = "__MISTRAL_CONSOLE_KEY__", "CODESTRAL_API_KEY" = "__MISTRAL_CONSOLE_KEY__" }
+env = { "MISTRAL_API_KEY" = "__MISTRAL_API_KEY__" }

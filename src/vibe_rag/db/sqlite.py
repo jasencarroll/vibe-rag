@@ -53,6 +53,20 @@ class SqliteVecDB:
                 id INTEGER PRIMARY KEY,
                 embedding float[1024]
             );
+
+            CREATE TABLE IF NOT EXISTS docs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                file_path TEXT NOT NULL,
+                chunk_index INTEGER NOT NULL,
+                content TEXT NOT NULL,
+                indexed_at TEXT DEFAULT (datetime('now')),
+                UNIQUE(file_path, chunk_index)
+            );
+
+            CREATE VIRTUAL TABLE IF NOT EXISTS docs_vec USING vec0(
+                id INTEGER PRIMARY KEY,
+                embedding float[1024]
+            );
         """)
         conn.commit()
 
@@ -156,6 +170,45 @@ class SqliteVecDB:
     def memory_count(self) -> int:
         conn = self._get_conn()
         return conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0]
+
+    # --- Docs ---
+
+    def upsert_docs(self, chunks: list[dict], embeddings: list[list[float]]) -> None:
+        conn = self._get_conn()
+        for chunk, embedding in zip(chunks, embeddings):
+            cursor = conn.execute(
+                """INSERT OR REPLACE INTO docs (file_path, chunk_index, content)
+                   VALUES (?, ?, ?)""",
+                (chunk["file_path"], chunk["chunk_index"], chunk["content"]),
+            )
+            row_id = cursor.lastrowid
+            conn.execute(
+                "INSERT OR REPLACE INTO docs_vec (id, embedding) VALUES (?, ?)",
+                (row_id, sqlite_vec.serialize_float32(embedding)),
+            )
+        conn.commit()
+
+    def search_docs(self, query_embedding: list[float], limit: int = 10) -> list[dict]:
+        conn = self._get_conn()
+        serialized = sqlite_vec.serialize_float32(query_embedding)
+        rows = conn.execute(
+            """SELECT d.file_path, d.chunk_index, d.content, v.distance
+               FROM docs_vec v
+               JOIN docs d ON d.id = v.id
+               WHERE v.embedding MATCH ? AND k = ?
+               ORDER BY v.distance""",
+            (serialized, limit),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def clear_docs(self) -> None:
+        conn = self._get_conn()
+        conn.executescript("DELETE FROM docs_vec; DELETE FROM docs;")
+        conn.commit()
+
+    def doc_count(self) -> int:
+        conn = self._get_conn()
+        return conn.execute("SELECT COUNT(*) FROM docs").fetchone()[0]
 
     # --- Compat aliases ---
 
