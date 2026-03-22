@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [0.0.9] - 2026-03-22
+## [0.0.10] - 2026-03-22
+
+### Added
+- `load_session_context` MCP tool to bootstrap a task with related memories, code hits, and docs hits
+- Structured memory support for kinds, summaries, metadata, source session/message tracking, and supersession
+- Day-to-day user guide covering setup, workflow, and prompt patterns
+- Generated scaffold guidance for `memory_load_session_context` and memory-first repo search
+
+### Changed
+- PostgreSQL and sqlite memory layers now preserve richer metadata and hide superseded memories by default
+- Index refresh now clears stale file hashes when the local index contents are missing
+- README and scaffold docs now describe the session bootstrap workflow explicitly
+
+### Fixed
+- Legacy pgvector tables are migrated forward by adding missing columns and indexes
+- Session-context retrieval reuses the same validated search helpers as standalone memory/code/docs tools
+
+## [0.0.9] - 2026-03-22
 
 ### Fixed
 - `python -m vibe_rag.cli serve` now starts the MCP server correctly for source-run Vibe sessions
