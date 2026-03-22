@@ -6,7 +6,7 @@ EMBED_URL = "https://api.mistral.ai/v1/embeddings"
 MISTRAL_MODEL = "mistral-embed"
 CODESTRAL_MODEL = "codestral-embed"
 BATCH_SIZE = 16
-MAX_CHARS = 30_000  # ~8K tokens at ~4 chars/token, under Mistral's 8192 token limit
+MAX_CHARS = 16_000  # ~8K tokens at ~2 chars/token for code, conservative limit
 
 
 class Embedder:

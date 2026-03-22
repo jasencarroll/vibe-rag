@@ -39,7 +39,7 @@ class SqliteVecDB:
 
             CREATE VIRTUAL TABLE IF NOT EXISTS code_chunks_vec USING vec0(
                 id INTEGER PRIMARY KEY,
-                embedding float[1024]
+                embedding float[1536]
             );
 
             CREATE TABLE IF NOT EXISTS memories (
@@ -51,7 +51,7 @@ class SqliteVecDB:
 
             CREATE VIRTUAL TABLE IF NOT EXISTS memories_vec USING vec0(
                 id INTEGER PRIMARY KEY,
-                embedding float[1024]
+                embedding float[1536]
             );
 
             CREATE TABLE IF NOT EXISTS docs (
@@ -65,7 +65,7 @@ class SqliteVecDB:
 
             CREATE VIRTUAL TABLE IF NOT EXISTS docs_vec USING vec0(
                 id INTEGER PRIMARY KEY,
-                embedding float[1024]
+                embedding float[1536]
             );
         """)
         conn.commit()
