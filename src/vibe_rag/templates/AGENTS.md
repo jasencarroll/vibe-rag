@@ -11,8 +11,9 @@ A Python-first monolithic web application. The backend is the source of truth. F
 - **Package manager:** uv (Astral) — never pip, never bare python
 - **Framework:** Starlette (or FastAPI) on ASGI via uvicorn
 - **Frontend:** Bun + vanilla TypeScript + shadcn/ui → builds into `templates/` as Jinja2
-- **Database:** PostgreSQL with asyncpg (SQLite for local/embedded)
-- **ORM:** None — raw SQL with asyncpg, Pydantic models for validation
+- **Database:** PostgreSQL with asyncpg driver
+- **ORM:** SQLModel (SQLAlchemy + Pydantic in one) with async sessions
+- **Migrations:** Alembic (async template)
 - **Testing:** pytest + pytest-asyncio
 - **Linting:** ruff (replaces flake8, isort, black, pyflakes)
 - **Types:** pyright strict mode
@@ -28,6 +29,7 @@ git clone <repo>
 cd <project>
 uv sync                              # Install Python deps
 cp .env.example .env                  # Set up local env vars
+uv run alembic upgrade head           # Run database migrations
 bun install                           # Install JS deps (if frontend exists)
 bun run build                         # Build frontend into templates/
 
@@ -57,9 +59,11 @@ bun install                            # Install JS deps
 bun run build                          # Build into templates/
 bun run dev                            # Watch mode with hot reload
 
-# Database
-uv run python -m app.db.migrate        # Run migrations
-uv run python -m app.db.seed           # Seed dev data
+# Database (Alembic)
+uv run alembic upgrade head             # Run all pending migrations
+uv run alembic revision --autogenerate -m "description"  # Generate migration from model changes
+uv run alembic downgrade -1             # Roll back one migration
+uv run alembic history                  # Show migration history
 ```
 
 ## Architecture
@@ -69,19 +73,19 @@ HTTP request
   → uvicorn (ASGI server)
     → Starlette middleware (auth, CORS, logging)
       → Route handler
-        → Pydantic model (validate input)
-          → Database query (asyncpg, raw SQL)
-          → Business logic
+        → SQLModel (validate input)
+          → Service layer (business logic)
+            → AsyncSession → SQLModel query → asyncpg → PostgreSQL
         → Jinja2 template (render HTML) or JSON response
   → HTTP response
 ```
 
 ### Key patterns
 
-- **Route handlers** are thin — validate input, call business logic, return response
+- **Route handlers** are thin — validate input, call service, return response
 - **Business logic** lives in service modules, not in route handlers
-- **Database access** is always async, always parameterized, never in route handlers directly
-- **Pydantic models** validate all input at the boundary — inside the app, trust the types
+- **Database access** via SQLModel async sessions, never in route handlers directly
+- **SQLModel models** validate input at the boundary and define the schema — one model system, not two
 - **Templates** are server-rendered — the browser gets HTML, not JSON + a JS framework
 
 ## Project structure
@@ -102,9 +106,8 @@ HTTP request
 │       │   ├── auth.py
 │       │   └── users.py
 │       ├── db/                  # Database layer
-│       │   ├── pool.py          # Connection pool setup
-│       │   ├── queries/         # Raw SQL files or query functions
-│       │   └── migrate.py       # Migration runner
+│       │   ├── engine.py        # Async engine + session factory
+│       │   └── models.py        # SQLModel table definitions
 │       └── config.py            # Settings from env vars via Pydantic
 ├── templates/                   # Jinja2 templates (frontend builds here)
 │   ├── base.html                # Base layout
@@ -118,6 +121,10 @@ HTTP request
 ├── frontend/                    # TypeScript source (if applicable)
 │   ├── package.json
 │   └── src/
+├── alembic/                     # Database migrations (auto-generated)
+│   ├── env.py                   # Alembic config (imports SQLModel metadata)
+│   └── versions/                # Migration files
+├── alembic.ini                  # Alembic settings
 ├── pyproject.toml               # Single source of truth for Python config
 ├── .env                         # Local env vars (gitignored)
 ├── .env.example                 # Template for .env (committed)
@@ -129,7 +136,7 @@ HTTP request
 - Python modules: `snake_case.py`
 - One domain per file in `routes/`, `services/`, `models/`
 - Tests mirror source: `src/app/services/auth.py` → `tests/test_auth.py`
-- SQL migrations: `001_create_users.sql`, `002_add_sessions.sql`
+- Alembic migrations: `alembic/versions/` (auto-generated, don't hand-edit)
 - Templates: `snake_case.html`, partials prefixed with `_` (e.g., `_navbar.html`)
 
 ## Code style
@@ -150,12 +157,16 @@ HTTP request
 - No `# type: ignore`, no `# noqa` — fix the underlying issue
 - No dead code, no commented-out code — git has history
 
-### SQL
+### SQLModel / Database
 
-- All queries use parameterized placeholders (`$1`, `$2`) — never string interpolation
-- Use CTEs over subqueries for readability
-- Explicit column lists in SELECT — never `SELECT *` in production code
-- Migrations are forward-only SQL files, numbered sequentially
+- Define models with `SQLModel` — they're both Pydantic models and SQLAlchemy tables
+- Separate read models from write models: `UserCreate(SQLModel)` vs `User(SQLModel, table=True)`
+- Always use async sessions: `async with AsyncSession(engine) as session:`
+- Never use raw SQL string interpolation — use SQLModel/SQLAlchemy query builders
+- Connection string: `postgresql+asyncpg://user:pass@host/db`
+- Alembic for all migrations: `alembic revision --autogenerate -m "description"`
+- Run migrations: `alembic upgrade head`
+- Never manually edit the migration version table
 
 ### TypeScript (frontend)
 
@@ -215,8 +226,8 @@ def test_create_user_returns_201(client):
 
 - No secrets in source code — environment variables or `.env` (gitignored)
 - `.env.example` committed with placeholder values for documentation
-- Parameterized SQL only — never string-interpolate user input into queries
-- Validate all input at the boundary with Pydantic before it touches business logic
+- Use SQLModel/SQLAlchemy query builders — never string-interpolate user input into queries
+- Validate all input at the boundary with SQLModel before it touches business logic
 - Hash passwords with bcrypt or argon2 — never store plaintext
 - Set security headers: CORS, CSP, X-Frame-Options, Strict-Transport-Security
 - Rate limit auth endpoints
@@ -225,14 +236,16 @@ def test_create_user_returns_201(client):
 
 ## Database conventions
 
-- Raw SQL with asyncpg — no ORM
-- Connection pool created at app startup, closed at shutdown
-- All queries are async: `await conn.fetch(...)`, `await conn.fetchrow(...)`
-- Parameterized queries with `$1`, `$2` positional params
-- Migrations are numbered SQL files run in order: `001_`, `002_`, etc.
-- Each migration is idempotent where possible (`CREATE TABLE IF NOT EXISTS`)
-- Foreign keys, not null constraints, and indexes defined in migrations
-- Use `RETURNING` clause to get inserted/updated rows without a second query
+- SQLModel for models, SQLAlchemy async engine under the hood, asyncpg as the driver
+- Create engine at app startup with `create_async_engine("postgresql+asyncpg://...")`
+- Pool config: `pool_size=10`, `max_overflow=20`, `pool_pre_ping=True`
+- Always use async sessions with context managers: `async with AsyncSession(engine) as session:`
+- Models define the schema — Alembic auto-generates migrations from model changes
+- `alembic revision --autogenerate -m "add users table"` → `alembic upgrade head`
+- Foreign keys, not null constraints, indexes defined on the model, not in raw SQL
+- Relationships via `Relationship()` on SQLModel classes
+- Read models (no `table=True`) for API input/output, table models (`table=True`) for persistence
+- Never call `session.commit()` in a service function — let the route handler own the transaction
 
 ## API conventions (if applicable)
 
@@ -275,7 +288,8 @@ def test_create_user_returns_201(client):
 ## Known gotchas
 
 <!-- Add project-specific gotchas here as you discover them -->
-- asyncpg returns `Record` objects, not dicts — use `dict(row)` to convert
+- SQLModel `table=True` models are mutable ORM objects, not frozen Pydantic models — don't return them from APIs directly, convert to read models
+- Alembic `--autogenerate` doesn't detect all changes (e.g., column renames) — review generated migrations before running
 - Starlette's `Request.json()` is a coroutine — must `await` it
 - Pydantic v2 `model_validate` replaces v1 `parse_obj` — don't use the old API
 - `uv run` creates the venv automatically — you never need `uv venv` manually
