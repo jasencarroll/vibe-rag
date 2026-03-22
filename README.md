@@ -1,81 +1,87 @@
 # vibe-rag
 
-Local semantic code search and persistent memory for [Mistral Vibe](https://docs.mistral.ai/mistral-vibe/). An MCP server that gives Vibe the ability to understand your codebase by meaning, remember things across sessions, and search your docs — all stored in a single local sqlite file. No external database. No cloud. Fully local.
+`vibe-rag` is a memory and semantic search MCP server for Vibe.
 
-## v0.0.11 Highlights
+It gives Vibe three things that stock repo tools do not do well:
 
-- **📦 Packaging Fix:** installed `vibe-rag init` now includes bundled project templates again
-- **🧠 Session Bootstrap:** packaged MCP flow remains verified with `load_session_context`
-- **🔌 Vibe Integration:** packaged `vibe` and `vibe-rag` releases were revalidated together
+- semantic code search
+- semantic docs search
+- durable project memory across sessions
 
-## Install
+Code and docs search live in local sqlite inside the repo. Durable memory can also live in PostgreSQL with `pgvector`, which is what enables cross-session and cross-repo recall.
+
+## What You Need
+
+- Python 3.12+
+- `uv`
+- a Mistral API key
+- Vibe
+- optional but recommended: local PostgreSQL with `pgvector`
+
+Reality notes:
+
+- Use Python 3.12 for `uv tool install`. In this environment, `tree-sitter-languages` does not have cp313 wheels.
+- If you only install `vibe-rag` and skip PostgreSQL, semantic code/docs search still works, but durable cross-session memory will be weaker and local-only.
+- Vibe project-local config only works in trusted folders.
+
+## Required Vibe Fork
+
+Use the fork that contains the background MCP session bootstrap hook:
+
+- Repo: `https://github.com/jasencarroll/mistral-vibe`
+
+Install it with `uv`:
 
 ```bash
-# Latest stable release (v0.0.11)
-uv tool install vibe-rag
+uv tool uninstall mistral-vibe || true
+uv tool install git+https://github.com/jasencarroll/mistral-vibe.git
+vibe --version
+```
 
-# Or install specific version
+Expected result:
+
+- `vibe --version` prints `2.5.0` or later from the forked install
+
+## Install vibe-rag
+
+```bash
+uv tool install vibe-rag
+vibe-rag --version
+```
+
+If you want a pinned release:
+
+```bash
 uv tool install vibe-rag@0.0.11
 ```
 
-Requires Python 3.12+ and a [Mistral API key](https://console.mistral.ai/api-keys).
-
-## Quick start
+If your machine defaults `uv` tools to Python 3.13, install explicitly with Python 3.12:
 
 ```bash
-# Create a new project
+uv tool install --python 3.12 vibe-rag
+```
+
+## Quick Start
+
+Use this exact order:
+
+1. Install the Vibe fork.
+2. Install `vibe-rag`.
+3. Make sure PostgreSQL plus `pgvector` work.
+4. Scaffold a project.
+5. Add `MISTRAL_API_KEY`, `DATABASE_URL`, and `background_mcp_hook` to `.vibe/config.toml`.
+6. Launch Vibe and run the smoke-test prompts.
+
+Project scaffold:
+
+```bash
 vibe-rag init my-project
 cd my-project
-
-# Launch Vibe
-vibe
 ```
 
-Inside Vibe:
-
-```
-index this project
-load session context for continuing the auth refactor
-search the code for authentication handling
-search docs for deployment instructions
-remember we decided to use JWT for auth
-```
-
-The generated scaffold includes:
-
-- an `AGENTS.md` that explains the memory-first workflow
-- a `.vibe/skills/semantic-repo-search` skill that steers Vibe toward `memory_index_project`,
-  `memory_load_session_context`, `memory_search_code`, `memory_search_docs`, and `memory_search_memory` before exact-match tools
-
-## Features
-
-### Local semantic code search
-- Index your entire codebase by meaning, not just text
-- Search across all files using natural language
-- Find relevant code chunks with context
-
-### Persistent memory
-- Remember decisions, insights, and context across sessions
-- Search your memories semantically
-- Hybrid storage: sqlite for local, pgvector for cross-repo (optional)
-- Structured session bootstrap: `memory_load_session_context` can retrieve prior memories, code, and docs in one call
-
-### Language support
-- Python, JavaScript, TypeScript, Rust, Go, Java, C++, C, Ruby, PHP
-- Swift, Kotlin, Scala, Bash, SQL, TOML, YAML, JSON
-- Smart chunking with tree-sitter for supported languages
-
-### Security
-- `vibe-rag init` does not write credentials into generated config
-- Credentials can be inherited from the launch shell or set explicitly in Vibe MCP config
-- Local-only by default (pgvector optional)
-
-## Configuration
-
-`vibe-rag init` generates a credential-free `.vibe/config.toml`:
+2. Add credentials to `.vibe/config.toml`:
 
 ```toml
-# .vibe/config.toml
 active_model = "devstral-2"
 skill_paths = [".vibe/skills"]
 
@@ -84,94 +90,168 @@ name = "memory"
 transport = "stdio"
 command = "vibe-rag"
 args = ["serve"]
+env = {
+  MISTRAL_API_KEY = "your_mistral_api_key",
+  DATABASE_URL = "postgresql://localhost:5432/vibe_memory"
+}
+
+[background_mcp_hook]
+enabled = true
+tool_name = "memory_load_session_context"
+task_arg = "task"
 ```
 
-For Vibe itself, there are two supported ways to provide credentials.
-
-Option 1: export them before launching `vibe`:
+3. Launch Vibe:
 
 ```bash
-export MISTRAL_API_KEY=your_api_key_here
-export DATABASE_URL=postgresql://user:pass@localhost:5432/vibe_rag
 vibe
 ```
 
-Option 2: add them to the MCP server `env` block in your project-local `.vibe/config.toml` or global `~/.vibe/config.toml`. This is the most reliable option if Vibe is launched from different shells or GUI sessions:
+4. In your first session, use:
 
-```toml
-[[mcp_servers]]
-name = "memory"
-transport = "stdio"
-command = "vibe-rag"
-args = ["serve"]
-env = {
-  MISTRAL_API_KEY = "your_api_key_here",
-  DATABASE_URL = "postgresql://user:pass@localhost:5432/vibe_rag"
-}
+```text
+load session context for understanding this repo
+index this project
+search the code for authentication handling
+search docs for deployment instructions
+remember that auth tokens are validated in the API gateway
 ```
 
-Notes:
+If PostgreSQL is not already working on your machine, do not guess your way through it. Use the setup guide:
 
-- `MISTRAL_API_KEY` is required for indexing, code search, docs search, and memory embeddings.
-- `DATABASE_URL` is optional and only enables cross-repo memory via pgvector.
-- Use `.vibe/config.toml` for project-specific credentials and `~/.vibe/config.toml` for a global setup.
-- For normal use, prefer the installed package entrypoint above.
-- If you want Vibe to test the working tree instead of an installed release, point `command` at your repo venv, for example:
+- [Setup Guide](docs/setup-guide.md)
 
-```toml
-[[mcp_servers]]
-name = "memory"
-transport = "stdio"
-command = "/absolute/path/to/repo/.venv/bin/python"
-args = ["-m", "vibe_rag.cli", "serve"]
-env = {
-  PYTHONPATH = "/absolute/path/to/repo/src",
-  MISTRAL_API_KEY = "your_api_key_here",
-  DATABASE_URL = "postgresql://user:pass@localhost:5432/vibe_rag"
-}
+What success looks like:
+
+- `index this project` reports code and docs indexed
+- `search the code for ...` returns a relevant file/snippet
+- `search docs for ...` returns a markdown/text chunk
+- `remember ...` returns a memory id
+- a fresh Vibe session can answer from prior context if the background hook is configured
+
+## How It Works
+
+`vibe-rag` has two storage layers:
+
+| Layer | Purpose | Storage | Tools |
+| --- | --- | --- | --- |
+| Project index | semantic code/docs search in the current repo | `.vibe/index.db` | `index_project`, `search_code`, `search_docs` |
+| Durable memory | decisions, constraints, conventions, session carry-over | PostgreSQL via `pgvector` when `DATABASE_URL` is set | `remember`, `search_memory`, `forget`, `load_session_context` |
+
+If `DATABASE_URL` is not set, memory falls back to local sqlite. That still works, but it is not the cross-session setup this project is optimized for.
+
+## Setup Guide
+
+Use the full onboarding guide if you want the whole stack working cleanly:
+
+- [Setup Guide](docs/setup-guide.md)
+
+It covers:
+
+- installing the required Vibe fork
+- creating the PostgreSQL database
+- enabling `pgvector`
+- exact `psql` commands
+- configuring `.vibe/config.toml`
+- first-run verification
+- common failure modes
+
+If you want the shortest path to a real green check, follow:
+
+- install the Vibe fork
+- install `vibe-rag`
+- create the PostgreSQL database and enable `vector`
+- scaffold a demo repo
+- run the smoke test prompts
+
+If you are setting up local PostgreSQL for the first time, start with the “Known-Good Local PostgreSQL Setups” section in the setup guide. It includes concrete paths for:
+
+- Postgres.app
+- Homebrew PostgreSQL
+
+## Daily Workflow
+
+Use the day-to-day operator guide here:
+
+- [User Guide](docs/user-guide.md)
+
+It covers:
+
+- when to index
+- when to remember
+- how to resume work later
+- how to phrase prompts so Vibe actually uses memory
+
+## Generated Scaffold
+
+`vibe-rag init` creates:
+
+- `AGENTS.md` with a memory-first workflow
+- `.vibe/config.toml` scaffold
+- `.vibe/skills/semantic-repo-search/SKILL.md`
+
+The generated skill tells Vibe to prefer:
+
+- `memory_load_session_context`
+- `memory_index_project`
+- `memory_search_code`
+- `memory_search_docs`
+- `memory_search_memory`
+
+before falling back to exact-match tools like `grep`.
+
+The expectation for a generated repo is:
+
+- the developer adds `MISTRAL_API_KEY` and `DATABASE_URL` to `.vibe/config.toml`
+- the repo is trusted in Vibe
+- the first useful prompts are `load session context for ...` and `index this project`
+
+## Core Commands
+
+### CLI
+
+```bash
+vibe-rag init my-project
+vibe-rag status
+vibe-rag serve
 ```
 
-Vibe only loads project skills and project MCP config from trusted folders. If the repo is not trusted yet, trust it first, then restart Vibe and run `index this project`.
+### Inside Vibe
 
-## Architecture
+```text
+index this project
+load session context for continuing the auth refactor
+search the code for where config is written
+search docs for release steps
+remember that invoice ids must stay human-readable
+search memory for invoice decisions
+forget memory <id>
+```
 
-- **Local-first**: SQLite vector database for code search
-- **Hybrid option**: PostgreSQL pgvector for cross-repo memories
-- **Modular**: Separate components for db, indexing, tools
-- **MCP protocol**: Standard Mistral Vibe agent communication
+## Configuration Notes
+
+- `MISTRAL_API_KEY` is required for embeddings.
+- `DATABASE_URL` is optional but strongly recommended.
+- Vibe only loads project-local config and skills from trusted folders.
+- If the repo is not trusted yet, trust it and restart Vibe.
+- `background_mcp_hook` belongs in Vibe config, not in `vibe-rag`.
+
+Common mistakes:
+
+- setting `DATABASE_URL` in your shell but not in the MCP server `env`
+- trusting `/tmp/...` while Vibe is actually resolving the repo as `/private/tmp/...`
+- expecting background bootstrap without `[background_mcp_hook]`
+- expecting cross-session memory after only running `index this project`
 
 ## Development
 
 ```bash
-# Install dependencies
 uv sync
-
-# Run tests
 uv run pytest
-
-# Build package
 uv build
 ```
 
-## Changelog
-
-See [CHANGELOG.md](CHANGELOG.md) for detailed release notes.
-
-## User Guide
-
-See [docs/user-guide.md](docs/user-guide.md) for the day-to-day workflow:
-
-- how to talk to Vibe across sessions
-- when to use `remember` vs `index this project`
-- where to put `MISTRAL_API_KEY` and `DATABASE_URL`
-- how pgvector cross-session memory works
-
-## License
-
-MIT © 2026 Jasen Carroll
-
 ## Support
 
-- Issues: [GitHub Issues](https://github.com/jasencarroll/vibe-rag/issues)
-- Discussions: [GitHub Discussions](https://github.com/jasencarroll/vibe-rag/discussions)
-- Source: [GitHub Repository](https://github.com/jasencarroll/vibe-rag)
+- Issues: `https://github.com/jasencarroll/vibe-rag/issues`
+- Source: `https://github.com/jasencarroll/vibe-rag`

@@ -2,9 +2,14 @@
 
 ## Purpose
 
-This project is configured for Mistral Vibe with `vibe-rag`.
+This project is configured for Vibe with `vibe-rag`.
 
-Use the memory MCP tools first when the task is about understanding the project, finding relevant code by meaning, searching docs, or recalling decisions from earlier sessions.
+Use the memory MCP tools first when the task is about:
+
+- understanding the project
+- finding relevant code by meaning
+- searching docs
+- recalling decisions from earlier sessions
 
 ## Tool preference
 
@@ -52,6 +57,13 @@ For remembered context:
 1. Run `memory_load_session_context` or `memory_search_memory` first.
 2. If a new decision is made, store it with `memory_remember`.
 
+For a brand-new repo session:
+
+1. Run `memory_load_session_context`.
+2. Run `memory_index_project`.
+3. Use `memory_search_code` and `memory_search_docs`.
+4. If results are stale or empty, re-check repo trust and MCP config.
+
 ## When to prefer memory tools over grep
 
 Prefer memory tools when:
@@ -94,10 +106,23 @@ Do not store:
 
 - "index this project"
 - "load session context for continuing the auth refactor"
+- "load session context for understanding this repo"
 - "search the code for authentication handling"
 - "search docs for release steps"
 - "remember that we use pgvector for cross-repo memory"
 - "what did we decide about config layout?"
+
+## Setup reminders
+
+- This repo should have a `.vibe/config.toml` that points the `memory` MCP server at `vibe-rag serve`.
+- If durable memory is expected, that MCP config must include `DATABASE_URL`.
+- `MISTRAL_API_KEY` is required for embeddings and semantic search.
+- If background session bootstrap is expected, the Vibe config should contain:
+  - `[background_mcp_hook]`
+  - `enabled = true`
+  - `tool_name = "memory_load_session_context"`
+  - `task_arg = "task"`
+- If the repo is not trusted, project-local config and skills may be ignored.
 
 ## Editing rules
 
