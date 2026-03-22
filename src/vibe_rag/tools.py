@@ -141,6 +141,13 @@ def _metadata_dict(value: object) -> dict:
     return {}
 
 
+def _should_skip_session_capture(response: str) -> bool:
+    normalized = _single_line(response).lower()
+    return normalized.startswith("i have no durable memory") or normalized.startswith(
+        "no durable memory"
+    )
+
+
 def _score(result: dict) -> float:
     if result.get("score") is not None:
         return float(result["score"])
@@ -239,19 +246,27 @@ def _search_memory_results(query: str, limit: int = 10) -> tuple[str | None, lis
         except Exception as e:
             return f"Embedding failed: {e}", []
         try:
-            local_results = _run_async(
-                pg.search_memories(embeddings[0], limit=limit, project_id=_ensure_project_id())
+            current_project_id = _ensure_project_id()
+            global_results = _run_async(
+                pg.search_memories(embeddings[0], limit=max(limit * 5, 20), project_id=None)
             )
+            cross_repo_results = [
+                result
+                for result in global_results
+                if result.get("project_id") != current_project_id
+            ]
         except Exception as e:
             return f"Error searching pgvector memories: {e}", []
         try:
-            global_results = _run_async(pg.search_memories(embeddings[0], limit=limit, project_id=None))
+            local_results = _run_async(
+                pg.search_memories(embeddings[0], limit=limit, project_id=current_project_id)
+            )
         except Exception as e:
             return f"Error searching pgvector memories: {e}", []
 
         seen_ids: set[str] = set()
         results: list[dict] = []
-        for result in local_results + global_results:
+        for result in local_results + cross_repo_results:
             memory_id = str(result["id"])
             if memory_id in seen_ids:
                 continue
@@ -623,6 +638,8 @@ def save_session_memory(
     metadata: dict | None = None,
 ) -> dict:
     """Persist a distilled durable memory from a completed chat turn."""
+    if _should_skip_session_capture(response):
+        return {"ok": True, "skipped": True, "reason": "low-signal response"}
     task_error = _validate_memory_content(task)
     if task_error:
         return {"ok": False, "error": task_error}
@@ -742,6 +759,10 @@ def save_session_summary(
     metadata: dict | None = None,
 ) -> dict:
     """Maintain a rolling durable summary for the current session."""
+    if turns:
+        last_assistant = str(turns[-1].get("assistant", ""))
+        if _should_skip_session_capture(last_assistant):
+            return {"ok": True, "skipped": True, "reason": "low-signal response"}
     task_error = _validate_memory_content(task)
     if task_error:
         return {"ok": False, "error": task_error}

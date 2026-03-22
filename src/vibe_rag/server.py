@@ -1,6 +1,7 @@
 from __future__ import annotations
 import asyncio
 import atexit
+import hashlib
 import logging
 import os
 import threading
@@ -89,12 +90,18 @@ def _get_embedder() -> Embedder:
     return _embedder
 
 
+def _project_id_for_path(path: Path) -> str:
+    resolved = path.resolve()
+    digest = hashlib.sha1(str(resolved).encode("utf-8")).hexdigest()[:12]
+    return f"{resolved.name}-{digest}"
+
+
 def _ensure_project_id() -> str:
     global _project_id
     if _project_id is None:
         with _init_lock:
             if _project_id is None:
-                _project_id = Path.cwd().name
+                _project_id = _project_id_for_path(Path.cwd())
     return _project_id
 
 
@@ -121,7 +128,7 @@ atexit.register(_cleanup)
 async def _startup() -> None:
     global _pg, _project_id
 
-    _project_id = Path.cwd().name
+    _project_id = _project_id_for_path(Path.cwd())
 
     if _database_url:
         try:

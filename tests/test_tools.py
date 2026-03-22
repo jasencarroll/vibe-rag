@@ -261,6 +261,18 @@ def test_save_session_memory_distills_and_deduplicates(tmp_db, mock_embedder):
     assert second["memory"]["id"] == first["memory"]["id"]
 
 
+def test_save_session_memory_skips_low_signal_no_memory_response(tmp_db, mock_embedder):
+    result = save_session_memory(
+        task="What durable memory do you have?",
+        response="I have no durable memory about this task.",
+        source_session_id="sess-none",
+        source_message_id="msg-none",
+    )
+
+    assert result["ok"] is True
+    assert result["skipped"] is True
+
+
 def test_save_session_summary_rolls_up_many_turns(tmp_db, mock_embedder):
     first = save_session_summary(
         task="finish the auth refactor",
@@ -310,6 +322,25 @@ def test_save_session_summary_rolls_up_many_turns(tmp_db, mock_embedder):
     assert second["memory"]["supersedes"] == first["memory"]["id"]
     assert second["memory"]["metadata"]["latest_message_id"] == "msg-3"
     assert "Session covered 3 turns." in second["memory"]["content"]
+
+
+def test_save_session_summary_skips_low_signal_no_memory_response(
+    tmp_db, mock_embedder
+):
+    result = save_session_summary(
+        task="What durable memory do you have?",
+        turns=[
+            {
+                "user": "What durable memory do you have?",
+                "assistant": "I have no durable memory about this task.",
+            }
+        ],
+        source_session_id="sess-none",
+        source_message_id="msg-none",
+    )
+
+    assert result["ok"] is True
+    assert result["skipped"] is True
 
 
 def test_save_session_summary_updates_pgvector_rollup_when_existing_metadata_is_string(
@@ -463,6 +494,60 @@ def test_search_memory_falls_back_to_cross_repo_pgvector_results(tmp_db, mock_em
 
     assert "mistral-vibe" in result
     assert "CERULEAN_PINEAPPLE_20260322" in result
+
+
+def test_search_memory_global_fallback_excludes_current_project_results(
+    tmp_db, mock_embedder
+):
+    import vibe_rag.server as srv
+
+    class FakePG:
+        async def memory_count(self):
+            return 3
+
+        async def search_memories(self, embedding, limit=10, project_id=None):
+            if project_id == "sink-repo":
+                return [
+                    {
+                        "id": "sink-1",
+                        "content": "I have no durable memory about QUARTZ.",
+                        "summary": "I have no durable memory about QUARTZ.",
+                        "project_id": "sink-repo",
+                        "memory_kind": "summary",
+                        "score": 0.99,
+                    }
+                ]
+            return [
+                {
+                    "id": "sink-1",
+                    "content": "I have no durable memory about QUARTZ.",
+                    "summary": "I have no durable memory about QUARTZ.",
+                    "project_id": "sink-repo",
+                    "memory_kind": "summary",
+                    "score": 0.99,
+                },
+                {
+                    "id": "source-1",
+                    "content": "The marker is QUARTZ_MERIDIAN_20260322_Z9.",
+                    "summary": "The marker is QUARTZ_MERIDIAN_20260322_Z9.",
+                    "project_id": "source-repo",
+                    "memory_kind": "summary",
+                    "score": 0.92,
+                },
+            ]
+
+    old_pg = srv._pg
+    old_project_id = srv._project_id
+    srv._pg = FakePG()
+    srv._project_id = "sink-repo"
+    try:
+        result = search_memory("QUARTZ_MERIDIAN_20260322_Z9")
+    finally:
+        srv._pg = old_pg
+        srv._project_id = old_project_id
+
+    assert "source-repo" in result
+    assert "QUARTZ_MERIDIAN_20260322_Z9" in result
 
 
 def test_load_session_context_uses_pg_memory_results(tmp_db, mock_embedder, tmp_path: Path):

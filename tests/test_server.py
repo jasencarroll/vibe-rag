@@ -1,4 +1,5 @@
 """Tests for vibe_rag.server edge cases."""
+import hashlib
 from pathlib import Path
 
 import pytest
@@ -12,12 +13,18 @@ except ImportError:
 pytestmark = pytest.mark.skipif(not _server_available, reason="server module has import errors")
 
 
-def test_ensure_project_id_returns_cwd_name():
+def test_project_id_for_path_uses_name_and_path_hash(tmp_path: Path):
+    expected = f"{tmp_path.name}-{hashlib.sha1(str(tmp_path.resolve()).encode('utf-8')).hexdigest()[:12]}"
+    assert srv._project_id_for_path(tmp_path) == expected
+
+
+def test_ensure_project_id_returns_path_derived_id():
     old = srv._project_id
     srv._project_id = None
     try:
         pid = srv._ensure_project_id()
-        assert pid == Path.cwd().name
+        expected = srv._project_id_for_path(Path.cwd())
+        assert pid == expected
         assert srv._project_id == pid
     finally:
         srv._project_id = old
