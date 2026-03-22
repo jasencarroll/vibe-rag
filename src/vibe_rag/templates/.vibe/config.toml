@@ -6,4 +6,4 @@ name = "memory"
 transport = "stdio"
 command = "__VIBE_RAG_BIN__"
 args = ["serve"]
-env = { "MISTRAL_API_KEY" = "__MISTRAL_API_KEY__", "DATABASE_URL" = "__DATABASE_URL__" }
+env = { "DATABASE_URL" = "__DATABASE_URL__" }

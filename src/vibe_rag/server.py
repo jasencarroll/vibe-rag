@@ -27,7 +27,10 @@ def _get_db() -> SqliteVecDB:
 
 
 def _get_pg() -> PostgresDB | None:
-    """Returns the pgvector connection, or None if DATABASE_URL not set."""
+    """Returns the pgvector connection, or None if DATABASE_URL not set or connection failed.
+    
+    The connection is established during startup. If it fails, _pg will be None.
+    """
     return _pg
 
 
@@ -41,6 +44,21 @@ def _get_embedder() -> Embedder:
 
 
 def _get_project_id() -> str | None:
+    """Returns the current project ID, or None if not initialized.
+    
+    The project ID is set during server startup and is typically the directory name.
+    """
+    return _project_id
+
+
+def _ensure_project_id() -> str:
+    """Ensure project ID is set, falling back to directory name if needed.
+    
+    This is a safety measure to ensure we always have a project ID.
+    """
+    global _project_id
+    if _project_id is None:
+        _project_id = Path.cwd().name
     return _project_id
 
 

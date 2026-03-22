@@ -55,9 +55,6 @@ def init(name: str | None):
     vibe_dir.mkdir(exist_ok=True)
     config_text = (templates_dir / ".vibe" / "config.toml").read_text()
 
-    api_key = os.environ.get("MISTRAL_API_KEY", "")
-    config_text = config_text.replace("__MISTRAL_API_KEY__", api_key)
-
     database_url = os.environ.get("DATABASE_URL", "")
     config_text = config_text.replace("__DATABASE_URL__", database_url)
 
@@ -89,7 +86,7 @@ def init(name: str | None):
     click.echo(f"    .vibe/config.toml  — vibe-rag MCP server")
     click.echo(f"\n  Next:")
     click.echo(f"    cd {target}")
-    click.echo(f"    vibe --agent builder\n")
+    click.echo(f"    vibe --agent builder")
 
 
 async def _pg_count(pg: PostgresDB) -> int:

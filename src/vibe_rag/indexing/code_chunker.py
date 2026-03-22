@@ -9,7 +9,10 @@ LANGUAGE_MAP: dict[str, str] = {
     "rust": "rust", "go": "go", "java": "java", "c": "c", "cpp": "cpp",
 }
 
+# Chunking constants
 MAX_CHUNK_LINES = 200  # ~800 tokens — if a symbol is bigger, sub-split it
+SLIDING_WINDOW_SIZE = 60  # Lines per chunk in sliding window mode
+SLIDING_WINDOW_OVERLAP = 10  # Lines to overlap between chunks
 
 SYMBOL_NODE_TYPES: set[str] = {
     "function_definition", "class_definition", "function_declaration",
@@ -17,7 +20,7 @@ SYMBOL_NODE_TYPES: set[str] = {
 }
 
 
-def chunk_code_sliding_window(content: str, file_path: str, window: int = 60, overlap: int = 10) -> list[dict]:
+def chunk_code_sliding_window(content: str, file_path: str, window: int = SLIDING_WINDOW_SIZE, overlap: int = SLIDING_WINDOW_OVERLAP) -> list[dict]:
     lines = content.splitlines(keepends=True)
     if not lines:
         return []
@@ -97,7 +100,7 @@ def _subsplit_large_chunks(chunks: list[dict]) -> list[dict]:
             idx += 1
         else:
             sub_chunks = chunk_code_sliding_window(
-                chunk["content"], chunk["file_path"], window=60, overlap=10,
+                chunk["content"], chunk["file_path"], window=SLIDING_WINDOW_SIZE, overlap=SLIDING_WINDOW_OVERLAP,
             )
             for sc in sub_chunks:
                 sc["chunk_index"] = idx

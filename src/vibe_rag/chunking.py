@@ -49,16 +49,49 @@ def chunk_doc(content: str, file_path: str) -> list[dict]:
 
 
 def collect_files(root_paths: list[Path]) -> tuple[list[Path], list[Path]]:
+    """Collect code and documentation files from root paths, excluding skipped directories.
+    
+    This function uses more efficient glob patterns instead of rglob('*') for better performance
+    on large directories. It also checks file size and type before including files.
+    """
     code_files: list[Path] = []
     doc_files: list[Path] = []
+    
+    # Combine all code extensions into glob patterns
+    code_patterns = [f"**/*{ext}" for ext in CODE_EXTENSIONS]
+    doc_patterns = [f"**/*{ext}" for ext in DOC_EXTENSIONS]
+    
     for root in root_paths:
-        for path in root.rglob("*"):
-            if any(skip in path.parts for skip in SKIP_DIRS):
-                continue
-            if not path.is_file() or path.stat().st_size > MAX_FILE_SIZE:
-                continue
-            if path.suffix in CODE_EXTENSIONS:
-                code_files.append(path)
-            elif path.suffix in DOC_EXTENSIONS:
-                doc_files.append(path)
+        # Collect code files
+        for pattern in code_patterns:
+            for path in root.glob(pattern):
+                if _should_include_file(path):
+                    code_files.append(path)
+        
+        # Collect doc files
+        for pattern in doc_patterns:
+            for path in root.glob(pattern):
+                if _should_include_file(path):
+                    doc_files.append(path)
+    
     return code_files, doc_files
+
+
+def _should_include_file(path: Path) -> bool:
+    """Check if a file should be included in indexing."""
+    # Skip directories and non-files
+    if not path.is_file():
+        return False
+    
+    # Skip files that are too large
+    try:
+        if path.stat().st_size > MAX_FILE_SIZE:
+            return False
+    except (OSError, PermissionError):
+        return False
+    
+    # Skip files in excluded directories
+    if any(skip in path.parts for skip in SKIP_DIRS):
+        return False
+    
+    return True

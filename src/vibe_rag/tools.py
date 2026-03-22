@@ -2,7 +2,7 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-from vibe_rag.server import mcp, _get_db, _get_pg, _get_embedder, _get_project_id
+from vibe_rag.server import mcp, _get_db, _get_pg, _get_embedder, _ensure_project_id
 from vibe_rag.chunking import chunk_doc, collect_files
 from vibe_rag.indexing.code_chunker import chunk_code
 from vibe_rag.constants import EXT_TO_LANG
@@ -28,8 +28,9 @@ def index_project(paths: list[str] | None = None) -> str:
     project_root = Path.cwd()
     code_chunk_count = 0
     doc_chunk_count = 0
+    error_message = None
 
-    # Pass 1: Code
+    # Process code files
     if code_files:
         all_code_chunks: list[dict] = []
         for f in code_files:
@@ -44,14 +45,14 @@ def index_project(paths: list[str] | None = None) -> str:
         if all_code_chunks:
             try:
                 embeddings = embedder.embed_code_sync([c["content"] for c in all_code_chunks])
+                db.clear_code()
+                db.upsert_chunks(all_code_chunks, embeddings)
+                code_chunk_count = len(all_code_chunks)
             except Exception as e:
-                return f"Code embedding failed: {e}"
-            db.clear_code()
-            db.upsert_chunks(all_code_chunks, embeddings)
-            code_chunk_count = len(all_code_chunks)
+                error_message = f"Code processing failed: {e}"
 
-    # Pass 2: Docs
-    if doc_files:
+    # Process doc files
+    if doc_files and not error_message:
         all_doc_chunks: list[dict] = []
         for f in doc_files:
             try:
@@ -64,11 +65,14 @@ def index_project(paths: list[str] | None = None) -> str:
         if all_doc_chunks:
             try:
                 embeddings = embedder.embed_text_sync([c["content"] for c in all_doc_chunks])
+                db.clear_docs()
+                db.upsert_docs(all_doc_chunks, embeddings)
+                doc_chunk_count = len(all_doc_chunks)
             except Exception as e:
-                return f"Doc embedding failed: {e}"
-            db.clear_docs()
-            db.upsert_docs(all_doc_chunks, embeddings)
-            doc_chunk_count = len(all_doc_chunks)
+                error_message = f"Doc processing failed: {e}"
+
+    if error_message:
+        return error_message
 
     elapsed = time.time() - start
     return f"Indexed {len(code_files)} code files ({code_chunk_count} chunks), {len(doc_files)} docs ({doc_chunk_count} chunks) in {elapsed:.1f}s"
@@ -132,8 +136,8 @@ def remember(content: str, tags: str = "") -> str:
     pg = _get_pg()
     if pg:
         import asyncio
-        memory_id = asyncio.get_event_loop().run_until_complete(
-            pg.remember(content, embeddings[0], tags, _get_project_id())
+        memory_id = asyncio.run(
+            pg.remember(content, embeddings[0], tags, _ensure_project_id())
         )
         return f"Remembered in pgvector (id={memory_id}): {content[:200]}"
 
@@ -148,15 +152,15 @@ def search_memory(query: str, limit: int = 10) -> str:
     pg = _get_pg()
     if pg:
         import asyncio
-        count = asyncio.get_event_loop().run_until_complete(pg.memory_count())
+        count = asyncio.run(pg.memory_count())
         if count == 0:
             return "No memories stored yet."
         try:
             embeddings = _get_embedder().embed_text_sync([query])
         except Exception as e:
             return f"Embedding failed: {e}"
-        results = asyncio.get_event_loop().run_until_complete(
-            pg.search_memories(embeddings[0], limit=limit, project_id=_get_project_id())
+        results = asyncio.run(
+            pg.search_memories(embeddings[0], limit=limit, project_id=_ensure_project_id())
         )
         if not results:
             return "No matching memories found."
@@ -180,7 +184,8 @@ def search_memory(query: str, limit: int = 10) -> str:
         return "No matching memories found."
     output = []
     for r in results:
-        output.append(f"[id={r['id']} | {r['created_at']}] {r['content']}")
+        score = f"{1.0 - r.get('distance', 1.0):.2f}" if r.get('distance') is not None else "1.00"
+        output.append(f"[id={r['id']} score={score}] {r['content']}")
     return "\n\n".join(output)
 
 
@@ -190,10 +195,13 @@ def forget(memory_id: int) -> str:
     pg = _get_pg()
     if pg:
         import asyncio
-        content = asyncio.get_event_loop().run_until_complete(pg.forget(memory_id))
-        if content:
-            return f"Deleted from pgvector: {content[:200]}"
-        return f"Memory {memory_id} not found."
+        try:
+            content = asyncio.run(pg.forget(memory_id))
+            if content:
+                return f"Deleted from pgvector: {content[:200]}"
+            return f"Memory {memory_id} not found."
+        except Exception as e:
+            return f"Error deleting from pgvector: {e}"
 
     db = _get_db()
     content = db.forget(memory_id)
