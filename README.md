@@ -73,7 +73,20 @@ Both are stored in the same sqlite-vec database and searched with the appropriat
 
 ## Setup for an existing project
 
-If you already have a Vibe project, add this to your `.vibe/config.toml`:
+If you already have a Vibe project (or any existing repository), initialize vibe-rag scaffolding:
+
+```bash
+cd your-existing-project
+vibe-rag init
+```
+
+This creates:
+- `.vibe/config.toml` — MCP server configuration
+- `.vibe/index.db` — local vector database
+- `.gitignore` entry for `.vibe/index.db`
+- `AGENTS.md` — coding rules template
+
+If you prefer to configure manually instead, add this to your `.vibe/config.toml`:
 
 ```toml
 [[mcp_servers]]
@@ -83,8 +96,6 @@ command = "vibe-rag"
 args = ["serve"]
 env = { "MISTRAL_API_KEY" = "your-key-here" }
 ```
-
-Add `.vibe/index.db` to your `.gitignore`.
 
 ## CLI
 
