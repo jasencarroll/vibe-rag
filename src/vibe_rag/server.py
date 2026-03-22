@@ -4,7 +4,6 @@ import atexit
 import logging
 import os
 import threading
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from mcp.server.fastmcp import FastMCP
 from vibe_rag.db.sqlite import SqliteVecDB
@@ -22,16 +21,42 @@ _pg: PostgresDB | None = None
 _embedder: Embedder | None = None
 _project_id: str | None = None
 _init_lock = threading.Lock()
-_pg_executor = ThreadPoolExecutor(max_workers=1)
+_async_loop: asyncio.AbstractEventLoop | None = None
+_async_thread: threading.Thread | None = None
+_async_ready = threading.Event()
+
+
+def _ensure_async_loop() -> asyncio.AbstractEventLoop:
+    global _async_loop, _async_thread
+    if _async_loop is not None:
+        return _async_loop
+
+    with _init_lock:
+        if _async_loop is not None:
+            return _async_loop
+
+        _async_ready.clear()
+
+        def run_loop() -> None:
+            global _async_loop
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            _async_loop = loop
+            _async_ready.set()
+            loop.run_forever()
+            loop.close()
+
+        _async_thread = threading.Thread(target=run_loop, name="vibe-rag-async", daemon=True)
+        _async_thread.start()
+        _async_ready.wait()
+        return _async_loop
 
 
 def _run_async(coro):
-    """Run an async coroutine from sync context, even inside a running event loop."""
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(coro)
-    return _pg_executor.submit(asyncio.run, coro).result()
+    """Run an async coroutine on the server's dedicated event loop."""
+    loop = _ensure_async_loop()
+    future = asyncio.run_coroutine_threadsafe(coro, loop)
+    return future.result()
 
 
 def _get_db() -> SqliteVecDB:
@@ -74,6 +99,7 @@ def _ensure_project_id() -> str:
 
 
 def _cleanup() -> None:
+    global _async_loop, _async_thread
     if _db is not None:
         _db.close()
     if _pg is not None:
@@ -81,7 +107,12 @@ def _cleanup() -> None:
             _run_async(_pg.close())
         except Exception:
             pass
-    _pg_executor.shutdown(wait=False)
+    if _async_loop is not None:
+        _async_loop.call_soon_threadsafe(_async_loop.stop)
+    if _async_thread is not None:
+        _async_thread.join(timeout=1)
+    _async_loop = None
+    _async_thread = None
 
 
 atexit.register(_cleanup)
@@ -106,5 +137,5 @@ import vibe_rag.tools  # noqa: F401, E402
 
 
 def run_server() -> None:
-    asyncio.run(_startup())
+    _run_async(_startup())
     mcp.run(transport="stdio")

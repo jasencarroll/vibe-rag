@@ -50,3 +50,15 @@ def test_get_db_creates_and_returns_db(tmp_path: Path, monkeypatch):
         if srv._db:
             srv._db.close()
         srv._db = old_db
+
+
+def test_run_async_uses_single_background_loop():
+    async def get_loop_id():
+        import asyncio
+
+        return id(asyncio.get_running_loop())
+
+    first = srv._run_async(get_loop_id())
+    second = srv._run_async(get_loop_id())
+
+    assert first == second

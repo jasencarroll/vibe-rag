@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.9] - 2026-03-22
+
+### Fixed
+- `python -m vibe_rag.cli serve` now starts the MCP server correctly for source-run Vibe sessions
+- Relative `index_project(paths=["."])` indexing no longer breaks on repo-root runs
+- pgvector operations now run on a dedicated async loop instead of failing under Vibe's running event loop
+- `forget()` accepts pgvector UUID memory IDs correctly during MCP round-trips
+
+### Changed
+- pgvector migrations now detect and replace incompatible legacy `memories` schemas
+- PostgreSQL memories use UUID IDs and `text[]` tags to match the live database shape
+- README configuration docs now tell users exactly where to put `MISTRAL_API_KEY` and `DATABASE_URL`
+
+### Added
+- Regression coverage for source-run CLI entrypoints and single-loop async execution
+- Real Vibe E2E verification for index, code/docs search, remember, search_memory, and forget
+
 ## [0.0.7] - 2026-03-22
 
 ### Fixed

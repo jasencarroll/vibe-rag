@@ -127,3 +127,7 @@ def serve():
     """Start the MCP server (called by Vibe, not the user)."""
     from vibe_rag.server import run_server
     run_server()
+
+
+if __name__ == "__main__":
+    main()

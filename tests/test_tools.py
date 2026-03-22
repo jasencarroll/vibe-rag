@@ -191,6 +191,51 @@ def test_remember_with_tags(tmp_db, mock_embedder):
     assert "JWT" in result
 
 
+def test_pg_memory_tools_work_inside_running_event_loop(tmp_db, mock_embedder):
+    import asyncio
+    import vibe_rag.server as srv
+
+    class FakePG:
+        async def remember(self, content, embedding, tags="", project_id=None):
+            return 42
+
+        async def memory_count(self):
+            return 1
+
+        async def search_memories(self, embedding, limit=10, project_id=None):
+            return [
+                {
+                    "id": 42,
+                    "content": "architecture note",
+                    "project_id": project_id,
+                    "score": 0.91,
+                }
+            ]
+
+        async def forget(self, memory_id):
+            return "architecture note"
+
+    old_pg = srv._pg
+    old_project_id = srv._project_id
+    srv._pg = FakePG()
+    srv._project_id = "test-project"
+    try:
+        async def run_tools():
+            remembered = remember("architecture note")
+            searched = search_memory("architecture")
+            deleted = forget(42)
+            return remembered, searched, deleted
+
+        remembered, searched, deleted = asyncio.run(run_tools())
+    finally:
+        srv._pg = old_pg
+        srv._project_id = old_project_id
+
+    assert "Remembered in pgvector" in remembered
+    assert "[id=42 [test-project] score=0.91]" in searched
+    assert "Deleted from pgvector" in deleted
+
+
 def test_remember_empty_content(tmp_db, mock_embedder):
     result = remember("")
     assert "Error" in result

@@ -2,21 +2,22 @@
 
 Local semantic code search and persistent memory for [Mistral Vibe](https://docs.mistral.ai/mistral-vibe/). An MCP server that gives Vibe the ability to understand your codebase by meaning, remember things across sessions, and search your docs — all stored in a single local sqlite file. No external database. No cloud. Fully local.
 
-## v0.0.8 Highlights
+## v0.0.9 Highlights
 
 - **🔒 Security:** API keys never stored in config files
 - **🚀 Performance:** 5-10x faster file collection on large projects  
 - **🐛 Reliability:** Fixed race conditions and error handling
 - **📚 Language Support:** Complete mappings for all file types
+- **🧠 Vibe E2E:** Source-run and installed-package MCP flows verified through Mistral Vibe
 
 ## Install
 
 ```bash
-# Latest stable release (v0.0.8)
+# Latest stable release (v0.0.9)
 uv tool install vibe-rag
 
 # Or install specific version
-uv tool install vibe-rag@0.0.8
+uv tool install vibe-rag@0.0.9
 ```
 
 Requires Python 3.12+ and a [Mistral API key](https://console.mistral.ai/api-keys).
@@ -65,25 +66,72 @@ The generated scaffold includes:
 - Smart chunking with tree-sitter for supported languages
 
 ### Security
-- API keys only passed via environment variables
-- No credentials stored in configuration files
+- `vibe-rag init` does not write credentials into generated config
+- Credentials can be inherited from the launch shell or set explicitly in Vibe MCP config
 - Local-only by default (pgvector optional)
 
 ## Configuration
 
-Set your Mistral API key:
+`vibe-rag init` generates a credential-free `.vibe/config.toml`:
+
+```toml
+# .vibe/config.toml
+active_model = "devstral-2"
+skill_paths = [".vibe/skills"]
+
+[[mcp_servers]]
+name = "memory"
+transport = "stdio"
+command = "vibe-rag"
+args = ["serve"]
+```
+
+For Vibe itself, there are two supported ways to provide credentials.
+
+Option 1: export them before launching `vibe`:
 
 ```bash
 export MISTRAL_API_KEY=your_api_key_here
-```
-
-For cross-repo memory (optional):
-
-```bash
 export DATABASE_URL=postgresql://user:pass@localhost:5432/vibe_rag
+vibe
 ```
 
-`vibe-rag init` keeps `.vibe/config.toml` free of credentials. Launch Vibe from a shell or environment that already exports the variables you want the MCP server to inherit.
+Option 2: add them to the MCP server `env` block in your project-local `.vibe/config.toml` or global `~/.vibe/config.toml`. This is the most reliable option if Vibe is launched from different shells or GUI sessions:
+
+```toml
+[[mcp_servers]]
+name = "memory"
+transport = "stdio"
+command = "vibe-rag"
+args = ["serve"]
+env = {
+  MISTRAL_API_KEY = "your_api_key_here",
+  DATABASE_URL = "postgresql://user:pass@localhost:5432/vibe_rag"
+}
+```
+
+Notes:
+
+- `MISTRAL_API_KEY` is required for indexing, code search, docs search, and memory embeddings.
+- `DATABASE_URL` is optional and only enables cross-repo memory via pgvector.
+- Use `.vibe/config.toml` for project-specific credentials and `~/.vibe/config.toml` for a global setup.
+- For normal use, prefer the installed package entrypoint above.
+- If you want Vibe to test the working tree instead of an installed release, point `command` at your repo venv, for example:
+
+```toml
+[[mcp_servers]]
+name = "memory"
+transport = "stdio"
+command = "/absolute/path/to/repo/.venv/bin/python"
+args = ["-m", "vibe_rag.cli", "serve"]
+env = {
+  PYTHONPATH = "/absolute/path/to/repo/src",
+  MISTRAL_API_KEY = "your_api_key_here",
+  DATABASE_URL = "postgresql://user:pass@localhost:5432/vibe_rag"
+}
+```
+
+Vibe only loads project skills and project MCP config from trusted folders. If the repo is not trusted yet, trust it first, then restart Vibe and run `index this project`.
 
 ## Architecture
 

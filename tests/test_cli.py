@@ -1,4 +1,7 @@
 from pathlib import Path
+import os
+import subprocess
+import sys
 
 from click.testing import CliRunner
 from vibe_rag.cli import main
@@ -8,7 +11,7 @@ def test_cli_version():
     runner = CliRunner()
     result = runner.invoke(main, ["--version"])
     assert result.exit_code == 0
-    assert "0.0.8" in result.output
+    assert "0.0.9" in result.output
 
 
 def test_cli_status():
@@ -16,6 +19,24 @@ def test_cli_status():
     result = runner.invoke(main, ["status"])
     assert result.exit_code == 0
     assert "vibe-rag" in result.output
+
+
+def test_cli_module_entrypoint():
+    env = os.environ.copy()
+    pythonpath = env.get("PYTHONPATH")
+    src_path = str(Path(__file__).resolve().parents[1] / "src")
+    env["PYTHONPATH"] = src_path if not pythonpath else f"{src_path}:{pythonpath}"
+
+    result = subprocess.run(
+        [sys.executable, "-m", "vibe_rag.cli", "--version"],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert "0.0.9" in result.stdout
 
 
 def test_cli_init_does_not_persist_secrets():
