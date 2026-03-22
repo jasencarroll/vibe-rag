@@ -5,7 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.0.9] - 2026-03-22
+## [0.0.12] - 2026-03-22
+
+### Added
+- `save_session_memory` to distill completed chat turns into durable memory
+- `save_session_summary` to maintain a rolling session summary with supersession
+- Cross-repo pgvector retrieval fallback when current-project matches are sparse
+
+### Changed
+- pgvector metadata reads are normalized so rollup updates work reliably
+- `project_status` separates local sqlite memory counts from pgvector counts
+
 ## [0.0.11] - 2026-03-22
 
 ### Fixed

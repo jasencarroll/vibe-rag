@@ -11,7 +11,7 @@ def test_cli_version():
     runner = CliRunner()
     result = runner.invoke(main, ["--version"])
     assert result.exit_code == 0
-    assert "0.0.11" in result.output
+    assert "0.0.12" in result.output
 
 
 def test_cli_status():
@@ -36,7 +36,7 @@ def test_cli_module_entrypoint():
     )
 
     assert result.returncode == 0
-    assert "0.0.11" in result.stdout
+    assert "0.0.12" in result.stdout
 
 
 def test_cli_init_does_not_persist_secrets():
