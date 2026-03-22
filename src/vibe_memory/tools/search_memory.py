@@ -18,13 +18,17 @@ def register(mcp: FastMCP) -> None:
         except Exception as e:
             return f"Embedding API unavailable: {e}"
 
-        results = await _pg.search_memories(
-            query_embedding=embeddings[0], scope=scope,
-            project_id=_config.project_id if _config else None,
-            project_only=project_only, limit=limit,
-        )
+        try:
+            results = await _pg.search_memories(
+                query_embedding=embeddings[0], scope=scope,
+                project_id=_config.project_id if _config else None,
+                project_only=project_only, limit=limit,
+            )
+        except Exception as e:
+            return f"Search failed: {e}"
+
         if not results:
-            return "No matching memories found."
+            return f"No matching memories found. (debug: scope={scope}, project_id={_config.project_id if _config else None}, project_only={project_only}, embedding_dim={len(embeddings[0])}, pg_connected={_pg is not None})"
 
         output = []
         for r in results:
