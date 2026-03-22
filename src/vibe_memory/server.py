@@ -139,10 +139,10 @@ register_ingest_doc(mcp)
 
 
 def run_server() -> None:
-    @contextlib.asynccontextmanager
-    async def lifespan(server):
-        await _startup()
-        yield
+    import asyncio
 
-    mcp._lifespan = lifespan
-    mcp.run(transport="stdio")
+    async def _run():
+        await _startup()
+        await mcp.run_stdio_async()
+
+    asyncio.run(_run())
