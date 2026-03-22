@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from vibe_memory.indexing.session_indexer import parse_session_messages, chunk_session_text, find_completed_sessions
+from vibe_rag.indexing.session_indexer import parse_session_messages, chunk_session_text, find_completed_sessions
 
 
 def test_parse_session_messages(tmp_path: Path):

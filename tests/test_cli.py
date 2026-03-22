@@ -1,5 +1,5 @@
 from click.testing import CliRunner
-from vibe_memory.cli import main
+from vibe_rag.cli import main
 
 
 def test_cli_version():
@@ -13,4 +13,4 @@ def test_cli_status():
     runner = CliRunner()
     result = runner.invoke(main, ["status"])
     assert result.exit_code == 0
-    assert "vibe-memory" in result.output
+    assert "vibe-rag" in result.output

@@ -1,5 +1,5 @@
 """Smoke tests for tool registration."""
-from vibe_memory.server import mcp
+from vibe_rag.server import mcp
 
 
 def test_all_tools_registered():

@@ -6,7 +6,7 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool()
     async def search_code(query: str, limit: int = 10, language: str | None = None) -> str:
         """Search project code by semantic meaning. Returns matching code chunks with file paths and line numbers."""
-        from vibe_memory.server import _sqlite, _embedder
+        from vibe_rag.server import _sqlite, _embedder
 
         if not _sqlite:
             return "No code index found. Run index_project first."

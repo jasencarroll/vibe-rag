@@ -1,7 +1,7 @@
 import pytest
 import httpx
 
-from vibe_memory.indexing.embedder import Embedder
+from vibe_rag.indexing.embedder import Embedder
 
 
 @pytest.fixture

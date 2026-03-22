@@ -1,6 +1,6 @@
 import pytest
 from pathlib import Path
-from vibe_memory.db.sqlite import SqliteVecDB
+from vibe_rag.db.sqlite import SqliteVecDB
 
 
 @pytest.fixture

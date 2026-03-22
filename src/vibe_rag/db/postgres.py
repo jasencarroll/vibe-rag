@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 import asyncpg
-from vibe_memory.db.migrations import run_migrations
+from vibe_rag.db.migrations import run_migrations
 
 
 def _parse_ts(val: str | datetime | None) -> datetime | None:

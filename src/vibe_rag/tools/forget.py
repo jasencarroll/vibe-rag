@@ -6,7 +6,7 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool()
     async def forget(query: str | None = None, memory_id: str | None = None, session_id: str | None = None) -> str:
         """Remove a memory or session. Provide query (finds closest match), memory_id, or session_id."""
-        from vibe_memory.server import _pg, _embedder
+        from vibe_rag.server import _pg, _embedder
 
         if not _pg:
             return "Memory database unavailable."

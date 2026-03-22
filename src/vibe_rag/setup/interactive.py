@@ -3,8 +3,8 @@ import os
 from pathlib import Path
 import asyncio
 import asyncpg
-from vibe_memory.db.migrations import run_migrations
-from vibe_memory.setup.neon import (
+from vibe_rag.db.migrations import run_migrations
+from vibe_rag.setup.neon import (
     neonctl_available, neon_auth, neon_create_project,
     neon_get_connection_string, neon_enable_pgvector,
 )
@@ -40,7 +40,7 @@ def setup_with_neon() -> str:
     print("  ✓ Creating project...")
     project = neon_create_project()
     project_id = project.get("project", {}).get("id", project.get("id", ""))
-    print("  ✓ Created project: vibe-memory")
+    print("  ✓ Created project: vibe-rag")
     conn_str = neon_get_connection_string(project_id)
     neon_enable_pgvector(conn_str)
     print("  ✓ Enabled pgvector extension")

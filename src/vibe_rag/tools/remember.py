@@ -6,7 +6,7 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool()
     async def remember(content: str, tags: list[str] | None = None, global_memory: bool = False) -> str:
         """Store a memory. Set global_memory=True to make it available across all projects. (Named global_memory instead of global to avoid Python keyword conflict.)"""
-        from vibe_memory.server import _pg, _embedder, _config
+        from vibe_rag.server import _pg, _embedder, _config
 
         if not _pg:
             return "Memory database unavailable."

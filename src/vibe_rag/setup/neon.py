@@ -13,7 +13,7 @@ def neon_auth() -> bool:
     return result.returncode == 0
 
 
-def neon_create_project(name: str = "vibe-memory") -> dict:
+def neon_create_project(name: str = "vibe-rag") -> dict:
     result = subprocess.run(
         ["neonctl", "projects", "create", "--name", name, "--output", "json"],
         capture_output=True, text=True,

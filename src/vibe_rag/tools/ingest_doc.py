@@ -7,8 +7,8 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool()
     async def ingest_doc(path: str, project_id: str | None = None) -> str:
         """Index a local document (markdown or text) into memory for search."""
-        from vibe_memory.server import _pg, _embedder, _config
-        from vibe_memory.indexing.doc_chunker import chunk_markdown, chunk_plain_text
+        from vibe_rag.server import _pg, _embedder, _config
+        from vibe_rag.indexing.doc_chunker import chunk_markdown, chunk_plain_text
 
         if not _pg:
             return "Memory database unavailable."

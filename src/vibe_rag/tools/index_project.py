@@ -30,9 +30,9 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool()
     async def index_project(paths: list[str] | None = None, extensions: list[str] | None = None) -> str:
         """Index project source files for semantic code search. Full re-index on each call."""
-        import vibe_memory.server as srv
-        from vibe_memory.indexing.code_chunker import chunk_code
-        from vibe_memory.db.sqlite import SqliteVecDB
+        import vibe_rag.server as srv
+        from vibe_rag.indexing.code_chunker import chunk_code
+        from vibe_rag.db.sqlite import SqliteVecDB
 
         if not srv._embedder:
             return "Embedding API unavailable."

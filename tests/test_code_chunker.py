@@ -1,4 +1,4 @@
-from vibe_memory.indexing.code_chunker import chunk_code, chunk_code_sliding_window
+from vibe_rag.indexing.code_chunker import chunk_code, chunk_code_sliding_window
 
 
 def test_sliding_window_basic():

@@ -1,4 +1,4 @@
-from vibe_memory.indexing.doc_chunker import chunk_markdown, chunk_plain_text
+from vibe_rag.indexing.doc_chunker import chunk_markdown, chunk_plain_text
 
 
 def test_chunk_markdown_splits_on_headers():

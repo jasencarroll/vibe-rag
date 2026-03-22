@@ -2,7 +2,7 @@ import pytest
 import pytest_asyncio
 import os
 
-from vibe_memory.db.postgres import PostgresDB
+from vibe_rag.db.postgres import PostgresDB
 
 pytestmark = pytest.mark.asyncio
 

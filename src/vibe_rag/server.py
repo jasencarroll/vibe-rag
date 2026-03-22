@@ -8,13 +8,13 @@ from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
-from vibe_memory.db.sqlite import SqliteVecDB
-from vibe_memory.indexing.embedder import Embedder
-from vibe_memory.indexing.code_chunker import chunk_code
+from vibe_rag.db.sqlite import SqliteVecDB
+from vibe_rag.indexing.embedder import Embedder
+from vibe_rag.indexing.code_chunker import chunk_code
 
 logger = logging.getLogger(__name__)
 
-mcp = FastMCP(name="vibe-memory")
+mcp = FastMCP(name="vibe-rag")
 
 # Resolve DB path and keys at import time
 _db_path = Path(os.environ.get("VIBE_MEMORY_DB", Path.cwd() / ".vibe" / "index.db"))

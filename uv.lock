@@ -732,7 +732,7 @@ wheels = [
 ]
 
 [[package]]
-name = "vibe-memory"
+name = "vibe-rag"
 version = "0.0.1"
 source = { editable = "." }
 dependencies = [

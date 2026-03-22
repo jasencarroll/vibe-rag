@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 
-from vibe_memory.config import resolve_project_id, load_config
+from vibe_rag.config import resolve_project_id, load_config
 
 
 def test_resolve_project_id_from_pyproject(tmp_path: Path):

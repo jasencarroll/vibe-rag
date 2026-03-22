@@ -6,7 +6,7 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool()
     async def search_memory(query: str, scope: str = "all", project_only: bool = False, limit: int = 10) -> str:
         """Search across memories, past sessions, and docs. Scope: all, memories, sessions, docs."""
-        from vibe_memory.server import _pg, _embedder, _config
+        from vibe_rag.server import _pg, _embedder, _config
 
         if not _pg:
             return "Memory database unavailable."
