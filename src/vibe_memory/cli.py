@@ -18,7 +18,7 @@ def main():
 @main.command()
 @click.argument("name", required=False)
 def init(name: str | None):
-    """Create a new Vibe project with memory, skills, and agents."""
+    """Create a new Vibe project with memory and agents."""
     from importlib.resources import files as pkg_files
 
     templates_dir = Path(str(pkg_files("vibe_memory") / "templates"))
@@ -51,13 +51,12 @@ def init(name: str | None):
     # AGENTS.md
     shutil.copy2(templates_dir / "AGENTS.md", target / "AGENTS.md")
 
-    # .vibe/config.toml — inject env vars and binary path
+    # .vibe/config.toml
     vibe_dir = target / ".vibe"
     vibe_dir.mkdir(exist_ok=True)
     config_text = (templates_dir / ".vibe" / "config.toml").read_text()
 
     console_key = os.environ.get("MISTRAL_CONSOLE_KEY", os.environ.get("MISTRAL_API_KEY", ""))
-    config_text = config_text.replace("__DATABASE_URL__", os.environ.get("DATABASE_URL", ""))
     config_text = config_text.replace("__MISTRAL_CONSOLE_KEY__", console_key)
 
     vibe_memory_bin = shutil.which("vibe-memory") or str(Path(__file__).resolve().parent.parent.parent / ".venv" / "bin" / "vibe-memory")
@@ -65,19 +64,14 @@ def init(name: str | None):
 
     (vibe_dir / "config.toml").write_text(config_text)
 
-    # Skills
-    skills_src = templates_dir / ".vibe" / "skills"
-    if skills_src.exists():
-        shutil.copytree(skills_src, vibe_dir / "skills", dirs_exist_ok=True)
-
-    # Global agents
+    # Global agents (once)
     global_agents = Path.home() / ".vibe" / "agents"
     agents_src = templates_dir / "agents"
     if agents_src.exists() and (not global_agents.exists() or not any(global_agents.iterdir())):
         global_agents.mkdir(parents=True, exist_ok=True)
         for f in agents_src.glob("*.toml"):
             shutil.copy2(f, global_agents / f.name)
-        click.echo("  Installed global agents to ~/.vibe/agents/")
+        click.echo("  Installed agents to ~/.vibe/agents/")
 
     # .gitignore
     gitignore = target / ".gitignore"
@@ -92,11 +86,9 @@ def init(name: str | None):
     if not (target / ".git").exists():
         subprocess.run(["git", "init", "-q"], cwd=target, capture_output=True)
 
-    skill_count = sum(1 for _ in (vibe_dir / "skills").rglob("SKILL.md")) if (vibe_dir / "skills").exists() else 0
     click.echo(f"\n  ✓ {name} created at {target}\n")
-    click.echo(f"    AGENTS.md            — coding rules")
-    click.echo(f"    .vibe/config.toml    — Playwright + Context7 + Memory MCP")
-    click.echo(f"    .vibe/skills/        — {skill_count} skills")
+    click.echo(f"    AGENTS.md          — coding rules")
+    click.echo(f"    .vibe/config.toml  — vibe-memory MCP server")
     click.echo(f"\n  Next:")
     click.echo(f"    cd {target}")
     click.echo(f"    vibe --agent builder\n")
