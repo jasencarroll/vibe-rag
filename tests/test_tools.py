@@ -4,6 +4,7 @@ from pathlib import Path
 from vibe_rag.tools import (
     _embed_sync_with_progress,
     _memory_cleanup_candidates,
+    _sort_memory_results,
     _merge_memory_results,
     _format_briefing,
     _query_terms,
@@ -1423,6 +1424,18 @@ def test_save_session_memory_skips_low_signal_auto_memory(tmp_db, mock_embedder)
     assert result["ok"] is True
     assert result["skipped"] is True
     assert result["reason"] == "low-signal auto memory"
+
+
+def test_sort_memory_results_uses_id_as_deterministic_tiebreaker():
+    results = [
+        {"id": 5, "memory_kind": "decision", "updated_at": "2026-03-23 10:00:00", "source_db": "project"},
+        {"id": 2, "memory_kind": "decision", "updated_at": "2026-03-23 10:00:00", "source_db": "project"},
+        {"id": 9, "memory_kind": "decision", "updated_at": None, "source_db": "project"},
+    ]
+
+    ordered = _sort_memory_results(results)
+
+    assert [item["id"] for item in ordered] == [9, 2, 5]
 
 
 def test_save_session_memory_skips_duplicate_auto_memory(tmp_db, mock_embedder):

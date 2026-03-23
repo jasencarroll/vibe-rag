@@ -95,6 +95,13 @@ class SqliteVecDB:
                 content_hash TEXT NOT NULL,
                 kind TEXT NOT NULL
             );
+
+            CREATE INDEX IF NOT EXISTS idx_memories_source
+                ON memories(source_session_id, source_message_id);
+            CREATE INDEX IF NOT EXISTS idx_memories_project
+                ON memories(project_id);
+            CREATE INDEX IF NOT EXISTS idx_memories_superseded
+                ON memories(superseded_by);
             """
         )
         self._ensure_dimensions(conn)
@@ -457,13 +464,17 @@ class SqliteVecDB:
         limit: int = 20,
         include_superseded: bool = False,
         project_id: str | None = None,
+        updated_since: str | None = None,
     ) -> list[MemoryRow]:
         conn = self._get_conn()
         superseded_filter = "" if include_superseded else "AND superseded_by IS NULL"
         project_filter = "" if project_id is None else "AND project_id = ?"
+        updated_since_filter = "" if updated_since is None else "AND updated_at >= ?"
         params: tuple[object, ...] = ()
         if project_id is not None:
             params += (project_id,)
+        if updated_since is not None:
+            params += (updated_since,)
         params += (limit,)
         rows = conn.execute(
             f"""
@@ -471,7 +482,7 @@ class SqliteVecDB:
                    source_session_id, source_message_id, supersedes, superseded_by,
                    created_at, updated_at
             FROM memories
-            WHERE 1=1 {superseded_filter} {project_filter}
+            WHERE 1=1 {superseded_filter} {project_filter} {updated_since_filter}
             ORDER BY updated_at DESC, id DESC
             LIMIT ?
             """,
