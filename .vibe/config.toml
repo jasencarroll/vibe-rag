@@ -5,15 +5,8 @@ skill_paths = [".vibe/skills"]
 [[mcp_servers]]
 name = "memory"
 transport = "stdio"
-command = "scripts/run-vibe-rag"
-args = ["serve"]
+command = "/bin/zsh"
+args = ["-lc", "exec \"$(git rev-parse --show-toplevel)/scripts/run-vibe-rag\" serve"]
 
-[background_mcp_hook]
-enabled = true
-tool_name = "memory_load_session_context"
-task_arg = "task"
-
-[session_memory_hook]
-enabled = true
-tool_name = "memory_save_session_memory"
-summary_tool_name = "memory_save_session_summary"
+[[hooks.SessionStart]]
+command = "/bin/zsh -lc 'exec \"$(git rev-parse --show-toplevel)/scripts/run-vibe-rag\" hook-session-start --format vibe'"

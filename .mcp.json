@@ -1,8 +1,11 @@
 {
   "mcpServers": {
     "vibe-rag": {
-      "command": "scripts/run-vibe-rag",
-      "args": ["serve"]
+      "command": "/bin/zsh",
+      "args": [
+        "-lc",
+        "exec \"$(git rev-parse --show-toplevel)/scripts/run-vibe-rag\" serve"
+      ]
     }
   }
 }

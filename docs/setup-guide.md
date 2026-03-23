@@ -6,7 +6,7 @@ If you already have the tool installed and want the day-to-day operating flow, j
 
 Target state:
 
-- packaged `vibe-rag`
+- packaged `vibe-rag` from an installed wheel
 - project-local config for your chosen client
 - local durable memory in `~/.vibe/memory.db`
 - session bootstrap where supported
@@ -15,6 +15,14 @@ Target state:
 
 `vibe-rag` itself is the MCP server and memory/search layer.
 Client integrations sit on top of that core.
+
+Acceptance bar:
+
+1. install the packaged binary
+2. scaffold a repo from that binary
+3. verify session-start context and retrieval from the generated client config
+
+If you only proved the source checkout path, you did not prove the product.
 
 ## 1. Install the Tools
 
@@ -64,6 +72,8 @@ This writes:
 - `.mcp.json`
 
 If the target directory is not already a git repo, `vibe-rag init` also runs `git init`.
+
+This is the path that matters for release quality. Generated repos pin the resolved installed `vibe-rag` binary, so you should treat the installed-wheel scaffold as the default reality, not the source checkout.
 
 ## 3. Configure the MCP Server
 
@@ -159,9 +169,9 @@ For this maintainer repo specifically, the tracked `.vibe/`, `.codex/`, `.claude
 Current support level:
 
 - `vibe-rag serve`: core identity
-- Vibe: most complete integration
-- Codex: experimental
-- Claude Code: experimental
+- Vibe: first-class path
+- Claude Code: strong session-start path
+- Codex: usable, but with startup DX tax
 - Gemini CLI: experimental
 
 ## 4. Trust the Repo

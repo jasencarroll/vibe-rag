@@ -89,6 +89,39 @@ def test_forget_nonexistent(tmp_db, mock_embedder):
     assert _error_message(result) == "memory 999 not found"
 
 
+def test_forget_with_source_qualified_id(tmp_db, mock_embedder):
+    import vibe_rag.server as srv
+
+    project_id = srv._get_db().remember_structured(
+        summary="project fact",
+        content="project fact",
+        embedding=[0.0] * 1024,
+        project_id=srv._ensure_project_id(),
+        memory_kind="fact",
+        metadata={"capture_kind": "manual"},
+    )
+    user_id = srv._get_user_db().remember_structured(
+        summary="user fact",
+        content="user fact",
+        embedding=[0.0] * 1024,
+        project_id=srv._ensure_project_id(),
+        memory_kind="fact",
+        metadata={"capture_kind": "manual"},
+    )
+
+    assert project_id == user_id == 1
+
+    ambiguous = forget("1")
+    assert ambiguous["ok"] is False
+    assert ambiguous["error"]["code"] == "ambiguous_memory_id"
+
+    deleted = forget("project:1")
+    assert deleted["ok"] is True
+    assert deleted["backend"] == "project-sqlite"
+    assert srv._get_db().get_memory(1) is None
+    assert srv._get_user_db().get_memory(1) is not None
+
+
 def test_search_code_empty(tmp_db, mock_embedder):
     result = search_code("anything")
     assert result["ok"] is False
@@ -1648,6 +1681,48 @@ def test_supersede_memory_marks_project_db_memory_as_superseded(tmp_db, mock_emb
     summaries = [memory["summary"] for memory in refreshed["memories"]]
     assert "auth service owns token validation" in summaries
     assert "gateway owns token validation" not in summaries
+
+
+def test_supersede_memory_accepts_source_qualified_id_when_ids_overlap(tmp_db, mock_embedder):
+    import vibe_rag.server as srv
+
+    project_id = srv._get_db().remember_structured(
+        summary="project auth decision",
+        content="project auth decision",
+        embedding=[0.0] * 1024,
+        project_id=srv._ensure_project_id(),
+        memory_kind="decision",
+        metadata={"capture_kind": "manual"},
+    )
+    user_id = srv._get_user_db().remember_structured(
+        summary="user auth decision",
+        content="user auth decision",
+        embedding=[0.0] * 1024,
+        project_id=srv._ensure_project_id(),
+        memory_kind="decision",
+        metadata={"capture_kind": "manual"},
+    )
+
+    assert project_id == user_id == 1
+
+    ambiguous = supersede_memory(
+        old_memory_id="1",
+        summary="replacement decision",
+        memory_kind="decision",
+    )
+    assert ambiguous["ok"] is False
+    assert ambiguous["error"]["code"] == "ambiguous_old_memory_id"
+
+    replacement = supersede_memory(
+        old_memory_id="project:1",
+        summary="replacement decision",
+        memory_kind="decision",
+    )
+
+    assert replacement["ok"] is True
+    assert replacement["memory"]["supersedes"] == 1
+    assert srv._get_db().get_memory(1)["superseded_by"] == replacement["memory"]["id"]
+    assert srv._get_user_db().get_memory(1)["superseded_by"] is None
 
 
 def test_remember_empty_content(tmp_db, mock_embedder):

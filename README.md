@@ -6,17 +6,16 @@ It is an MCP server for semantic repo search, durable coding memory, and session
 
 It is built for agentic coding workflows across clients, but the product bar is simple:
 
-- packaged install path works
+- packaged install path works from the built wheel, not only from source
 - repo docs stay canonical
 - session-start context improves the first turn instead of adding noise
 
-The most complete integration today is Vibe.
+Current posture:
 
-Generated repos also include scaffolding for:
-
-- Codex
-- Claude Code
-- Gemini CLI
+- Vibe is the first-class path today.
+- Claude Code is close behind and works well with the current session-start hook path.
+- Codex works, but it still carries startup UX tax.
+- Gemini CLI is scaffolded, but it is still experimental.
 
 It adds:
 
@@ -33,6 +32,15 @@ Storage is local and simple:
 
 No external database is required.
 
+The packaged-install bar is non-negotiable:
+
+1. build the wheel
+2. install the wheel
+3. scaffold a repo
+4. verify session-start context and retrieval from the installed binary
+
+If it only works from a source checkout, it is not ready.
+
 ## Read This First
 
 - [Setup Guide](docs/setup-guide.md)
@@ -44,9 +52,9 @@ No external database is required.
 | Layer | Status | Notes |
 | --- | --- | --- |
 | `vibe-rag serve` MCP server | core identity | client-agnostic semantic repo search and memory |
-| Vibe integration | most complete | first-class path with session bootstrap and session memory hooks |
-| Codex integration | experimental | project scaffolding plus session-start hook |
-| Claude Code integration | experimental | project scaffolding plus session-start hook |
+| Vibe integration | first-class | native `SessionStart` path through the maintained `mistral-vibe` fork |
+| Claude Code integration | strong | session-start scaffolding ships and works well, but Vibe remains the reference path |
+| Codex integration | usable with DX tax | session-start scaffolding works, but startup UX is still rougher than the best paths |
 | Gemini CLI integration | experimental | project scaffolding plus session-start hook |
 
 ## What You Need
@@ -60,7 +68,7 @@ Use Python 3.12 for `uv tool install`. In this environment, `tree-sitter-languag
 
 ## Vibe Integration
 
-If you want the most complete integration path today, use the fork that contains the background MCP session bootstrap hook:
+If you want the most complete integration path today, use the fork that contains the native `SessionStart` work `vibe-rag` expects:
 
 - `https://github.com/jasencarroll/mistral-vibe`
 
@@ -219,6 +227,13 @@ This maintainer repo also tracks its own bootstrap files in `.vibe/`, `.codex/`,
 Those tracked maintainer configs use `scripts/run-vibe-rag` so agents can launch the repo from source without a user-specific install path.
 
 Current support level is shown in the support table above.
+
+Generated repo messaging should match that table:
+
+- Vibe is the first-class path
+- Claude Code is strong
+- Codex works with DX tax
+- Gemini CLI is experimental
 
 ## Storage Model
 

@@ -8,6 +8,13 @@ The internal agent-oriented maintainer contract still lives in `AGENTS.md`.
 
 If you are looking for the user-facing product docs, start with the [README](../README.md), the [Setup Guide](setup-guide.md), and the [User Guide](user-guide.md).
 
+Current public posture should stay consistent across those docs:
+
+- Vibe is the first-class path
+- Claude Code is strong
+- Codex works with DX tax
+- Gemini CLI is experimental
+
 ## Source Of Truth
 
 - `README.md` is the first-run and install path.
@@ -21,6 +28,7 @@ If you change onboarding or scaffold behavior, update the user-facing docs toget
 
 - Keep the packaged install path working.
 - `vibe-rag init` must work from an installed wheel, not only from source.
+- Treat the installed-wheel path as the release bar: build the wheel, install it, scaffold a repo, and verify session-start plus retrieval from that installed binary.
 - If generated project behavior changes, update both:
   - `src/vibe_rag/templates/AGENTS.md`
   - the user-facing docs in `README.md` and `docs/`

@@ -33,9 +33,12 @@ Use the memory MCP tools first when the task is about:
 ## Client Scaffolding
 
 - Vibe is the first-class client.
-- Generated repos also include experimental Codex and Claude Code session-start scaffolding.
+- Claude Code is the strongest non-Vibe path today.
+- Codex works, but it still carries startup UX tax.
+- Gemini CLI is still experimental.
 - `vibe-rag init` initializes a git repo when one does not already exist so repo-scoped client behavior works.
 - `vibe-rag init` pins the resolved `vibe-rag` binary path in generated client configs so startup does not depend on `PATH` ordering.
+- Generated configs are expected to work from the installed binary, not only from a source checkout.
 - If hook-loaded context disagrees with the source tree, trust the source and re-index.
 
 ## Good prompts

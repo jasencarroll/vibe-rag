@@ -305,7 +305,8 @@ def test_cli_init_prints_provider_recommendation(monkeypatch):
         result = runner.invoke(main, ["init", "demo"])
 
     assert result.exit_code == 0
-    assert "Vibe is first-class and expects the mistral-vibe fork" in result.output
+    assert "Vibe is the first-class path and expects the mistral-vibe fork" in result.output
+    assert "Claude Code is strong, Codex works with DX tax" in result.output
     assert "Recommended provider: mistral" in result.output
     assert "Next step: export MISTRAL_API_KEY=..." in result.output
 

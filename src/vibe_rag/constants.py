@@ -38,7 +38,7 @@ EXT_TO_LANG = {
 }
 
 # Maximum file size (in bytes) to consider for indexing
-MAX_FILE_SIZE = 100_000
+MAX_FILE_SIZE = 250_000
 
 # Doc chunking
 DOC_CHUNK_SIZE = 2000

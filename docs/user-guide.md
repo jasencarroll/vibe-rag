@@ -82,6 +82,12 @@ Good memory kinds:
 - `summary`
 - `fact`
 
+If the same numeric id exists in both project and user memory stores, qualify destructive operations explicitly:
+
+- `forget project:12`
+- `forget user:12`
+- `supersede_memory old_memory_id=project:12 ...`
+
 ## Session Memory
 
 If your client integration enables session hooks:
@@ -135,13 +141,20 @@ One-turn auto session captures now infer stronger kinds such as `decision`, `con
 
 ## Other Clients
 
-Generated repos also include experimental session-start scaffolding for:
+Generated repos also include session-start scaffolding for:
 
 - Codex
 - Claude Code
 - Gemini CLI
 
-Those clients currently get:
+Client posture today:
+
+- Vibe is the first-class path
+- Claude Code is strong
+- Codex works with DX tax
+- Gemini CLI is experimental
+
+Those generated configs currently give you:
 
 - MCP server registration for `vibe-rag serve`
 - session-start context injection through `vibe-rag hook-session-start`
@@ -150,7 +163,7 @@ Those clients currently get:
 - generated config that pins the resolved `vibe-rag` binary path
 - Codex config with `suppress_unstable_features_warning = true`
 
-Vibe is currently the most complete integration, but the core `vibe-rag serve` MCP server is the product identity.
+The core `vibe-rag serve` MCP server is the product identity. Client quality is judged on whether the packaged binary, generated config, session-start path, and retrieval loop all work together without a source checkout.
 
 ## Retrieval Order
 

@@ -388,14 +388,45 @@ def _with_source_db(result: MemoryRow, source_db: SourceDB) -> MemoryRow:
     return {**result, "source_db": source_db}
 
 
+def _parse_memory_locator(
+    raw_memory_id: str,
+    *,
+    error_code: str,
+    error_field: str,
+    error_message: str,
+) -> tuple[SourceDB | None, int] | ToolError:
+    memory_id = str(raw_memory_id).strip()
+    source_db: SourceDB | None = None
+    if ":" in memory_id:
+        source_candidate, _, raw_id = memory_id.partition(":")
+        if source_candidate in {"project", "user"}:
+            source_db = cast(SourceDB, source_candidate)
+            memory_id = raw_id.strip()
+    sqlite_id = _int_or_none(memory_id)
+    if sqlite_id is None:
+        return _tool_error(
+            error_code,
+            error_message,
+            **{error_field: raw_memory_id},
+        )
+    return source_db, sqlite_id
+
+
 def _resolve_superseded_memory(
-    memory_id: int, current_project_id: str
+    memory_id: int, current_project_id: str, source_db: SourceDB | None = None
 ) -> tuple[object, SourceDB, MemoryRow] | ToolError:
     candidates: list[tuple[object, SourceDB, MemoryRow]] = []
-    for db, source_db in ((_get_db(), "project"), (_get_user_db(), "user")):
+    candidate_dbs: list[tuple[object, SourceDB]]
+    if source_db == "project":
+        candidate_dbs = [(_get_db(), "project")]
+    elif source_db == "user":
+        candidate_dbs = [(_get_user_db(), "user")]
+    else:
+        candidate_dbs = [(_get_db(), "project"), (_get_user_db(), "user")]
+    for db, db_source in candidate_dbs:
         memory = db.get_memory(memory_id)
         if memory:
-            candidates.append((db, source_db, memory))
+            candidates.append((db, db_source, memory))
 
     if not candidates:
         return _tool_error(
@@ -2626,13 +2657,15 @@ def supersede_memory(
     """Create a new structured memory that supersedes an older one."""
     if not old_memory_id:
         return _failure("missing_old_memory_id", "old_memory_id is required")
-    old_memory_int = _int_or_none(old_memory_id)
-    if old_memory_int is None:
-        return _failure(
-            "invalid_old_memory_id",
-            "old_memory_id must be an integer",
-            old_memory_id=old_memory_id,
-        )
+    parsed_memory = _parse_memory_locator(
+        old_memory_id,
+        error_code="invalid_old_memory_id",
+        error_field="old_memory_id",
+        error_message="old_memory_id must be an integer or source-qualified integer like project:12",
+    )
+    if isinstance(parsed_memory, dict):
+        return _failure_from_error(parsed_memory)
+    source_db, old_memory_int = parsed_memory
     error = _validate_memory_content(summary)
     if error:
         return _failure_from_error(error)
@@ -2647,7 +2680,7 @@ def supersede_memory(
         return _failure_from_error(kind_error)
 
     current_project_id = _ensure_project_id()
-    resolved = _resolve_superseded_memory(old_memory_int, current_project_id)
+    resolved = _resolve_superseded_memory(old_memory_int, current_project_id, source_db=source_db)
     if isinstance(resolved, dict):
         return _failure_from_error(resolved)
     owner_db, owner_source_db, _old_memory = resolved
@@ -2703,23 +2736,39 @@ def supersede_memory(
 @mcp.tool()
 def forget(memory_id: str) -> dict:
     """Delete a remembered item by ID."""
-    db = _get_db()
-    sqlite_id = _int_or_none(memory_id)
-    if sqlite_id is None:
-        return _failure("invalid_memory_id", "memory_id must be an integer", memory_id=memory_id)
-    content = db.forget(sqlite_id)
-    if content:
+    parsed_memory = _parse_memory_locator(
+        memory_id,
+        error_code="invalid_memory_id",
+        error_field="memory_id",
+        error_message="memory_id must be an integer or source-qualified integer like project:12",
+    )
+    if isinstance(parsed_memory, dict):
+        return _failure_from_error(parsed_memory)
+    source_db, sqlite_id = parsed_memory
+
+    candidates: list[tuple[object, SourceDB]] = []
+    if source_db == "project":
+        candidates = [(_get_db(), "project")]
+    elif source_db == "user":
+        candidates = [(_get_user_db(), "user")]
+    else:
+        for db, db_source in ((_get_db(), "project"), (_get_user_db(), "user")):
+            if db.get_memory(sqlite_id):
+                candidates.append((db, db_source))
+        if len(candidates) > 1:
+            return _failure(
+                "ambiguous_memory_id",
+                f"memory {sqlite_id} exists in multiple memory stores",
+                memory_id=memory_id,
+                source_dbs=[db_source for _, db_source in candidates],
+            )
+
+    for db, db_source in candidates:
+        content = db.forget(sqlite_id)
+        if not content:
+            continue
         return _success(
-            backend="project-sqlite",
-            deleted=True,
-            memory_id=sqlite_id,
-            content_preview=content[:200],
-        )
-    user_db = _get_user_db()
-    content = user_db.forget(sqlite_id)
-    if content:
-        return _success(
-            backend="user-sqlite",
+            backend=f"{db_source}-sqlite",
             deleted=True,
             memory_id=sqlite_id,
             content_preview=content[:200],

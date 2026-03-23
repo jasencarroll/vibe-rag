@@ -179,9 +179,14 @@ class TestShouldIncludeFile:
         f.write_text("x = 1")
         assert _should_include_file(f) is True
 
+    def test_large_but_still_allowed(self, tmp_path: Path):
+        f = tmp_path / "large.py"
+        f.write_text("x" * 150_000)
+        assert _should_include_file(f) is True
+
     def test_too_large(self, tmp_path: Path):
         f = tmp_path / "big.py"
-        f.write_text("x" * 200_000)
+        f.write_text("x" * 300_000)
         assert _should_include_file(f) is False
 
     def test_directory_excluded(self, tmp_path: Path):
