@@ -3,9 +3,57 @@ import remarkGfm from 'remark-gfm';
 
 type MarkdownDocumentProps = {
   markdown: string;
+  sourcePath: string;
 };
 
-export function MarkdownDocument({ markdown }: MarkdownDocumentProps) {
+const DOC_ROUTES: Record<string, string> = {
+  'README.md': '#/readme',
+  'docs/setup-guide.md': '#/setup',
+  'docs/user-guide.md': '#/guide'
+};
+
+const GITHUB_BLOB_ROOT = 'https://github.com/jasencarroll/vibe-rag/blob/main/';
+
+function normalizeRepoPath(path: string): string {
+  const parts = path.split('/');
+  const output: string[] = [];
+  for (const part of parts) {
+    if (!part || part === '.') continue;
+    if (part === '..') {
+      output.pop();
+      continue;
+    }
+    output.push(part);
+  }
+  return output.join('/');
+}
+
+function resolveMarkdownHref(href: string, sourcePath: string): string {
+  if (
+    href.startsWith('http://') ||
+    href.startsWith('https://') ||
+    href.startsWith('mailto:') ||
+    href.startsWith('tel:') ||
+    href.startsWith('#')
+  ) {
+    return href;
+  }
+
+  const [rawPath, hash = ''] = href.split('#', 2);
+  const sourceDir = sourcePath.includes('/') ? sourcePath.slice(0, sourcePath.lastIndexOf('/')) : '';
+  const combined = rawPath.startsWith('/')
+    ? rawPath.slice(1)
+    : [sourceDir, rawPath].filter(Boolean).join('/');
+  const resolvedPath = normalizeRepoPath(combined);
+
+  if (!hash && DOC_ROUTES[resolvedPath]) {
+    return DOC_ROUTES[resolvedPath];
+  }
+
+  return `${GITHUB_BLOB_ROOT}${resolvedPath}${hash ? `#${hash}` : ''}`;
+}
+
+export function MarkdownDocument({ markdown, sourcePath }: MarkdownDocumentProps) {
   return (
     <article className="markdown-shell rounded-[28px] border border-border bg-card p-7 shadow-[0_24px_80px_rgba(27,25,20,0.08)] md:p-10">
       <ReactMarkdown
@@ -25,7 +73,7 @@ export function MarkdownDocument({ markdown }: MarkdownDocumentProps) {
           li: ({ children }) => <li className="leading-8">{children}</li>,
           a: ({ href, children }) => (
             <a
-              href={href}
+              href={href ? resolveMarkdownHref(href, sourcePath) : undefined}
               className="font-medium text-foreground underline decoration-border underline-offset-4 transition hover:decoration-foreground"
             >
               {children}
@@ -65,4 +113,3 @@ export function MarkdownDocument({ markdown }: MarkdownDocumentProps) {
     </article>
   );
 }
-

@@ -13,19 +13,39 @@ export function App() {
           <Route path="/" element={<HomePage />} />
           <Route
             path="/readme"
-            element={<MarkdownPage title={docs.readme.title} kicker={docs.readme.kicker} markdown={docs.readme.markdown} />}
+            element={
+              <MarkdownPage
+                title={docs.readme.title}
+                kicker={docs.readme.kicker}
+                sourcePath={docs.readme.sourcePath}
+                markdown={docs.readme.markdown}
+              />
+            }
           />
           <Route
             path="/setup"
-            element={<MarkdownPage title={docs.setup.title} kicker={docs.setup.kicker} markdown={docs.setup.markdown} />}
+            element={
+              <MarkdownPage
+                title={docs.setup.title}
+                kicker={docs.setup.kicker}
+                sourcePath={docs.setup.sourcePath}
+                markdown={docs.setup.markdown}
+              />
+            }
           />
           <Route
             path="/guide"
-            element={<MarkdownPage title={docs.guide.title} kicker={docs.guide.kicker} markdown={docs.guide.markdown} />}
+            element={
+              <MarkdownPage
+                title={docs.guide.title}
+                kicker={docs.guide.kicker}
+                sourcePath={docs.guide.sourcePath}
+                markdown={docs.guide.markdown}
+              />
+            }
           />
         </Routes>
       </main>
     </div>
   );
 }
-

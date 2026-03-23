@@ -159,9 +159,8 @@ Docs: docs/setup-guide.md`}
           <div className="mb-3 text-xs uppercase tracking-[0.22em] text-muted-foreground">overview</div>
           <h2 className="text-3xl font-semibold tracking-tight">README, rendered directly.</h2>
         </div>
-        <MarkdownDocument markdown={docs.readme.markdown} />
+        <MarkdownDocument markdown={docs.readme.markdown} sourcePath={docs.readme.sourcePath} />
       </section>
     </div>
   );
 }
-

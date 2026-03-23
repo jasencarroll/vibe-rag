@@ -3,10 +3,11 @@ import { MarkdownDocument } from '../components/MarkdownDocument';
 type MarkdownPageProps = {
   title: string;
   kicker: string;
+  sourcePath: string;
   markdown: string;
 };
 
-export function MarkdownPage({ title, kicker, markdown }: MarkdownPageProps) {
+export function MarkdownPage({ title, kicker, sourcePath, markdown }: MarkdownPageProps) {
   return (
     <div className="space-y-8">
       <section className="max-w-3xl space-y-5">
@@ -17,8 +18,7 @@ export function MarkdownPage({ title, kicker, markdown }: MarkdownPageProps) {
           repo. Change the docs there and the site updates with the next Pages build.
         </p>
       </section>
-      <MarkdownDocument markdown={markdown} />
+      <MarkdownDocument markdown={markdown} sourcePath={sourcePath} />
     </div>
   );
 }
-
