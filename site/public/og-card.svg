@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-label="vibe-rag social card">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#f2ede4" />
+      <stop offset="100%" stop-color="#e2d9ca" />
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#bg)" />
+  <rect x="48" y="48" width="1104" height="534" rx="36" fill="#171410" stroke="#3b352d" stroke-width="2" />
+  <g font-family="'IBM Plex Mono', 'SFMono-Regular', ui-monospace, monospace" fill="#ebe5da">
+    <text x="92" y="118" font-size="28" letter-spacing="6" opacity="0.7">VIBE-RAG</text>
+    <text x="92" y="214" font-size="66" font-weight="600">semantic repo search</text>
+    <text x="92" y="288" font-size="66" font-weight="600">and memory for coding agents</text>
+    <text x="92" y="374" font-size="30" opacity="0.82">Session-start briefings. Retrieval that survives packaging. Durable memory across sessions.</text>
+  </g>
+  <g transform="translate(730 124)">
+    <rect width="340" height="310" rx="24" fill="#201c17" stroke="#4a4339" stroke-width="2" />
+    <g font-family="'IBM Plex Mono', 'SFMono-Regular', ui-monospace, monospace" fill="#ebe5da">
+      <text x="28" y="40" font-size="18" letter-spacing="3" opacity="0.72">BRIEFING</text>
+      <text x="28" y="86" font-size="20">vibe-rag | main | 2 modified files</text>
+      <text x="28" y="132" font-size="19" opacity="0.78">You were last here 9 hours ago.</text>
+      <text x="28" y="184" font-size="19">! Index may be stale</text>
+      <text x="28" y="220" font-size="19">! 2 files modified but not committed</text>
+      <text x="28" y="272" font-size="19" opacity="0.78">Decisions: session bootstrap path</text>
+    </g>
+  </g>
+</svg>

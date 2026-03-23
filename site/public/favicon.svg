@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="vibe-rag favicon">
+  <rect width="64" height="64" rx="14" fill="#ebe5da" />
+  <rect x="8" y="8" width="48" height="48" rx="10" fill="#171410" stroke="#3b352d" stroke-width="2" />
+  <path d="M18 21h10l4 13 4-13h10L35 47h-6L18 21Z" fill="#ebe5da" />
+</svg>
