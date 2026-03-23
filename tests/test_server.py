@@ -34,6 +34,8 @@ def test_get_embedder_without_key_raises(monkeypatch):
     old_embedder = srv._embedder
     srv._embedder = None
     monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
+    monkeypatch.delenv("VOYAGE_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("VIBE_RAG_EMBEDDING_PROVIDER", raising=False)
     monkeypatch.setattr(
         "vibe_rag.indexing.embedder._resolve_ollama_host",

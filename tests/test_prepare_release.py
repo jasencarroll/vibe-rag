@@ -4,6 +4,8 @@ import pathlib
 import subprocess
 import sys
 
+REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
+
 
 def _write(path: pathlib.Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -44,7 +46,7 @@ def test_prepare_release_updates_versioned_files_and_changelog(tmp_path):
             "--notes-out",
             str(notes_path),
         ],
-        cwd="/Users/jasen/dev/vibe-rag",
+        cwd=REPO_ROOT,
         check=False,
         capture_output=True,
         text=True,
@@ -89,7 +91,7 @@ def test_prepare_release_requires_unreleased_content(tmp_path):
             "--version",
             "0.0.20",
         ],
-        cwd="/Users/jasen/dev/vibe-rag",
+        cwd=REPO_ROOT,
         check=False,
         capture_output=True,
         text=True,

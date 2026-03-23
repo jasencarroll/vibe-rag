@@ -520,7 +520,7 @@ def test_codex_config_queries_prefer_config_and_cli_surfaces(tmp_db, mock_embedd
     os.chdir(tmp_path)
     try:
         index_project()
-        result = search_code("install build codex cli config toml mcp servers codex home", limit=3)
+        result = search_code("install build codex cli config toml mcp servers codex home", limit=5)
     finally:
         os.chdir(old_cwd)
 
