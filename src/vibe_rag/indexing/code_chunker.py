@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import ctypes
-from functools import lru_cache
 import logging
+from functools import lru_cache
 from pathlib import Path
+import site
+import sysconfig
 
 from vibe_rag.types import CodeChunk
 
@@ -23,6 +25,20 @@ SYMBOL_NODE_TYPES: set[str] = {
     "function_definition", "class_definition", "function_declaration",
     "class_declaration", "method_definition", "impl_item", "function_item", "struct_item",
 }
+
+
+def _is_tree_sitter_languages_path_trusted(tree_sitter_module_path: Path) -> bool:
+    search_paths = set()
+    for cfg_path in sysconfig.get_paths().values():
+        search_paths.add(Path(cfg_path).resolve())
+    for site_path in site.getsitepackages():
+        search_paths.add(Path(site_path).resolve())
+    usersite = site.getusersitepackages()
+    if usersite:
+        search_paths.add(Path(usersite).resolve())
+
+    resolved = tree_sitter_module_path.resolve()
+    return any(resolved.is_relative_to(site_path) for site_path in search_paths if site_path)
 
 
 def chunk_code_sliding_window(
@@ -101,7 +117,10 @@ def _try_tree_sitter_chunk(content: str, file_path: str, language: str) -> list[
 def _tree_sitter_languages_lib() -> ctypes.CDLL:
     import tree_sitter_languages
 
-    lib_path = Path(tree_sitter_languages.__file__).with_name("languages.so")
+    module_path = Path(tree_sitter_languages.__file__).resolve()
+    if not _is_tree_sitter_languages_path_trusted(module_path):
+        raise ImportError("Refusing to load tree_sitter_languages.languages.so from untrusted location")
+    lib_path = module_path.with_name("languages.so")
     return ctypes.CDLL(str(lib_path))
 
 

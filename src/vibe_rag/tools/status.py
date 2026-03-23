@@ -43,6 +43,18 @@ def _resolve_delete_memory_by_source_db(source_db, memory_id):
     return fn(source_db, memory_id)
 
 
+def _current_project_user_memory_count() -> int:
+    current_project_id = _ensure_project_id()
+    user_db = _get_user_db()
+    return len(
+        user_db.list_memories(
+            limit=max(user_db.memory_count() + 10, 20),
+            include_superseded=False,
+            project_id=current_project_id,
+        )
+    )
+
+
 def _memory_health_summary() -> dict:
     """Build a concise memory-health dashboard section for project_status."""
     from vibe_rag.tools._helpers import _all_memory_payloads, _memory_cleanup_candidates, _duplicate_auto_memory_groups
@@ -111,7 +123,7 @@ def project_status(include_memory_health: bool = True) -> dict:
             "code_chunks": db.code_chunk_count(),
             "doc_chunks": db.doc_count(),
             "project_memories": db.memory_count(),
-            "user_memories": _get_user_db().memory_count(),
+            "user_memories": _current_project_user_memory_count(),
         },
         "metadata": metadata_state,
         "stale": stale,

@@ -1282,7 +1282,9 @@ def _memory_cleanup_candidates(limit: int = 10) -> list[dict]:
     )
     candidates.extend(
         _with_source_db(result, "user")
-        for result in user_db.list_memories(limit=max(limit * 5, 30), include_superseded=True)
+        for result in user_db.list_memories(
+            limit=max(limit * 5, 30), include_superseded=True, project_id=current_project_id
+        )
     )
 
     ranked = []
@@ -1319,7 +1321,11 @@ def _all_memory_payloads() -> list[dict]:
         payloads.append(
             _memory_payload(_with_source_db(result, "project"), current_project_id=current_project_id)
         )
-    for result in user_db.list_memories(limit=max(user_db.memory_count() + 10, 20), include_superseded=True):
+    for result in user_db.list_memories(
+        limit=max(user_db.memory_count() + 10, 20),
+        include_superseded=True,
+        project_id=current_project_id,
+    ):
         payloads.append(
             _memory_payload(_with_source_db(result, "user"), current_project_id=current_project_id)
         )
@@ -1396,6 +1402,20 @@ def _merge_memory_results(
         if _memory_state(result, current_project_id)["is_current_project"]
         and not _memory_state(result, current_project_id)["is_stale"]
     ]
+    current_project_manual_results = [
+        result
+        for result in current_project_results
+        if not _is_auto_capture_memory(result)
+    ]
+    if current_project_manual_results:
+        merged = [
+            result
+            for result in merged
+            if not (
+                _is_auto_capture_memory(result)
+                and _memory_state(result, current_project_id)["is_current_project"]
+            )
+        ]
     if current_project_results:
         merged = [
             result
@@ -1771,12 +1791,28 @@ def _briefing_task_context(task_results: dict, char_budget: int) -> str:
 
     memories = task_results.get("memories") or []
     if memories:
+        visible_memories: list[dict] = []
+        has_manual_current_project_memory = any(
+            not _is_auto_capture_memory(item)
+            and not bool(item.get("is_stale"))
+            and bool((item.get("provenance") or {}).get("is_current_project"))
+            for item in memories
+        )
         mem_parts = []
-        for item in memories[:3]:
+        for item in memories:
+            if item.get("is_stale"):
+                continue
+            if _is_low_signal_auto_memory(item):
+                continue
+            if has_manual_current_project_memory and _is_auto_capture_memory(item):
+                continue
+            visible_memories.append(item)
+        for item in visible_memories[:3]:
             kind = item.get("memory_kind", "note")
             summary = _truncate(item.get("summary", ""), 80)
             mem_parts.append(f"[{kind}] {summary}")
-        lines.append("Memory: " + " | ".join(mem_parts))
+        if mem_parts:
+            lines.append("Memory: " + " | ".join(mem_parts))
 
     result = "\n".join(lines)
     return result[:char_budget]
@@ -1971,7 +2007,7 @@ def _search_code_results(
 
     try:
         embeddings = _get_embedder().embed_code_query_sync([query])
-    except RuntimeError as e:
+    except Exception as e:
         return _tool_error("embedding_failed", f"embedding failed: {e}", operation="search_code"), []
 
     raw_results = db.search_code(embeddings[0], limit=max(limit * 5, 10), language=language)
@@ -2014,7 +2050,7 @@ def _search_docs_results(query: str, limit: int = 10) -> tuple[ToolError | None,
 
     try:
         embeddings = _get_embedder().embed_text_sync([query])
-    except RuntimeError as e:
+    except Exception as e:
         return _tool_error("embedding_failed", f"embedding failed: {e}", operation="search_docs"), []
 
     raw_results = db.search_docs(embeddings[0], limit=max(limit * 5, 10))
@@ -2038,8 +2074,13 @@ def _search_memory_results(
     thread_id: str = "",
     since: str = "",
     until: str = "",
+    *,
+    search_all_user_projects: bool = False,
 ) -> tuple[ToolError | None, list[dict]]:
     error = _validate_query(query)
+    if error:
+        return error, []
+    error = _validate_tags(tags)
     if error:
         return error, []
 
@@ -2049,7 +2090,7 @@ def _search_memory_results(
         return _tool_error("no_memories", "no memories stored yet"), []
     try:
         embeddings = _get_embedder().embed_text_sync([query])
-    except RuntimeError as e:
+    except Exception as e:
         return _tool_error("embedding_failed", f"embedding failed: {e}", operation="search_memory"), []
 
     # Fetch more results when filtering so we have enough after the post-filter.
@@ -2060,7 +2101,11 @@ def _search_memory_results(
     project_results = project_db.search_memories(
         embeddings[0], limit=project_limit, project_id=current_project_id
     )
-    user_results = user_db.search_memories(embeddings[0], limit=max(user_limit, 10))
+    # Keep search_all_user_projects in-band for compatibility, but remain project-scoped to prevent
+    # accidental cross-project leakage when project boundaries are expected.
+    user_results = user_db.search_memories(
+        embeddings[0], limit=max(user_limit, 10), project_id=current_project_id
+    )
     results = _merge_memory_results(
         [_with_source_db(result, "project") for result in project_results],
         [_with_source_db(result, "user") for result in user_results],

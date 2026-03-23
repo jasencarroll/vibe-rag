@@ -36,19 +36,19 @@ def _embedding_dimensions() -> int:
 
 
 def _status_label(ok: bool, warning: bool = False) -> str:
-    if ok:
-        return click.style("pass", fg="green")
     if warning:
         return click.style("warn", fg="yellow")
+    if ok:
+        return click.style("pass", fg="green")
     return click.style("FAIL", fg="red")
 
 
 def _plain_status_label(ok: bool, warning: bool = False) -> str:
     """Return uncolored status label for assertions in tests."""
-    if ok:
-        return "pass"
     if warning:
         return "warn"
+    if ok:
+        return "pass"
     return "FAIL"
 
 
@@ -197,55 +197,17 @@ def _project_vibe_hook_status(project_root: Path) -> dict:
                 command = str(item.get("command") or "").strip()
                 if not command:
                     continue
-                argv = shlex.split(command)
-                if not argv:
-                    return {"ok": False, "warning": True, "detail": "hooks.SessionStart.command is empty"}
-                ok, resolved = _resolve_command(argv[0])
+                if " " in command:
+                    command_token = command.split(None, 1)[0]
+                else:
+                    command_token = command
+                ok, resolved = _resolve_command(command_token)
                 if not ok:
-                    return {"ok": False, "warning": True, "detail": f"hook command not found: {argv[0]}"}
-                try:
-                    result = subprocess.run(
-                        argv,
-                        cwd=project_root,
-                        input='{"source":"startup","task":"Bootstrap likely context for the current work in this repo."}',
-                        capture_output=True,
-                        text=True,
-                        check=False,
-                        timeout=30,
-                    )
-                except OSError as exc:
-                    return {"ok": False, "warning": True, "detail": f"hook failed to start: {exc}"}
-                except subprocess.TimeoutExpired:
-                    return {"ok": False, "warning": True, "detail": "hook timed out after 30s"}
-
-                if result.returncode != 0:
-                    stderr = (result.stderr or "").strip()
-                    return {
-                        "ok": False,
-                        "warning": True,
-                        "detail": f"hook exited {result.returncode}: {stderr or 'no stderr'}",
-                    }
-
-                stdout = (result.stdout or "").strip()
-                if not stdout:
-                    return {"ok": False, "warning": True, "detail": "hook returned no output"}
-
-                try:
-                    payload = json.loads(stdout)
-                except json.JSONDecodeError:
-                    return {"ok": False, "warning": True, "detail": "hook returned invalid JSON"}
-
-                hook_output = payload.get("hookSpecificOutput") or {}
-                if hook_output.get("hookEventName") != "SessionStart":
-                    return {"ok": False, "warning": True, "detail": "hook did not report SessionStart output"}
-                context = hook_output.get("additionalContext")
-                if not isinstance(context, str) or not context.strip():
-                    return {"ok": False, "warning": True, "detail": "hook returned no additionalContext"}
-
+                    return {"ok": False, "warning": True, "detail": f"hook command not found: {command_token}"}
                 return {
                     "ok": True,
                     "warning": False,
-                    "detail": f"SessionStart hook returned context via {resolved}",
+                    "detail": f"SessionStart hook configured (not executed): {resolved}",
                 }
 
     background = vibe_config.get("background_mcp_hook")
@@ -277,55 +239,39 @@ def _codex_hook_status(project_root: Path) -> dict:
     except json.JSONDecodeError:
         return {"ok": False, "detail": "invalid JSON in .codex/hooks.json"}
 
-    command = (
-        ((((hooks.get("hooks") or {}).get("SessionStart") or [{}])[0].get("hooks") or [{}])[0].get("command"))
-        or ""
-    )
+    session_starts = (hooks.get("hooks") or {}).get("SessionStart")
+    if not isinstance(session_starts, list) or not session_starts:
+        return {"ok": False, "detail": "no SessionStart command in .codex/hooks.json"}
+
+    command = ""
+    for item in session_starts:
+        if not isinstance(item, dict):
+            continue
+        hooks_value = item.get("hooks")
+        if not isinstance(hooks_value, list) or not hooks_value:
+            continue
+        first_hook = hooks_value[0]
+        if not isinstance(first_hook, dict):
+            continue
+        command = first_hook.get("command") or ""
+        if command:
+            break
+
     if not command:
         return {"ok": False, "detail": "no SessionStart command in .codex/hooks.json"}
 
-    argv = shlex.split(command)
+    try:
+        argv = shlex.split(str(command))
+    except ValueError:
+        return {"ok": False, "detail": "invalid SessionStart command"}
     if not argv:
         return {"ok": False, "detail": "empty SessionStart command"}
+
     ok, resolved = _resolve_command(argv[0])
     if not ok:
         return {"ok": False, "detail": f"hook command not found: {argv[0]}"}
 
-    try:
-        result = subprocess.run(
-            argv,
-            cwd=project_root,
-            input='{"source":"startup"}',
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=30,
-        )
-    except OSError as exc:
-        return {"ok": False, "detail": f"hook failed to start: {exc}"}
-    except subprocess.TimeoutExpired:
-        return {"ok": False, "detail": "hook timed out after 30s"}
-
-    if result.returncode != 0:
-        stderr = (result.stderr or "").strip()
-        return {"ok": False, "detail": f"hook exited {result.returncode}: {stderr or 'no stderr'}"}
-
-    stdout = (result.stdout or "").strip()
-    if not stdout:
-        return {"ok": False, "detail": "hook returned no output"}
-
-    try:
-        payload = json.loads(stdout)
-    except json.JSONDecodeError:
-        return {"ok": False, "detail": "hook returned invalid JSON"}
-
-    context = ((payload.get("hookSpecificOutput") or {}).get("additionalContext")) or ""
-    system_message = payload.get("systemMessage")
-    if system_message:
-        return {"ok": False, "detail": system_message}
-    if not context:
-        return {"ok": False, "detail": "hook output missing additionalContext"}
-    return {"ok": True, "detail": "hook returned session context"}
+    return {"ok": True, "detail": f"SessionStart hook configured (not executed): {resolved}"}
 
 
 def _db_readable_status(db_path: Path, *, label: str) -> dict:
@@ -761,16 +707,30 @@ def doctor(fix: bool):
     click.echo(f"  Recommended:  {recommended['provider']} ({recommended['reason']})")
     click.echo()
 
+    vibe_hook_ok = vibe_hook_status["ok"]
+    vibe_hook_warning = vibe_hook_status.get("warning", False)
+    vibe_hook_detail = str(vibe_hook_status["detail"])
+    if vibe_hook_ok and vibe_trust["status"] != "ok":
+        vibe_hook_warning = True
+        vibe_hook_detail += "; repo not trusted"
+
+    codex_hook_ok = hook_status["ok"]
+    codex_hook_warning = False
+    codex_hook_detail = str(hook_status["detail"])
+    if codex_hook_ok and codex_trust["status"] != "ok":
+        codex_hook_warning = True
+        codex_hook_detail += "; repo not trusted"
+
     def _emit(label: str, ok: bool, warning: bool, detail: str) -> None:
         click.echo(f"  [{_status_label(ok, warning)}] {label:<16s} {detail}")
 
     _emit("MCP command", mcp_status["ok"], False, mcp_status["detail"])
     _emit("Vibe CLI", vibe_cli_status["ok"], vibe_cli_status.get("warning", False), vibe_cli_status["detail"])
-    _emit("Vibe hooks", vibe_hook_status["ok"], vibe_hook_status.get("warning", False), vibe_hook_status["detail"])
-    _emit("SessionStart", hook_status["ok"], False, hook_status["detail"])
+    _emit("Vibe hooks", vibe_hook_ok, vibe_hook_warning, vibe_hook_detail)
+    _emit("SessionStart", codex_hook_ok, codex_hook_warning, codex_hook_detail)
     _emit("Project DB", project_db_status["ok"], project_db_status.get("warning", False), project_db_status["detail"])
     _emit("User DB", user_db_status["ok"], user_db_status.get("warning", False), user_db_status["detail"])
-    _emit("Embedding", provider_ok, False, provider_detail)
+    _emit("Embedding", provider_ok, bool(provider.get("warning", False)), provider_detail)
     _emit("Vibe trust", vibe_trust["status"] == "ok", vibe_trust["status"] == "warn", vibe_trust["detail"])
     _emit("Codex trust", codex_trust["status"] == "ok", codex_trust["status"] == "warn", codex_trust["detail"])
     _emit("Languages", lang_coverage["ok"], lang_coverage.get("warning", False), lang_coverage["detail"])

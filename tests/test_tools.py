@@ -70,6 +70,56 @@ def test_fake_embedder_prefers_semantically_closer_memory(tmp_db, mock_embedder)
     assert result["results"][0]["summary"] == "gateway token validation"
 
 
+def test_remember_handles_non_runtime_embedding_errors(tmp_db, mock_embedder, monkeypatch):
+    import vibe_rag.server as srv
+
+    monkeypatch.setattr(
+        srv._embedder,
+        "embed_text_sync",
+        lambda _texts: (_ for _ in ()).throw(ValueError("provider unreachable")),
+    )
+
+    result = remember("embedding outage for freeform memory")
+
+    assert result["ok"] is False
+    assert result["error"]["code"] == "embedding_failed"
+    assert "provider unreachable" in result["error"]["message"]
+
+
+def test_search_code_handles_non_runtime_embedding_errors(indexed_project, mock_embedder, monkeypatch):
+    import vibe_rag.server as srv
+
+    monkeypatch.setattr(
+        srv._embedder,
+        "embed_code_query_sync",
+        lambda _texts: (_ for _ in ()).throw(ValueError("provider unreachable")),
+    )
+
+    result = search_code("authentication")
+
+    assert result["ok"] is False
+    assert result["error"]["code"] == "embedding_failed"
+    assert "provider unreachable" in result["error"]["message"]
+
+
+def test_search_memory_handles_non_runtime_embedding_errors(tmp_db, mock_embedder, monkeypatch):
+    import vibe_rag.server as srv
+
+    remember("gateway validates tokens")
+
+    monkeypatch.setattr(
+        srv._embedder,
+        "embed_text_sync",
+        lambda _texts: (_ for _ in ()).throw(ValueError("provider unavailable")),
+    )
+
+    result = search_memory("gateway")
+
+    assert result["ok"] is False
+    assert result["error"]["code"] == "embedding_failed"
+    assert "provider unavailable" in result["error"]["message"]
+
+
 def test_search_memory_exposes_thread_metadata_and_filters_by_thread_id(tmp_db, mock_embedder):
     remember(
         "gateway validates tokens for the auth refactor",
@@ -1097,6 +1147,60 @@ def test_format_briefing_new_project():
     assert "Decisions" not in briefing
 
 
+def test_format_briefing_excludes_low_signal_auto_memory():
+    pulse = {"branch": "main", "is_default_branch": True, "default_branch": "main", "workspace": {"modified": [], "staged": [], "untracked": [], "is_clean": True}, "recent_commits": []}
+    task_results = {
+        "memories": [
+            {
+                "memory_kind": "summary",
+                "summary": "hello",
+                "content": "hello",
+                "metadata": {"capture_kind": "session_rollup", "turn_count": 1, "task": "hello"},
+                "provenance": {"capture_kind": "session_rollup", "is_current_project": True},
+                "is_stale": False,
+            }
+        ],
+        "code": [],
+        "docs": [],
+    }
+
+    briefing = _format_briefing(pulse, None, [], [], task_results, "briefing-project")
+
+    assert "Memory:" not in briefing
+    assert "hello" not in briefing
+
+
+def test_format_briefing_prefers_manual_memory_over_auto_capture():
+    pulse = {"branch": "main", "is_default_branch": True, "default_branch": "main", "workspace": {"modified": [], "staged": [], "untracked": [], "is_clean": True}, "recent_commits": []}
+    task_results = {
+        "memories": [
+            {
+                "memory_kind": "summary",
+                "summary": "Session summary for auth work and rollout status",
+                "content": "Session covered auth validation ownership and rollout status across gateway and billing.",
+                "metadata": {"capture_kind": "session_rollup", "turn_count": 3, "task": "continue auth work"},
+                "provenance": {"capture_kind": "session_rollup", "is_current_project": True},
+                "is_stale": False,
+            },
+            {
+                "memory_kind": "decision",
+                "summary": "Gateway owns auth token validation",
+                "content": "Gateway owns auth token validation",
+                "metadata": {"capture_kind": "manual"},
+                "provenance": {"capture_kind": "manual", "is_current_project": True},
+                "is_stale": False,
+            },
+        ],
+        "code": [],
+        "docs": [],
+    }
+
+    briefing = _format_briefing(pulse, None, [], [], task_results, "briefing-project")
+
+    assert "Gateway owns auth token validation" in briefing
+    assert "Session summary for auth work and rollout status" not in briefing
+
+
 def test_format_briefing_budget():
     pulse = {
         "branch": "main",
@@ -1271,7 +1375,7 @@ def test_index_project_no_api_key(tmp_db, tmp_path: Path, monkeypatch):
         srv._embedder = old_embedder
 
     assert result["ok"] is False
-    assert "Ollama not reachable" in _error_message(result)
+    assert "No explicit embedding provider configured" in _error_message(result)
 
 
 def test_index_project_no_files(tmp_db, mock_embedder, tmp_path: Path):
@@ -1479,6 +1583,34 @@ def test_save_session_summary_infers_enriched_metadata(tmp_db, mock_embedder):
     assert "topic" in metadata
     assert "outcome" in metadata
     assert "session_ended_at" in metadata
+
+
+def test_save_session_summary_rejects_non_list_turns(tmp_db, mock_embedder):
+    result = save_session_summary(
+        task="Bad turns payload",
+        turns="not-a-list",
+        source_session_id="sess-invalid",
+        source_message_id="msg-invalid",
+    )
+
+    assert result["ok"] is False
+    assert result["error"]["code"] == "invalid_turns"
+
+
+def test_save_session_summary_rejects_non_dict_turn_item(tmp_db, mock_embedder):
+    result = save_session_summary(
+        task="Bad turn item",
+        turns=[
+            {"user": "Hello", "assistant": "Hi"},
+            "oops",
+        ],
+        source_session_id="sess-invalid",
+        source_message_id="msg-invalid",
+    )
+
+    assert result["ok"] is False
+    assert result["error"]["code"] == "invalid_turns"
+    assert result["error"]["message"] == "turns[1] must be an object"
 
 
 def test_save_session_memory_skips_non_durable_auto_memory(tmp_db, mock_embedder):
@@ -1703,7 +1835,7 @@ def test_search_memory_falls_back_to_user_memory_results(tmp_db, mock_embedder):
             summary="The E2E repo marker for mistral-vibe is CERULEAN_PINEAPPLE_20260322.",
             content="The E2E repo marker for mistral-vibe is CERULEAN_PINEAPPLE_20260322.",
             embedding=[0.0] * 1024,
-            project_id="mistral-vibe",
+            project_id="vibe-rag",
             memory_kind="fact",
         )
         result = search_memory("CERULEAN_PINEAPPLE_20260322")
@@ -1711,8 +1843,55 @@ def test_search_memory_falls_back_to_user_memory_results(tmp_db, mock_embedder):
         srv._project_id = old_project_id
 
     assert result["ok"] is True
-    assert result["results"][0]["project_id"] == "mistral-vibe"
+    assert result["results"][0]["project_id"] == "vibe-rag"
     assert "CERULEAN_PINEAPPLE_20260322" in result["results"][0]["content"]
+
+
+def test_search_memory_does_not_return_other_project_user_results_by_default(tmp_db, mock_embedder):
+    import vibe_rag.server as srv
+    user_db = srv._get_user_db()
+    old_project_id = srv._project_id
+    srv._project_id = "demo-repo"
+    try:
+        user_db.remember_structured(
+            summary="marker for other repo",
+            content="marker for other repo",
+            embedding=[0.0] * 1024,
+            project_id="other-repo",
+            memory_kind="fact",
+        )
+        result = search_memory("marker for other repo")
+    finally:
+        srv._project_id = old_project_id
+
+    assert result["ok"] is True
+    assert result["result_total"] == 0
+
+
+def test_search_memory_internal_flag_is_not_global(tmp_db, mock_embedder):
+    import vibe_rag.server as srv
+    from vibe_rag.tools._helpers import _search_memory_results
+
+    old_project_id = srv._project_id
+    srv._project_id = "demo-repo"
+    try:
+        srv._get_user_db().remember_structured(
+            summary="other-repo marker",
+            content="cross-project marker should stay hidden",
+            embedding=[0.0] * 1024,
+            project_id="other-repo",
+            memory_kind="fact",
+        )
+        error, results = _search_memory_results(
+            "cross-project marker",
+            limit=10,
+            search_all_user_projects=True,
+        )
+    finally:
+        srv._project_id = old_project_id
+
+    assert error is None
+    assert len(results) == 0
 
 
 def test_search_memory_filters_stale_cross_project_results_when_project_memory_exists(tmp_db, mock_embedder):
@@ -1759,7 +1938,7 @@ def test_load_session_context_uses_user_memory_results(tmp_db, mock_embedder, tm
             summary="gateway owns auth validation",
             content="gateway owns auth validation",
             embedding=[0.0] * 1024,
-            project_id="shared",
+            project_id="test-project",
             memory_kind="decision",
             metadata={"source": "session"},
         )
@@ -1772,8 +1951,8 @@ def test_load_session_context_uses_user_memory_results(tmp_db, mock_embedder, tm
     assert result["memories"][0]["summary"] == "gateway owns auth validation"
     assert result["memories"][0]["metadata"]["source"] == "session"
     assert result["code"][0]["file_path"] == "auth.py"
-    assert result["memories"][0]["is_stale"] is True
-    assert "project_id_mismatch" in result["memories"][0]["stale_reasons"]
+    assert result["memories"][0]["is_stale"] is False
+    assert "project_id_mismatch" not in result["memories"][0]["stale_reasons"]
 
 
 def test_supersede_memory_marks_replacement(tmp_db, mock_embedder):
@@ -2003,6 +2182,7 @@ def test_load_session_context_downranks_cross_project_user_memory(tmp_db, mock_e
 
     assert [item["id"] for item in result["memories"][:1]] == [current_id]
     assert result["memories"][0]["provenance"]["is_current_project"] is True
+    assert all(item["provenance"]["is_current_project"] for item in result["memories"])
     assert result["memories"][0]["is_stale"] is False
 
 
@@ -2037,25 +2217,30 @@ def test_load_session_context_filters_stale_cross_project_memory_when_current_pr
 
 
 def test_load_session_context_retains_auto_memories_when_durable_memory_exists(tmp_db, mock_embedder):
-    save_session_memory(
-        task="Where should demo tokens be used?",
-        response="Only demo tokens are allowed in this smoke-test API and production tokens are rejected.",
-        source_session_id="sess-demo-memory",
-        source_message_id="msg-demo-memory",
+    import vibe_rag.server as srv
+
+    srv._get_user_db().remember_structured(
+        summary="demo token constraint",
+        content="Only demo tokens are allowed in this smoke-test API and production tokens are rejected.",
+        embedding=[0.0] * 1024,
+        memory_kind="summary",
+        project_id=srv._ensure_project_id(),
+        metadata={"capture_kind": "session_rollup"},
     )
-    remember("Only demo tokens are allowed in this smoke-test API.")
 
     result = load_session_context("demo tokens", memory_limit=5, code_limit=0, docs_limit=0)
 
-    assert result["memories"][0]["memory_kind"] == "constraint"
-    assert result["memories"][0]["provenance"]["capture_kind"] == "freeform"
+    assert any(
+        item["memory_kind"] == "summary"
+        for item in result["memories"]
+    )
     assert any(
         item["provenance"]["capture_kind"] in {"session_rollup", "session_distillation"}
-        for item in result["memories"][1:]
+        for item in result["memories"]
     )
 
 
-def test_merge_memory_results_keeps_auto_captures_visible_when_manual_memory_exists():
+def test_merge_memory_results_filters_auto_captures_when_manual_current_project_memory_exists():
     manual = {
         "id": 1,
         "source_db": "project",
@@ -2078,11 +2263,27 @@ def test_merge_memory_results_keeps_auto_captures_visible_when_manual_memory_exi
     }
 
     merged = _merge_memory_results([manual], [auto], limit=5, current_project_id="demo-repo")
+    assert [item["id"] for item in merged] == [1]
+    assert all(item["metadata"]["capture_kind"] != "session_rollup" for item in merged)
 
-    assert [item["id"] for item in merged] == [1, 2]
+
+def test_merge_memory_results_includes_auto_captures_when_no_manual_current_project_memory():
+    auto = {
+        "id": 2,
+        "source_db": "user",
+        "project_id": "demo-repo",
+        "memory_kind": "summary",
+        "summary": "session summary for auth work",
+        "content": "Session covered auth validation and refresh issuance.",
+        "metadata": {"capture_kind": "session_rollup"},
+        "updated_at": "2026-03-23 10:05:00",
+    }
+
+    merged = _merge_memory_results([], [auto], limit=5, current_project_id="demo-repo")
+    assert [item["id"] for item in merged] == [2]
 
 
-def test_project_status_memory_health_surfaces_freeform_and_cross_project_candidates(tmp_db, mock_embedder):
+def test_project_status_memory_health_surfaces_freeform_user_candidates(tmp_db, mock_embedder):
     import vibe_rag.server as srv
 
     old_project_id = srv._project_id
@@ -2093,7 +2294,7 @@ def test_project_status_memory_health_surfaces_freeform_and_cross_project_candid
             summary="old auth note",
             content="old auth note",
             embedding=[0.0] * 1024,
-            project_id="source-repo",
+            project_id="sink-repo",
             memory_kind="note",
             metadata={"capture_kind": "freeform"},
         )
@@ -2107,7 +2308,34 @@ def test_project_status_memory_health_surfaces_freeform_and_cross_project_candid
     assert len(candidates) >= 2
     reasons = {reason for item in candidates for reason in item["cleanup_reasons"]}
     assert "freeform_note" in reasons
-    assert "cross_project_user_memory" in reasons
+    assert "cross_project_user_memory" not in reasons
+
+
+def test_memory_cleanup_candidates_scopes_user_memories_to_current_project(tmp_db, mock_embedder):
+    import vibe_rag.server as srv
+
+    old_project_id = srv._project_id
+    srv._project_id = "sink-repo"
+    try:
+        current_project_note = remember("local cleanup candidate", scope="user")
+        assert current_project_note["ok"] is True
+        other_project_id = srv._get_user_db().remember_structured(
+            summary="other-project cleanup note",
+            content="other-project cleanup note",
+            embedding=[0.0] * 1024,
+            project_id="source-repo",
+            memory_kind="note",
+            metadata={"capture_kind": "freeform"},
+        )
+
+        candidates = _memory_cleanup_candidates(limit=20)
+    finally:
+        srv._project_id = old_project_id
+
+    assert all(item.get("project_id") == "sink-repo" for item in candidates)
+    assert all(item.get("source_db") == "user" for item in candidates)
+    assert str(other_project_id) not in {item.get("id") for item in candidates}
+    assert any(item["summary"] == "local cleanup candidate" for item in candidates)
 
 
 def test_project_status_includes_memory_cleanup_candidates(tmp_db, mock_embedder):
@@ -2171,16 +2399,18 @@ def test_project_status_memory_health_summarizes_provenance_and_cleanup(tmp_db, 
     assert status["ok"] is True
     health = status["status"]["memory_health"]
     assert health["summary"]["total_memories"] >= 4
-    assert health["summary"]["stale_memories"] >= 1
-    assert health["summary"]["superseded_memories"] >= 1
+    assert health["summary"]["stale_memories"] == 0
+    assert health["summary"]["superseded_memories"] == 0
     assert health["summary"]["duplicate_auto_memory_groups"] >= 1
-    assert health["by_capture_kind"]["freeform"] >= 2
+    assert health["by_capture_kind"]["freeform"] >= 1
     assert health["by_source_type"]["manual_structured"] >= 1
     assert health["recommended_actions"]
     assert len(health["recommended_actions"]) <= 3
     # Verify top actions cover the most important issues
-    assert any("stale" in action.lower() or "supersed" in action.lower() or "freeform" in action.lower()
-               for action in health["recommended_actions"])
+    assert any(
+        "freeform" in action.lower() or "duplicate" in action.lower() or "trim" in action.lower()
+        for action in health["recommended_actions"]
+    )
     assert health["top_cleanup_candidates"]
 
 
@@ -2352,6 +2582,12 @@ def test_search_memory_query_too_long(tmp_db, mock_embedder):
     assert "too long" in _error_message(result)
 
 
+def test_search_memory_tags_too_long(tmp_db, mock_embedder):
+    result = search_memory("gateway", tags="x" * 600)
+    assert result["ok"] is False
+    assert result["error"]["code"] == "tags_too_long"
+
+
 def test_remember_too_large(tmp_db, mock_embedder):
     result = remember("x" * 20_000)
     assert result["ok"] is False
@@ -2396,6 +2632,28 @@ def test_project_status_without_memory_health(tmp_db, mock_embedder):
     assert result["ok"] is True
     assert result["status"]["counts"]["code_chunks"] == 0
     assert "memory_health" not in result["status"]
+
+
+def test_project_status_scopes_user_memory_count_to_current_project(tmp_db, mock_embedder):
+    import vibe_rag.server as srv
+
+    old_project_id = srv._project_id
+    srv._project_id = "sink-repo"
+    try:
+        remember("current project note", scope="user")
+        srv._get_user_db().remember_structured(
+            summary="other-project note",
+            content="other-project note",
+            embedding=[0.0] * 1024,
+            project_id="source-repo",
+            memory_kind="note",
+        )
+        result = project_status(include_memory_health=False)
+    finally:
+        srv._project_id = old_project_id
+
+    assert result["ok"] is True
+    assert result["status"]["counts"]["user_memories"] == 1
 
 
 def test_project_status_after_index(tmp_db, mock_embedder, tmp_path: Path):
@@ -2860,6 +3118,16 @@ def test_update_memory_user_db(tmp_db, mock_embedder):
 
     user_mem = srv._get_user_db().get_memory(mid)
     assert user_mem["content"] == "revised user memory"
+
+
+def test_update_memory_ambiguous_id_between_project_and_user_db(tmp_db, mock_embedder):
+    remember("project-scoped memory")
+    remember("user-scoped memory", scope="user")
+
+    result = update_memory(memory_id="1", content="should be blocked")
+
+    assert result["ok"] is False
+    assert result["error"]["code"] == "ambiguous_memory_id"
 
 
 def test_update_memory_merges_metadata(tmp_db, mock_embedder):

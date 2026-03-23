@@ -6,6 +6,8 @@ import os
 import subprocess
 from collections import OrderedDict
 from collections.abc import Callable
+from ipaddress import ip_address
+from urllib.parse import urlparse
 from typing import Protocol
 
 import httpx
@@ -24,6 +26,17 @@ DEFAULT_MISTRAL_DIMENSIONS = 1536
 DEFAULT_OLLAMA_DIMENSIONS = 1024
 DEFAULT_OPENAI_DIMENSIONS = 1536
 DEFAULT_VOYAGE_DIMENSIONS = 1024
+REMOTE_OLLAMA_ALLOWLIST = ("localhost", "127.0.0.1", "::1")
+_TRUSTED_EMBEDDING_SHELLS = frozenset(
+    {
+        "/bin/sh",
+        "/usr/bin/sh",
+        "/bin/bash",
+        "/usr/bin/bash",
+        "/bin/zsh",
+        "/usr/bin/zsh",
+    }
+)
 BATCH_SIZE = 64
 VOYAGE_BATCH_SIZE = 1000
 VOYAGE_MAX_BATCH_TOKENS = 75_000
@@ -91,29 +104,59 @@ def _batch_by_limits(
     return batches
 
 
+def _allow_remote_ollama_host() -> bool:
+    value = os.environ.get("VIBE_RAG_ALLOW_REMOTE_OLLAMA_HOST", "").strip().lower()
+    return value in {"1", "true", "yes", "on"}
+
+
+def _is_loopback_host(hostname: str) -> bool:
+    normalized = hostname.lower()
+    if normalized in REMOTE_OLLAMA_ALLOWLIST:
+        return True
+    try:
+        return ip_address(normalized).is_loopback
+    except ValueError:
+        return False
+
+
+def _validate_ollama_host(host: str) -> str:
+    raw_host = host.strip()
+    if not raw_host:
+        raise RuntimeError("Ollama host is empty")
+
+    parsed = urlparse(raw_host.rstrip("/"))
+    if not parsed.scheme or not parsed.netloc:
+        raise RuntimeError(f"Invalid Ollama host URL: {raw_host}")
+
+    if parsed.scheme not in {"http", "https"}:
+        raise RuntimeError(f"Invalid Ollama host scheme: {raw_host}")
+
+    hostname = parsed.hostname
+    if not hostname:
+        raise RuntimeError(f"Invalid Ollama host URL: {raw_host}")
+
+    if not _allow_remote_ollama_host() and not _is_loopback_host(hostname):
+        raise RuntimeError(
+            "Refusing non-loopback Ollama host. Set VIBE_RAG_ALLOW_REMOTE_OLLAMA_HOST=true to allow remote hosts."
+        )
+
+    return raw_host.rstrip("/")
+
+
 def _resolve_embedding_provider_name() -> str:
     _load_embedding_env_from_shell()
     explicit = os.environ.get("VIBE_RAG_EMBEDDING_PROVIDER", "").strip().lower()
     if explicit:
         return explicit
 
-    ollama_error: RuntimeError | None = None
     try:
         _resolve_ollama_host()
-        return "ollama"
     except RuntimeError as exc:
-        ollama_error = exc
-
-    if os.environ.get("VOYAGE_API_KEY", "").strip():
-        return "voyage"
-    if os.environ.get("MISTRAL_API_KEY", "").strip():
-        return "mistral"
-    if os.environ.get("OPENAI_API_KEY", "").strip():
-        return "openai"
-    raise RuntimeError(
-        "No embedding provider available. "
-        f"{ollama_error or 'Ollama not reachable and no hosted provider credentials configured.'}"
-    )
+        raise RuntimeError(
+            "No explicit embedding provider configured. "
+            "Set VIBE_RAG_EMBEDDING_PROVIDER explicitly when Ollama is unavailable."
+        ) from exc
+    return "ollama"
 
 
 def _shell_env_fallback_needed() -> bool:
@@ -134,8 +177,10 @@ def _shell_env_fallback_needed() -> bool:
 
 def _preferred_shell() -> tuple[str, str]:
     shell = os.environ.get("SHELL", "").strip() or "/bin/sh"
-    flag = "-lc"
-    return shell, flag
+    shell_path = os.path.realpath(shell)
+    if os.path.isabs(shell) and os.access(shell_path, os.X_OK) and shell_path in _TRUSTED_EMBEDDING_SHELLS:
+        return shell_path, "-lc"
+    return "/bin/sh", "-lc"
 
 
 def _load_embedding_env_from_shell() -> None:
@@ -837,6 +882,7 @@ def create_embedding_provider() -> EmbeddingProvider:
 def _resolve_ollama_host() -> str:
     explicit_host = os.environ.get("VIBE_RAG_OLLAMA_HOST", "").strip()
     if explicit_host:
+        explicit_host = _validate_ollama_host(explicit_host)
         return explicit_host
 
     inherited_host = os.environ.get("OLLAMA_HOST", "").strip()
@@ -845,7 +891,8 @@ def _resolve_ollama_host() -> str:
 
     for host in candidates:
         try:
-            response = httpx.get(f"{host.rstrip('/')}/api/version", timeout=1.0)
+            validated_host = _validate_ollama_host(host)
+            response = httpx.get(f"{validated_host.rstrip('/')}/api/version", timeout=1.0)
         except (httpx.ConnectError, httpx.TimeoutException):
             continue
         except httpx.HTTPError as exc:
@@ -890,10 +937,17 @@ def embedding_provider_status() -> dict[str, object]:
                 "detail": str(exc),
                 "model": model,
             }
+        hostname = urlparse(host).hostname or ""
+        remote_host_enabled = bool(hostname and not _is_loopback_host(hostname))
         return {
             "provider": "ollama",
             "ok": True,
-            "detail": f"ready ({host})",
+            "warning": remote_host_enabled,
+            "detail": (
+                f"ready ({host}; remote host explicitly allowed)"
+                if remote_host_enabled
+                else f"ready ({host})"
+            ),
             "model": model,
         }
 

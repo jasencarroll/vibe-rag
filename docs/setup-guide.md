@@ -98,6 +98,7 @@ Notes:
 - Durable user memory is stored automatically in `~/.vibe/memory.db`.
 - Project code and docs index stay in `.vibe/index.db`.
 - Ollama is the default embedding provider.
+- Retrieval stays project-scoped by default, including user-memory results used by session bootstrap.
 
 If Ollama is running on a non-default host, use:
 
@@ -109,6 +110,7 @@ command = "/absolute/path/to/vibe-rag"
 args = ["serve"]
 env = {
   VIBE_RAG_OLLAMA_HOST = "http://192.168.1.5:11434",
+  VIBE_RAG_ALLOW_REMOTE_OLLAMA_HOST = "true",
   VIBE_RAG_EMBEDDING_DIMENSIONS = "1024"
 }
 ```
@@ -116,6 +118,7 @@ env = {
 Optional:
 
 - `VIBE_RAG_OLLAMA_HOST`
+- `VIBE_RAG_ALLOW_REMOTE_OLLAMA_HOST=true` to permit non-loopback Ollama hosts (disabled by default).
 
 If `VIBE_RAG_OLLAMA_HOST` is not set, `vibe-rag` checks `OLLAMA_HOST`, then `localhost`, then `127.0.0.1`.
 
@@ -132,11 +135,13 @@ vibe-rag hook-session-start --format codex
 
 - effective project id
 - MCP command resolution from project config
-- Codex `SessionStart` hook execution
+- Codex `SessionStart` hook configuration
 - project and user sqlite readability
 - embedding provider reachability
 - Vibe and Codex trust state
 - stale index warnings
+
+`doctor` does not execute repo-configured hook commands. It only inspects the configured command and reports trust state.
 
 If you want to refresh the local index outside the client loop, run:
 
@@ -144,7 +149,9 @@ If you want to refresh the local index outside the client loop, run:
 vibe-rag reindex
 ```
 
-If Ollama is unavailable but a hosted provider key is already configured, `vibe-rag` now falls back to that hosted provider automatically.
+If Ollama is unavailable and `VIBE_RAG_EMBEDDING_PROVIDER` is unset, `vibe-rag` reports embedding provider unavailability. Use an explicit value (`ollama`, `mistral`, `openai`, or `voyage`) to select a different provider.
+
+If you use a hosted provider or a non-loopback Ollama host, indexed code, docs, and memory text leave the machine by design. Only do that when you accept that tradeoff.
 
 ## 3A. Optional Codex And Claude Code Scaffolding
 

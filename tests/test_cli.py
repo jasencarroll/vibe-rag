@@ -13,7 +13,7 @@ def test_cli_version():
     runner = CliRunner()
     result = runner.invoke(main, ["--version"])
     assert result.exit_code == 0
-    assert "0.0.29" in result.output
+    assert "0.0.30" in result.output
 
 
 def test_cli_help_uses_broader_product_framing():
@@ -236,6 +236,49 @@ def test_cli_doctor_fix_invokes_setup_ollama(monkeypatch):
     assert invoked["kwargs"]["model"] == "qwen3-embedding:0.6b"
 
 
+def test_cli_doctor_warns_for_remote_ollama_host(monkeypatch):
+    runner = CliRunner()
+    monkeypatch.setattr(
+        "vibe_rag.indexing.embedder.embedding_provider_status",
+        lambda: {
+            "provider": "ollama",
+            "ok": True,
+            "warning": True,
+            "detail": "ready (http://192.168.1.5:11434; remote host explicitly allowed)",
+            "model": "qwen3-embedding:0.6b",
+        },
+    )
+    monkeypatch.setattr("vibe_rag.cli._project_mcp_command_status", lambda root: {"ok": True, "detail": "uv -> /usr/bin/uv"})
+    monkeypatch.setattr("vibe_rag.cli._codex_hook_status", lambda root: {"ok": False, "detail": "missing .codex/hooks.json"})
+    monkeypatch.setattr(
+        "vibe_rag.cli._db_readable_status",
+        lambda path, label: {"ok": True, "warning": False, "detail": f"{label} DB readable ({path})"},
+    )
+    monkeypatch.setattr("vibe_rag.cli._vibe_cli_status", lambda: {"ok": True, "warning": False, "detail": "/usr/local/bin/vibe (mistral-vibe 0.1.0)"})
+    monkeypatch.setattr(
+        "vibe_rag.cli._project_vibe_hook_status",
+        lambda root: {"ok": False, "warning": True, "detail": "hooks.SessionStart.command is not configured in .vibe/config.toml"},
+    )
+    monkeypatch.setattr("vibe_rag.server._ensure_project_id", lambda: "demo-project")
+    monkeypatch.setattr("vibe_rag.server._get_embedder", lambda: type("Embedder", (), {"embed_text_sync": lambda self, texts: [[0.0] * 1024]})())
+    monkeypatch.setattr("vibe_rag.server._get_db", lambda: object())
+    monkeypatch.setattr("vibe_rag.tools._vibe_trust_status", lambda root: {"status": "ok", "detail": "trusted"})
+    monkeypatch.setattr("vibe_rag.tools._codex_trust_status", lambda root: {"status": "ok", "detail": "trusted"})
+    monkeypatch.setattr("vibe_rag.tools._stale_state", lambda db, root, project_id: {"is_stale": False, "warnings": []})
+    monkeypatch.setattr("vibe_rag.cli._recommended_provider", lambda: {"provider": "ollama", "reason": "local embeddings are available"})
+    monkeypatch.setattr(
+        "vibe_rag.cli._provider_candidates",
+        lambda: [{"provider": "ollama", "available": True, "detail": "local embeddings via Ollama"}],
+    )
+    _patch_doctor_new_checks(monkeypatch)
+
+    result = runner.invoke(main, ["doctor"])
+
+    assert result.exit_code == 0
+    assert "[warn] Embedding" in result.output
+    assert "remote host explicitly allowed" in result.output
+
+
 def test_project_mcp_command_status_reports_invalid_toml(tmp_path: Path):
     vibe_dir = tmp_path / ".vibe"
     vibe_dir.mkdir()
@@ -259,6 +302,104 @@ def test_project_vibe_hook_status_distinguishes_missing_and_invalid_toml(tmp_pat
     invalid = cli._project_vibe_hook_status(tmp_path)
     assert invalid["ok"] is False
     assert invalid["detail"] == "invalid TOML in .vibe/config.toml"
+
+
+def test_project_vibe_hook_status_does_not_execute_session_start(tmp_path: Path, monkeypatch):
+    vibe_dir = tmp_path / ".vibe"
+    vibe_dir.mkdir()
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_hook = fake_bin / "session-start-hook"
+    fake_hook.write_text("#!/bin/sh\necho pwned > /tmp/vibe_rag_poc\n")
+    fake_hook.chmod(0o755)
+
+    (vibe_dir / "config.toml").write_text(
+        "[[hooks.SessionStart]]\n"
+        f"command = \"{fake_hook}\"\n"
+    )
+
+    monkeypatch.setattr("vibe_rag.cli.subprocess.run", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("hook command executed")))
+
+    status = cli._project_vibe_hook_status(tmp_path)
+
+    assert status["ok"] is True
+    assert "SessionStart hook configured (not executed)" in status["detail"]
+
+
+def test_codex_hook_status_does_not_execute_session_start(tmp_path: Path, monkeypatch):
+    codex_dir = tmp_path / ".codex"
+    codex_dir.mkdir()
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_hook = fake_bin / "session-start-hook"
+    fake_hook.write_text("#!/bin/sh\necho pwned > /tmp/vibe_rag_poc\n")
+    fake_hook.chmod(0o755)
+
+    (codex_dir / "hooks.json").write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "SessionStart": [
+                        {"hooks": [{"command": str(fake_hook)}]}
+                    ]
+                }
+            }
+        )
+    )
+
+    monkeypatch.setattr("vibe_rag.cli.subprocess.run", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("hook command executed")))
+
+    status = cli._codex_hook_status(tmp_path)
+
+    assert status["ok"] is True
+    assert "SessionStart hook configured (not executed)" in status["detail"]
+
+
+def test_cli_doctor_warns_for_configured_hooks_in_untrusted_repo(monkeypatch):
+    runner = CliRunner()
+    monkeypatch.setattr(
+        "vibe_rag.indexing.embedder.embedding_provider_status",
+        lambda: {
+            "provider": "ollama",
+            "ok": True,
+            "detail": "ready (http://localhost:11434)",
+            "model": "qwen3-embedding:0.6b",
+        },
+    )
+    monkeypatch.setattr("vibe_rag.cli._project_mcp_command_status", lambda root: {"ok": True, "detail": "uv -> /usr/bin/uv"})
+    monkeypatch.setattr(
+        "vibe_rag.cli._codex_hook_status",
+        lambda root: {"ok": True, "detail": "SessionStart hook configured (not executed): /usr/local/bin/vibe-rag"},
+    )
+    monkeypatch.setattr(
+        "vibe_rag.cli._db_readable_status",
+        lambda path, label: {"ok": True, "warning": False, "detail": f"{label} DB readable ({path})"},
+    )
+    monkeypatch.setattr("vibe_rag.cli._vibe_cli_status", lambda: {"ok": True, "warning": False, "detail": "/usr/local/bin/vibe (mistral-vibe 0.1.0)"})
+    monkeypatch.setattr(
+        "vibe_rag.cli._project_vibe_hook_status",
+        lambda root: {"ok": True, "warning": False, "detail": "SessionStart hook configured (not executed): /usr/local/bin/vibe-rag"},
+    )
+    monkeypatch.setattr("vibe_rag.server._ensure_project_id", lambda: "demo-project")
+    monkeypatch.setattr("vibe_rag.server._get_embedder", lambda: type("Embedder", (), {"embed_text_sync": lambda self, texts: [[0.0] * 1024]})())
+    monkeypatch.setattr("vibe_rag.server._get_db", lambda: object())
+    monkeypatch.setattr("vibe_rag.tools._vibe_trust_status", lambda root: {"status": "warn", "detail": "repo not trusted"})
+    monkeypatch.setattr("vibe_rag.tools._codex_trust_status", lambda root: {"status": "warn", "detail": "repo not trusted"})
+    monkeypatch.setattr("vibe_rag.tools._stale_state", lambda db, root, project_id: {"is_stale": False, "warnings": []})
+    monkeypatch.setattr("vibe_rag.cli._recommended_provider", lambda: {"provider": "ollama", "reason": "local embeddings are available"})
+    monkeypatch.setattr(
+        "vibe_rag.cli._provider_candidates",
+        lambda: [{"provider": "ollama", "available": True, "detail": "local embeddings via Ollama"}],
+    )
+    _patch_doctor_new_checks(monkeypatch)
+
+    result = runner.invoke(main, ["doctor"])
+
+    assert result.exit_code == 0
+    assert "[warn] Vibe hooks" in result.output
+    assert "[warn] SessionStart" in result.output
+    assert "not executed" in result.output
+    assert "repo not trusted" in result.output
 
 
 def test_cli_doctor_reports_stale_state(monkeypatch):
@@ -363,7 +504,7 @@ def test_cli_module_entrypoint():
     )
 
     assert result.returncode == 0
-    assert "0.0.29" in result.stdout
+    assert "0.0.30" in result.stdout
 
 
 def test_cli_init_does_not_persist_secrets(monkeypatch):

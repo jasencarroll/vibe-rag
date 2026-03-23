@@ -115,7 +115,7 @@ class Greeter:
         assert len(result) >= 2
         assert {chunk["symbol"] for chunk in result} >= {"hello", "Greeter"}
 
-    def test_supported_language_falls_back_when_get_parser_breaks(self, monkeypatch):
+    def test_supported_language_falls_back_to_safe_parser_when_get_parser_breaks(self, monkeypatch):
         import tree_sitter_languages
 
         code = """
@@ -130,9 +130,52 @@ def hello():
         )
 
         result = _try_tree_sitter_chunk(code, "f.py", "python")
-
         assert result is not None
         assert {chunk["symbol"] for chunk in result} >= {"hello"}
+
+    def test_falls_back_to_sliding_window_when_tree_sitter_library_is_untrusted(self, tmp_path, monkeypatch):
+        import tree_sitter_languages
+
+        code = "def hello():\n    return 1\n"
+        fake_pkg = tmp_path / "tree_sitter_languages"
+        fake_pkg.mkdir()
+        fake_pkg.joinpath("__init__.py").write_text("__version__ = '0.0.0'\n")
+        fake_pkg.joinpath("languages.so").touch()
+
+        monkeypatch.setattr(tree_sitter_languages, "__file__", str(fake_pkg / "__init__.py"), raising=False)
+        monkeypatch.setattr(
+            tree_sitter_languages,
+            "get_parser",
+            lambda _lang: (_ for _ in ()).throw(TypeError("shimmed parser")),
+        )
+        monkeypatch.setattr(
+            tree_sitter_languages,
+            "get_language",
+            lambda _lang: (_ for _ in ()).throw(TypeError("shimmed language")),
+        )
+
+        chunks = chunk_code(code, "f.py", "python")
+        assert len(chunks) == 1
+        assert chunks[0]["content"] == code
+
+    def test_supported_language_falls_back_to_sliding_window_when_get_parser_and_get_language_breaks(self, monkeypatch):
+        import tree_sitter_languages
+
+        code = "def hello():\n    return 1\n"
+        monkeypatch.setattr(
+            tree_sitter_languages,
+            "get_parser",
+            lambda _lang: (_ for _ in ()).throw(TypeError("broken parser")),
+        )
+        monkeypatch.setattr(
+            tree_sitter_languages,
+            "get_language",
+            lambda _lang: (_ for _ in ()).throw(TypeError("broken language")),
+        )
+
+        chunks = chunk_code(code, "f.py", "python")
+        assert len(chunks) == 1
+        assert chunks[0]["content"] == code
 
 
 class TestSubsplitLargeChunks:

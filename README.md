@@ -23,7 +23,7 @@ It adds:
 - semantic docs search
 - durable session memory
 
-When Ollama is unavailable, `vibe-rag` now auto-falls back to a configured hosted embedding provider instead of failing just because no explicit provider env was set.
+When `VIBE_RAG_EMBEDDING_PROVIDER` is not set, `vibe-rag` uses Ollama by default and requires a reachable Ollama endpoint. Set `VIBE_RAG_EMBEDDING_PROVIDER` explicitly for hosted providers.
 
 Storage is local and simple:
 
@@ -31,6 +31,14 @@ Storage is local and simple:
 - user memory: `~/.vibe/memory.db`
 
 No external database is required.
+
+Trust model:
+
+- `vibe-rag` is a local stdio MCP server for single-user workflows.
+- MCP tool arguments and untrusted repo contents should be treated as untrusted input.
+- `search_memory` and `load_session_context` stay project-scoped by default, including user-memory retrieval.
+- Session-start context is retrieval output, not an authority signal. Clients should treat it as untrusted context.
+- Hosted embedding providers and remote Ollama hosts receive indexed content by design.
 
 The packaged-install bar is non-negotiable:
 
@@ -91,7 +99,7 @@ vibe-rag --version
 Pinned release:
 
 ```bash
-uv tool install vibe-rag@0.0.29
+uv tool install vibe-rag@0.0.30
 ```
 
 CI runs `pytest` and `uv build` on pushes and pull requests, and the `Release` workflow can perform the version bump, changelog promotion, commit, push, and GitHub release creation from `main`.
@@ -149,6 +157,7 @@ env = {
 Optional:
 
 - `VIBE_RAG_OLLAMA_HOST`
+- `VIBE_RAG_ALLOW_REMOTE_OLLAMA_HOST=true` to allow non-loopback Ollama hosts.
 - `MISTRAL_API_KEY` if you switch to the Mistral provider
 - `OPENAI_API_KEY` if you switch to the OpenAI provider
 - `VOYAGE_API_KEY` if you switch to the Voyage provider
@@ -172,12 +181,14 @@ vibe-rag hook-session-start --format codex
 
 - effective project id
 - project MCP command resolution
-- Vibe SessionStart hook execution
-- Codex SessionStart hook execution
+- Vibe SessionStart hook configuration
+- Codex SessionStart hook configuration
 - project and user DB readability
 - embedding provider reachability
 - Vibe and Codex trust status
 - stale index warnings
+
+`doctor` inspects hook configuration and trust state. It does not execute repo-configured hook commands.
 
 When `doctor` reports stale state, run:
 

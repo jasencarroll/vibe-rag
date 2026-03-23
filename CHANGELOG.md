@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.30] - 2026-03-23
+
+### Fixed
+- `doctor` now inspects repo-configured SessionStart hooks without executing them, and warns when those hooks are configured in an untrusted repo
+- Memory search, session bootstrap, cleanup, and status reporting now stay project-scoped by default for user-memory results
+- Session-start briefings now suppress stale and low-trust auto-captured memories when stronger current-project memory exists
+- Embedding provider diagnostics now warn when a non-loopback Ollama host is explicitly allowed, and shell-based env recovery now ignores untrusted shell paths
+- Tree-sitter chunking no longer falls back to loading repo-local shared libraries through `tree_sitter_languages.__file__`
+- `update_memory` now rejects ambiguous unqualified ids that exist in both project and user memory stores
+
 ## [0.0.29] - 2026-03-23
 
 ### Fixed

@@ -42,7 +42,7 @@ def test_get_embedder_without_key_raises(monkeypatch):
         lambda: (_ for _ in ()).throw(RuntimeError("Ollama not reachable")),
     )
     try:
-        with pytest.raises(RuntimeError, match="Ollama not reachable"):
+        with pytest.raises(RuntimeError, match="No explicit embedding provider configured"):
             srv._get_embedder()
     finally:
         srv._embedder = old_embedder
@@ -90,7 +90,7 @@ def test_get_db_uses_provider_default_dimensions_when_env_unset(tmp_path: Path, 
     monkeypatch.setattr(srv, "SqliteVecDB", FakeDB)
     try:
         srv._get_db()
-        assert captured["embedding_dimensions"] == 1536
+        assert captured["embedding_dimensions"] == 1024
     finally:
         srv._project_db = old_db
 

@@ -109,7 +109,7 @@ def test_create_embedding_provider_defaults_to_ollama(monkeypatch):
     assert provider._model == DEFAULT_OLLAMA_MODEL
 
 
-def test_create_embedding_provider_auto_falls_back_to_voyage_when_ollama_unreachable(monkeypatch):
+def test_create_embedding_provider_requires_explicit_provider_when_ollama_unreachable(monkeypatch):
     monkeypatch.delenv("VIBE_RAG_EMBEDDING_PROVIDER", raising=False)
     monkeypatch.delenv("VIBE_RAG_EMBEDDING_MODEL", raising=False)
     monkeypatch.setenv("VOYAGE_API_KEY", "test-voyage-key")
@@ -118,12 +118,11 @@ def test_create_embedding_provider_auto_falls_back_to_voyage_when_ollama_unreach
         lambda: (_ for _ in ()).throw(RuntimeError("Ollama not reachable")),
     )
 
-    provider = create_embedding_provider()
+    with pytest.raises(RuntimeError, match="No explicit embedding provider configured"):
+        create_embedding_provider()
 
-    assert isinstance(provider, VoyageEmbeddingProvider)
 
-
-def test_embedding_provider_status_auto_reports_voyage_when_ollama_unreachable(monkeypatch):
+def test_embedding_provider_status_reports_no_explicit_provider_when_ollama_unreachable(monkeypatch):
     monkeypatch.delenv("VIBE_RAG_EMBEDDING_PROVIDER", raising=False)
     monkeypatch.delenv("VIBE_RAG_EMBEDDING_MODEL", raising=False)
     monkeypatch.setenv("VOYAGE_API_KEY", "test-voyage-key")
@@ -134,20 +133,18 @@ def test_embedding_provider_status_auto_reports_voyage_when_ollama_unreachable(m
 
     status = embedding_provider_status()
 
-    assert status["provider"] == "voyage"
-    assert status["ok"] is True
+    assert status["provider"] == "auto"
+    assert status["ok"] is False
+    assert status["detail"].startswith("No explicit embedding provider configured")
 
 
-def test_create_embedding_provider_recovers_voyage_from_shell_env(monkeypatch):
+def test_create_embedding_provider_recovers_voyage_from_shell_env_with_explicit_provider(monkeypatch):
     from vibe_rag.indexing.embedder import EMBEDDING_ENV_KEYS
     for key in EMBEDDING_ENV_KEYS:
         monkeypatch.delenv(key, raising=False)
     monkeypatch.setenv("SHELL", "/bin/zsh")
+    monkeypatch.setenv("VIBE_RAG_EMBEDDING_PROVIDER", "voyage")
     monkeypatch.setattr("vibe_rag.indexing.embedder._SHELL_ENV_ATTEMPTED", False)
-    monkeypatch.setattr(
-        "vibe_rag.indexing.embedder._resolve_ollama_host",
-        lambda: (_ for _ in ()).throw(RuntimeError("Ollama not reachable")),
-    )
     monkeypatch.setattr(
         "vibe_rag.indexing.embedder.subprocess.run",
         lambda *args, **kwargs: subprocess.CompletedProcess(
@@ -164,16 +161,41 @@ def test_create_embedding_provider_recovers_voyage_from_shell_env(monkeypatch):
     assert provider._text_model == "voyage-4"
 
 
-def test_embedding_provider_status_recovers_voyage_from_shell_env(monkeypatch):
+def test_create_embedding_provider_ignores_untrusted_shell_path(monkeypatch):
+    from vibe_rag.indexing.embedder import EMBEDDING_ENV_KEYS
+
+    for key in EMBEDDING_ENV_KEYS:
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("SHELL", "/tmp/evil-shell")
+    monkeypatch.setenv("VIBE_RAG_EMBEDDING_PROVIDER", "voyage")
+    monkeypatch.setattr("vibe_rag.indexing.embedder._SHELL_ENV_ATTEMPTED", False)
+    captured: dict[str, list[str] | str] = {}
+
+    def fake_run(*args, **kwargs):
+        captured["args"] = list(args[0])
+        return subprocess.CompletedProcess(
+            args=args[0],
+            returncode=0,
+            stdout=b"VOYAGE_API_KEY=test-voyage-key\0VIBE_RAG_EMBEDDING_MODEL=voyage-4\0",
+            stderr=b"",
+        )
+
+    monkeypatch.setattr("vibe_rag.indexing.embedder.subprocess.run", fake_run)
+
+    provider = create_embedding_provider()
+
+    assert captured["args"][0] == "/bin/sh"
+    assert isinstance(provider, VoyageEmbeddingProvider)
+    assert provider._text_model == "voyage-4"
+
+
+def test_embedding_provider_status_recovers_voyage_from_shell_env_with_explicit_provider(monkeypatch):
     from vibe_rag.indexing.embedder import EMBEDDING_ENV_KEYS
     for key in EMBEDDING_ENV_KEYS:
         monkeypatch.delenv(key, raising=False)
     monkeypatch.setenv("SHELL", "/bin/zsh")
+    monkeypatch.setenv("VIBE_RAG_EMBEDDING_PROVIDER", "voyage")
     monkeypatch.setattr("vibe_rag.indexing.embedder._SHELL_ENV_ATTEMPTED", False)
-    monkeypatch.setattr(
-        "vibe_rag.indexing.embedder._resolve_ollama_host",
-        lambda: (_ for _ in ()).throw(RuntimeError("Ollama not reachable")),
-    )
     monkeypatch.setattr(
         "vibe_rag.indexing.embedder.subprocess.run",
         lambda *args, **kwargs: subprocess.CompletedProcess(
@@ -191,7 +213,7 @@ def test_embedding_provider_status_recovers_voyage_from_shell_env(monkeypatch):
     assert status["model"] == "voyage-4"
 
 
-def test_resolve_embedding_dimensions_defaults_to_mistral_when_ollama_unreachable(monkeypatch):
+def test_resolve_embedding_dimensions_defaults_to_ollama_when_ollama_unreachable(monkeypatch):
     monkeypatch.delenv("VIBE_RAG_EMBEDDING_DIMENSIONS", raising=False)
     monkeypatch.delenv("VIBE_RAG_EMBEDDING_PROVIDER", raising=False)
     monkeypatch.delenv("VOYAGE_API_KEY", raising=False)
@@ -201,6 +223,16 @@ def test_resolve_embedding_dimensions_defaults_to_mistral_when_ollama_unreachabl
         "vibe_rag.indexing.embedder._resolve_ollama_host",
         lambda: (_ for _ in ()).throw(RuntimeError("Ollama not reachable")),
     )
+
+    assert resolve_embedding_dimensions() == 1024
+
+
+def test_resolve_embedding_dimensions_explicit_provider_defaults_to_provider_value(monkeypatch):
+    monkeypatch.delenv("VIBE_RAG_EMBEDDING_DIMENSIONS", raising=False)
+    monkeypatch.setenv("VIBE_RAG_EMBEDDING_PROVIDER", "mistral")
+    monkeypatch.setenv("MISTRAL_API_KEY", "test-key")
+    monkeypatch.delenv("VIBE_RAG_OLLAMA_HOST", raising=False)
+    monkeypatch.delenv("OLLAMA_HOST", raising=False)
 
     assert resolve_embedding_dimensions() == 1536
 
@@ -305,7 +337,25 @@ def test_ollama_provider_batches_emit_progress_events(monkeypatch):
 
 
 def test_resolve_ollama_host_prefers_explicit_host(monkeypatch):
+    monkeypatch.setenv("VIBE_RAG_OLLAMA_HOST", "http://localhost:11434")
+
+    from vibe_rag.indexing.embedder import _resolve_ollama_host
+
+    assert _resolve_ollama_host() == "http://localhost:11434"
+
+
+def test_resolve_ollama_host_rejects_remote_host_without_opt_in(monkeypatch):
     monkeypatch.setenv("VIBE_RAG_OLLAMA_HOST", "http://192.168.1.5:11434")
+
+    from vibe_rag.indexing.embedder import _resolve_ollama_host
+
+    with pytest.raises(RuntimeError, match="Refusing non-loopback Ollama host"):
+        _resolve_ollama_host()
+
+
+def test_resolve_ollama_host_allows_remote_host_with_opt_in(monkeypatch):
+    monkeypatch.setenv("VIBE_RAG_OLLAMA_HOST", "http://192.168.1.5:11434")
+    monkeypatch.setenv("VIBE_RAG_ALLOW_REMOTE_OLLAMA_HOST", "true")
 
     from vibe_rag.indexing.embedder import _resolve_ollama_host
 
@@ -351,6 +401,23 @@ def test_embedding_provider_status_for_ollama(monkeypatch, httpx_mock):
     assert status["provider"] == "ollama"
     assert status["ok"] is True
     assert "127.0.0.1:11434" in status["detail"]
+
+
+def test_embedding_provider_status_warns_for_remote_ollama_host(monkeypatch):
+    monkeypatch.setenv("VIBE_RAG_EMBEDDING_PROVIDER", "ollama")
+    monkeypatch.setenv("VIBE_RAG_OLLAMA_HOST", "http://192.168.1.5:11434")
+    monkeypatch.setenv("VIBE_RAG_ALLOW_REMOTE_OLLAMA_HOST", "true")
+    monkeypatch.setattr(
+        "vibe_rag.indexing.embedder._resolve_ollama_host",
+        lambda: "http://192.168.1.5:11434",
+    )
+
+    status = embedding_provider_status()
+
+    assert status["provider"] == "ollama"
+    assert status["ok"] is True
+    assert status["warning"] is True
+    assert "remote host explicitly allowed" in status["detail"]
 
 
 def test_create_embedding_provider_supports_openai(monkeypatch):

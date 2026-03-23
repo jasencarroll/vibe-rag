@@ -119,7 +119,7 @@ def remember(
         body = summary if not details else f"{summary}\n\n{details}"
         try:
             embeddings = _get_embedder().embed_text_sync([body])
-        except RuntimeError as e:
+        except Exception as e:
             return _failure("embedding_failed", f"embedding failed: {e}")
 
         db = _get_db() if scope == "project" else _get_user_db()
@@ -157,7 +157,7 @@ def remember(
 
     try:
         embeddings = _get_embedder().embed_text_sync([content])
-    except RuntimeError as e:
+    except Exception as e:
         return _failure("embedding_failed", f"embedding failed: {e}")
 
     inferred_kind = _infer_auto_memory_kind("", content, content)
@@ -245,7 +245,6 @@ def update_memory(
         return _failure_from_error(parsed)
     source_db, sqlite_id = parsed
     current_project_id = _ensure_project_id()
-
     # Resolve DB
     if source_db == "user":
         db = _get_user_db()
@@ -254,12 +253,22 @@ def update_memory(
         db = _get_db()
         source_db_label = "project"
     else:
-        # Default to project, fall back to user
-        db = _get_db()
-        source_db_label = "project"
-        existing = db.get_memory(sqlite_id)
-        if not existing:
-            db = _get_user_db()
+        project_db = _get_db()
+        user_db = _get_user_db()
+        project_memory = project_db.get_memory(sqlite_id)
+        user_memory = user_db.get_memory(sqlite_id)
+        if project_memory and user_memory:
+            return _failure(
+                "ambiguous_memory_id",
+                f"memory {sqlite_id} exists in multiple memory stores",
+                memory_id=sqlite_id,
+                source_dbs=["project", "user"],
+            )
+        if project_memory:
+            db = project_db
+            source_db_label = "project"
+        else:
+            db = user_db
             source_db_label = "user"
 
     existing = db.get_memory(sqlite_id)
@@ -318,7 +327,7 @@ def update_memory(
         try:
             embeddings = _get_embedder().embed_text_sync([embed_text])
             embedding = embeddings[0]
-        except RuntimeError as e:
+        except Exception as e:
             return _failure("embedding_failed", f"embedding failed: {e}")
 
     # Merge metadata
@@ -710,7 +719,7 @@ def save_session_memory(
 
     try:
         embedding = _get_embedder().embed_text_sync([content])[0]
-    except RuntimeError as e:
+    except Exception as e:
         return _failure("embedding_failed", f"embedding failed: {e}")
 
     memory_id = user_db.remember_structured(
@@ -751,15 +760,14 @@ def save_session_summary(
     metadata: dict | None = None,
 ) -> dict:
     """Hook-driven: maintain a rolling summary of the current session. Each call supersedes the previous summary. Typically invoked by session hooks, not called directly."""
-    if turns:
-        last_assistant = str(turns[-1].get("assistant", ""))
-        if _should_skip_session_capture(last_assistant):
-            return _success(skipped=True, reason="low-signal response")
     task_error = _validate_memory_content(task)
     if task_error:
         return _failure_from_error(task_error)
     if not isinstance(turns, list):
         return _failure("invalid_turns", "turns must be a list")
+    for idx, turn in enumerate(turns):
+        if not isinstance(turn, dict):
+            return _failure("invalid_turns", f"turns[{idx}] must be an object")
     if not source_session_id.strip():
         return _failure("missing_source_session_id", "source_session_id is required")
     if not source_message_id.strip():
@@ -767,10 +775,14 @@ def save_session_summary(
     tags_error = _validate_tags(tags)
     if tags_error:
         return _failure_from_error(tags_error)
+    if turns:
+        last_assistant = str(turns[-1].get("assistant", ""))
+        if _should_skip_session_capture(last_assistant):
+            return _success(skipped=True, reason="low-signal response")
 
     try:
         summary, content = _distill_session_summary(turns)
-    except ValueError as e:
+    except (ValueError, AttributeError, TypeError) as e:
         return _failure("invalid_turns", str(e))
     inferred_memory_kind = "summary"
     if _is_transient_status_auto_capture(task.strip(), summary, content):
@@ -798,7 +810,7 @@ def save_session_summary(
 
     try:
         embedding = _get_embedder().embed_text_sync([content])[0]
-    except RuntimeError as e:
+    except Exception as e:
         return _failure("embedding_failed", f"embedding failed: {e}")
 
     current_project_id = _ensure_project_id()
@@ -912,7 +924,7 @@ def supersede_memory(
     content = summary if not details else f"{summary}\n\n{details}"
     try:
         embedding = _get_embedder().embed_text_sync([content])[0]
-    except RuntimeError as e:
+    except Exception as e:
         return _failure("embedding_failed", f"embedding failed: {e}")
 
     user_db = _get_user_db()

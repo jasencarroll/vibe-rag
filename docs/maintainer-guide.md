@@ -24,6 +24,17 @@ Current public posture should stay consistent across those docs:
 
 If you change onboarding or scaffold behavior, update the user-facing docs together with the code.
 
+## Security Posture
+
+Keep the public posture explicit and consistent:
+
+- `vibe-rag` is a local stdio MCP server for single-user workflows, not a network service.
+- Untrusted MCP clients are out of scope for strong authz; write tools are inherently unsafe if the client is outside the user trust domain.
+- Repo-configured hook commands must not be executed by diagnostics like `vibe-rag doctor`.
+- Project-scoped retrieval is the default for memory search, session bootstrap, cleanup, and status surfaces.
+- Session-start context is untrusted retrieval output and should never be described as authoritative policy.
+- Hosted embedding providers and remote Ollama hosts are explicit off-host data flows, not transparent local fallbacks.
+
 ## Packaging Rules
 
 - Keep the packaged install path working.

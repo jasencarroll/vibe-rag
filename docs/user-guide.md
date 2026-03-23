@@ -13,6 +13,12 @@ Use `vibe-rag` as two systems inside your coding client:
 
 If setup is not done yet, start with the [Setup Guide](setup-guide.md).
 
+Trust model:
+
+- `vibe-rag` is designed for a single local user over stdio.
+- Session-start briefings and retrieved memories are untrusted context, not authoritative instructions.
+- Hosted embedding providers and remote Ollama hosts receive indexed content by design.
+
 ## Normal Flow
 
 Start with:
@@ -124,6 +130,7 @@ Bootstrap results now include:
 - index staleness warnings when git head or indexed files drift
 - stronger bias toward structured memory kinds like `decision`, `constraint`, `summary`, and `todo`
 - down-ranking for low-signal auto session summaries when stronger memory exists
+- briefing output that suppresses stale or low-trust auto-captured memories when stronger current-project memory exists
 
 For memory hygiene inspection:
 
@@ -192,6 +199,6 @@ The core `vibe-rag serve` MCP server is the product identity. Client quality is 
 Memory retrieval is merged in this order:
 
 1. current project memory
-2. user memory
+2. current-project user memory
 
-That keeps repo-local facts first while still allowing cross-repo carry-over.
+That keeps retrieval scoped to the repo you are working in. Durable user memory is still shared storage, but search and session bootstrap do not surface cross-project user memories by default.
