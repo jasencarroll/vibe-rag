@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.24] - 2026-03-23
+
 ### Added
 - `load_session_context` now synthesizes a situational-awareness briefing with pulse, hazards, live decisions, and task context so session-start hooks can brief the client before the first prompt
 - `vibe-rag doctor` now validates the native Vibe `[[hooks.SessionStart]]` path in generated projects
