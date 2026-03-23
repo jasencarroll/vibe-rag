@@ -91,7 +91,7 @@ vibe-rag --version
 Pinned release:
 
 ```bash
-uv tool install vibe-rag@0.0.28
+uv tool install vibe-rag@0.0.29
 ```
 
 CI runs `pytest` and `uv build` on pushes and pull requests, and the `Release` workflow can perform the version bump, changelog promotion, commit, push, and GitHub release creation from `main`.

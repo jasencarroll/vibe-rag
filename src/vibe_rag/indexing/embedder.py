@@ -134,7 +134,7 @@ def _shell_env_fallback_needed() -> bool:
 
 def _preferred_shell() -> tuple[str, str]:
     shell = os.environ.get("SHELL", "").strip() or "/bin/sh"
-    flag = "-lic" if os.path.basename(shell) in {"bash", "zsh"} else "-lc"
+    flag = "-lc"
     return shell, flag
 
 
@@ -148,6 +148,7 @@ def _load_embedding_env_from_shell() -> None:
         result = subprocess.run(
             [shell, flag, "command env -0"],
             check=True,
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             timeout=5,
         )

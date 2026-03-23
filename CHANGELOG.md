@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.29] - 2026-03-23
+
+### Fixed
+- Fix TTY suspension (SIGTTIN) when running as MCP server: remove interactive shell flag (`-i`) from env-loading subprocess and attach stdin to `/dev/null`
+
 ## [0.0.28] - 2026-03-23
 
 ### Added
