@@ -24,7 +24,7 @@ Use it when making changes in this repository, especially for packaging, release
 
 ## Release Workflow
 
-Preferred path: trigger the `Release` GitHub Actions workflow from `main`. It now prepares the version bump, promotes `CHANGELOG.md`, runs tests, builds the wheel, commits `Release vX.Y.Z`, pushes `main`, and creates the GitHub release that triggers PyPI publishing.
+Preferred path: trigger the `Release` GitHub Actions workflow from `main`. It now prepares the version bump, promotes `CHANGELOG.md`, runs tests, builds the wheel, commits `Release vX.Y.Z`, pushes `main`, creates the GitHub release, and explicitly dispatches the PyPI publish workflow against the release tag.
 
 If you need the manual fallback, follow this exact order.
 
@@ -125,7 +125,7 @@ Important:
 
 ### 6. Watch the publish workflow
 
-Check the release-triggered PyPI workflow:
+Check the explicitly dispatched PyPI workflow:
 
 ```bash
 gh run list --repo jasencarroll/vibe-rag --workflow publish.yml --limit 5
@@ -135,6 +135,12 @@ gh run watch <RUN_ID> --repo jasencarroll/vibe-rag --exit-status
 The expected workflow file is:
 
 - `.github/workflows/publish.yml`
+
+If the release workflow succeeded but publish still needs to be rerun, use the manual backstop:
+
+```bash
+gh workflow run publish.yml --repo jasencarroll/vibe-rag -f ref=vX.Y.Z
+```
 
 ### 7. Confirm release state
 

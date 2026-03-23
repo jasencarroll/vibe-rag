@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `release.yml` now explicitly dispatches `publish.yml` against the release tag instead of relying on GitHub's `release.published` event fan-out
+- `publish.yml` now supports a manual `workflow_dispatch` backstop for republishing a specific tag when needed
+
 ## [0.0.21] - 2026-03-23
 
 ### Added

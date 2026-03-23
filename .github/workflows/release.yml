@@ -13,6 +13,7 @@ jobs:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
+      actions: write
       contents: write
     steps:
       - uses: actions/checkout@v5
@@ -67,3 +68,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "v${{ inputs.version }}" --repo "${{ github.repository }}" --title "v${{ inputs.version }}" --notes-file release-notes.md
+      - name: Trigger publish workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run publish.yml --repo "${{ github.repository }}" -f ref="v${{ inputs.version }}"
