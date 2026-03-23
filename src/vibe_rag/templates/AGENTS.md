@@ -28,7 +28,7 @@ Use the memory MCP tools first when the task is about:
 
 - project index lives in `.vibe/index.db`
 - durable user memory lives in `~/.vibe/memory.db`
-- `MISTRAL_API_KEY` is required for embeddings
+- Ollama is the default embedding provider
 
 ## Good prompts
 

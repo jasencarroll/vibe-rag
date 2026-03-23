@@ -7,6 +7,7 @@ Target state:
 - project-local config
 - local durable memory in `~/.vibe/memory.db`
 - background session bootstrap
+- Ollama embeddings with `qwen3-embedding:0.6b`
 
 ## 1. Install the Tools
 
@@ -29,6 +30,12 @@ If `uv` defaults to Python 3.13:
 
 ```bash
 uv tool install --python 3.12 vibe-rag
+```
+
+Start Ollama and pull the default embedding model:
+
+```bash
+vibe-rag setup-ollama
 ```
 
 ## 2. Scaffold a Repo
@@ -57,8 +64,6 @@ name = "memory"
 transport = "stdio"
 command = "vibe-rag"
 args = ["serve"]
-env = { MISTRAL_API_KEY = "your_mistral_api_key" }
-
 [background_mcp_hook]
 enabled = true
 tool_name = "memory_load_session_context"
@@ -72,9 +77,37 @@ summary_tool_name = "memory_save_session_summary"
 
 Notes:
 
-- `MISTRAL_API_KEY` is required for embeddings.
 - Durable user memory is stored automatically in `~/.vibe/memory.db`.
 - Project code and docs index stay in `.vibe/index.db`.
+- Ollama is the default embedding provider.
+
+If Ollama is running on a non-default host, use:
+
+```toml
+[[mcp_servers]]
+name = "memory"
+transport = "stdio"
+command = "vibe-rag"
+args = ["serve"]
+env = {
+  VIBE_RAG_OLLAMA_HOST = "http://192.168.1.5:11434",
+  VIBE_RAG_EMBEDDING_DIMENSIONS = "1024"
+}
+```
+
+Optional:
+
+- `VIBE_RAG_OLLAMA_HOST`
+
+If `VIBE_RAG_OLLAMA_HOST` is not set, `vibe-rag` checks `OLLAMA_HOST`, then `localhost`, then `127.0.0.1`.
+
+Helper commands:
+
+```bash
+vibe-rag doctor
+vibe-rag doctor --fix
+vibe-rag setup-ollama
+```
 
 ## 4. Trust the Repo
 
@@ -125,7 +158,8 @@ If code or docs search is empty:
 
 - trust the repo
 - run `index this project`
-- make sure `MISTRAL_API_KEY` is present in the MCP server `env`
+- run `vibe-rag doctor`
+- make sure Ollama is running and `qwen3-embedding:0.6b` is pulled
 
 If memory search is empty:
 

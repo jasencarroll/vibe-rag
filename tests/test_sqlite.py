@@ -52,3 +52,14 @@ def test_search_with_language_filter(db):
     results = db.search([0.1] * 1536, limit=10, language="python")
     assert len(results) == 1
     assert results[0]["file_path"] == "a.py"
+
+
+def test_initialize_respects_custom_dimensions(tmp_path: Path):
+    db = SqliteVecDB(tmp_path / "custom.db", embedding_dimensions=1024)
+    db.initialize()
+    chunks = [{"file_path": "src/main.py", "chunk_index": 0, "content": "def hello(): pass",
+               "language": "python", "symbol": "hello", "start_line": 1, "end_line": 1}]
+    embeddings = [[0.1] * 1024]
+    db.upsert_chunks(chunks, embeddings)
+    results = db.search([0.1] * 1024, limit=5)
+    assert len(results) == 1

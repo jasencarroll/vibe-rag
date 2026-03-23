@@ -30,17 +30,20 @@ def test_ensure_project_id_returns_path_derived_id():
         srv._project_id = old
 
 
-def test_get_embedder_without_key_raises():
+def test_get_embedder_without_key_raises(monkeypatch):
     old_embedder = srv._embedder
-    old_key = srv._api_key
     srv._embedder = None
-    srv._api_key = ""
+    monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
+    monkeypatch.delenv("VIBE_RAG_EMBEDDING_PROVIDER", raising=False)
+    monkeypatch.setattr(
+        "vibe_rag.indexing.embedder._resolve_ollama_host",
+        lambda: (_ for _ in ()).throw(RuntimeError("Ollama not reachable")),
+    )
     try:
-        with pytest.raises(RuntimeError, match="MISTRAL_API_KEY"):
+        with pytest.raises(RuntimeError, match="Ollama not reachable"):
             srv._get_embedder()
     finally:
         srv._embedder = old_embedder
-        srv._api_key = old_key
 
 
 def test_get_db_creates_and_returns_db(tmp_path: Path, monkeypatch):

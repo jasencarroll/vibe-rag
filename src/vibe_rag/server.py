@@ -6,16 +6,27 @@ import threading
 from pathlib import Path
 from mcp.server.fastmcp import FastMCP
 from vibe_rag.db.sqlite import SqliteVecDB
-from vibe_rag.indexing.embedder import Embedder
+from vibe_rag.indexing.embedder import EmbeddingProvider, create_embedding_provider
 
 mcp = FastMCP(name="vibe-rag")
 
 _api_key = os.environ.get("MISTRAL_API_KEY", "")
 _project_db: SqliteVecDB | None = None
 _user_db: SqliteVecDB | None = None
-_embedder: Embedder | None = None
+_embedder: EmbeddingProvider | None = None
 _project_id: str | None = None
 _init_lock = threading.Lock()
+
+
+def _embedding_dimensions() -> int:
+    raw = os.environ.get("VIBE_RAG_EMBEDDING_DIMENSIONS", "1536").strip()
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise RuntimeError("VIBE_RAG_EMBEDDING_DIMENSIONS must be an integer") from exc
+    if value <= 0:
+        raise RuntimeError("VIBE_RAG_EMBEDDING_DIMENSIONS must be positive")
+    return value
 
 
 def _project_db_path() -> Path:
@@ -37,7 +48,7 @@ def _get_db() -> SqliteVecDB:
     if _project_db is None:
         with _init_lock:
             if _project_db is None:
-                _project_db = SqliteVecDB(_project_db_path())
+                _project_db = SqliteVecDB(_project_db_path(), embedding_dimensions=_embedding_dimensions())
                 _project_db.initialize()
     return _project_db
 
@@ -47,19 +58,17 @@ def _get_user_db() -> SqliteVecDB:
     if _user_db is None:
         with _init_lock:
             if _user_db is None:
-                _user_db = SqliteVecDB(_user_db_path())
+                _user_db = SqliteVecDB(_user_db_path(), embedding_dimensions=_embedding_dimensions())
                 _user_db.initialize()
     return _user_db
 
 
-def _get_embedder() -> Embedder:
+def _get_embedder() -> EmbeddingProvider:
     global _embedder
     if _embedder is None:
         with _init_lock:
             if _embedder is None:
-                if not _api_key:
-                    raise RuntimeError("MISTRAL_API_KEY not set")
-                _embedder = Embedder(api_key=_api_key)
+                _embedder = create_embedding_provider()
     return _embedder
 
 

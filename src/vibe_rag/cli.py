@@ -1,5 +1,8 @@
 from __future__ import annotations
+import os
+import subprocess
 import shutil
+import time
 from pathlib import Path
 
 import click
@@ -107,6 +110,98 @@ def status():
         user_db.close()
     else:
         click.echo(f"  User:        0 memories ({user_db_path})")
+    click.echo()
+
+
+@main.command()
+@click.option("--fix", is_flag=True, help="Run provider-specific setup helpers when possible.")
+def doctor(fix: bool):
+    """Check local vibe-rag setup and embedding provider health."""
+    from vibe_rag.indexing.embedder import embedding_provider_status
+
+    project_db_path = Path.cwd() / ".vibe" / "index.db"
+    user_db_path = Path(os.environ.get("VIBE_RAG_USER_DB", Path.home() / ".vibe" / "memory.db")).expanduser()
+    provider = embedding_provider_status()
+
+    click.echo(f"\n  vibe-rag {__version__}")
+    click.echo(f"  Project DB:  {project_db_path}")
+    click.echo(f"  User DB:     {user_db_path}")
+    click.echo(f"  Provider:    {provider['provider']}")
+    click.echo(f"  Model:       {provider['model'] or 'unset'}")
+    click.echo(f"  Status:      {provider['detail']}")
+
+    if provider["provider"] == "ollama" and not provider["ok"]:
+        click.echo("\n  Ollama fast path:")
+        click.echo("    ollama serve")
+        if provider["model"]:
+            click.echo(f"    ollama pull {provider['model']}")
+        if fix:
+            ctx = click.get_current_context()
+            ctx.invoke(setup_ollama, model=provider["model"] or "")
+    click.echo()
+
+
+def _wait_for_ollama(host: str, timeout_seconds: float = 10.0) -> bool:
+    import httpx
+
+    deadline = time.time() + timeout_seconds
+    url = f"{host.rstrip('/')}/api/version"
+    while time.time() < deadline:
+        try:
+            response = httpx.get(url, timeout=1.0)
+            if response.status_code == 200:
+                return True
+        except httpx.HTTPError:
+            pass
+        time.sleep(0.5)
+    return False
+
+
+def _start_ollama_if_needed() -> str:
+    ollama_bin = shutil.which("ollama")
+    if not ollama_bin:
+        raise click.ClickException("Ollama is not installed or not on PATH.")
+
+    host = (
+        os.environ.get("VIBE_RAG_OLLAMA_HOST", "").strip()
+        or os.environ.get("OLLAMA_HOST", "").strip()
+        or "http://localhost:11434"
+    )
+    if _wait_for_ollama(host, timeout_seconds=1.0):
+        return host
+
+    subprocess.Popen(
+        [ollama_bin, "serve"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    if _wait_for_ollama(host):
+        return host
+    raise click.ClickException(f"Ollama did not become ready at {host}.")
+
+
+@main.command("setup-ollama")
+@click.option("--model", default="qwen3-embedding:0.6b", show_default=True, help="Embedding model to pull.")
+def setup_ollama(model: str):
+    """Start Ollama if needed and pull the default embedding model."""
+    ollama_bin = shutil.which("ollama")
+    if not ollama_bin:
+        raise click.ClickException("Ollama is not installed or not on PATH.")
+
+    host = _start_ollama_if_needed()
+    click.echo(f"\n  Ollama ready at {host}")
+    click.echo(f"  Pulling {model} ...")
+
+    result = subprocess.run([ollama_bin, "pull", model], check=False)
+    if result.returncode != 0:
+        raise click.ClickException(f"ollama pull {model} failed with exit code {result.returncode}")
+
+    click.echo(f"  Pulled {model}")
+    click.echo("\n  MCP env:")
+    click.echo(f'    VIBE_RAG_EMBEDDING_PROVIDER = "ollama"')
+    click.echo(f'    VIBE_RAG_EMBEDDING_MODEL = "{model}"')
+    click.echo('    VIBE_RAG_EMBEDDING_DIMENSIONS = "1024"')
     click.echo()
 
 

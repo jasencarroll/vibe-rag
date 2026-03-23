@@ -156,15 +156,19 @@ def test_load_session_context_bundles_memory_code_and_docs(tmp_db, mock_embedder
 # --- Edge case tests ---
 
 
-def test_index_project_no_api_key(tmp_db, tmp_path: Path):
-    """index_project should return an error string when no embedder is available."""
+def test_index_project_no_api_key(tmp_db, tmp_path: Path, monkeypatch):
+    """index_project should return an error string when the default embedder is unavailable."""
     import os
     import vibe_rag.server as srv
 
     old_embedder = srv._embedder
     srv._embedder = None
-    old_key = srv._api_key
-    srv._api_key = ""
+    monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
+    monkeypatch.delenv("VIBE_RAG_EMBEDDING_PROVIDER", raising=False)
+    monkeypatch.setattr(
+        "vibe_rag.indexing.embedder._resolve_ollama_host",
+        lambda: (_ for _ in ()).throw(RuntimeError("Ollama not reachable")),
+    )
 
     (tmp_path / "hello.py").write_text("x = 1\n")
     old_cwd = os.getcwd()
@@ -174,9 +178,8 @@ def test_index_project_no_api_key(tmp_db, tmp_path: Path):
     finally:
         os.chdir(old_cwd)
         srv._embedder = old_embedder
-        srv._api_key = old_key
 
-    assert "MISTRAL_API_KEY" in result
+    assert "Ollama not reachable" in result
 
 
 def test_index_project_no_files(tmp_db, mock_embedder, tmp_path: Path):

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from pathlib import Path
 
@@ -8,8 +9,9 @@ import sqlite_vec
 
 
 class SqliteVecDB:
-    def __init__(self, path: Path):
+    def __init__(self, path: Path, embedding_dimensions: int = 1536):
         self._path = path
+        self._embedding_dimensions = embedding_dimensions
         self._conn: sqlite3.Connection | None = None
 
     def _get_conn(self) -> sqlite3.Connection:
@@ -27,7 +29,12 @@ class SqliteVecDB:
     def initialize(self) -> None:
         conn = self._get_conn()
         conn.executescript(
-            """
+            f"""
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS code_chunks (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 file_path TEXT NOT NULL,
@@ -43,7 +50,7 @@ class SqliteVecDB:
 
             CREATE VIRTUAL TABLE IF NOT EXISTS code_chunks_vec USING vec0(
                 id INTEGER PRIMARY KEY,
-                embedding float[1536]
+                embedding float[{self._embedding_dimensions}]
             );
 
             CREATE TABLE IF NOT EXISTS memories (
@@ -53,7 +60,7 @@ class SqliteVecDB:
                 project_id TEXT,
                 memory_kind TEXT DEFAULT 'note',
                 summary TEXT,
-                metadata_json TEXT DEFAULT '{}',
+                metadata_json TEXT DEFAULT '{{}}',
                 source_session_id TEXT,
                 source_message_id TEXT,
                 supersedes TEXT,
@@ -64,7 +71,7 @@ class SqliteVecDB:
 
             CREATE VIRTUAL TABLE IF NOT EXISTS memories_vec USING vec0(
                 id INTEGER PRIMARY KEY,
-                embedding float[1536]
+                embedding float[{self._embedding_dimensions}]
             );
 
             CREATE TABLE IF NOT EXISTS docs (
@@ -78,7 +85,7 @@ class SqliteVecDB:
 
             CREATE VIRTUAL TABLE IF NOT EXISTS docs_vec USING vec0(
                 id INTEGER PRIMARY KEY,
-                embedding float[1536]
+                embedding float[{self._embedding_dimensions}]
             );
 
             CREATE TABLE IF NOT EXISTS file_hashes (
@@ -88,8 +95,41 @@ class SqliteVecDB:
             );
             """
         )
+        self._ensure_dimensions(conn)
         self._ensure_memory_columns(conn)
         conn.commit()
+
+    def _ensure_dimensions(self, conn: sqlite3.Connection) -> None:
+        row = conn.execute(
+            "SELECT value FROM settings WHERE key = 'embedding_dimensions'"
+        ).fetchone()
+        if row is None:
+            schema_row = conn.execute(
+                "SELECT sql FROM sqlite_master WHERE name = 'code_chunks_vec'"
+            ).fetchone()
+            if schema_row and schema_row["sql"]:
+                match = re.search(r"float\[(\d+)\]", schema_row["sql"])
+                existing_dimensions = int(match.group(1)) if match else 1536
+                conn.execute(
+                    "INSERT OR REPLACE INTO settings (key, value) VALUES ('embedding_dimensions', ?)",
+                    (str(existing_dimensions),),
+                )
+                if self._embedding_dimensions != existing_dimensions:
+                    raise RuntimeError(
+                        f"Embedding dimension mismatch: db={existing_dimensions}, requested={self._embedding_dimensions}"
+                    )
+                return
+            conn.execute(
+                "INSERT OR REPLACE INTO settings (key, value) VALUES ('embedding_dimensions', ?)",
+                (str(self._embedding_dimensions),),
+            )
+            return
+
+        existing_dimensions = int(row["value"])
+        if existing_dimensions != self._embedding_dimensions:
+            raise RuntimeError(
+                f"Embedding dimension mismatch: db={existing_dimensions}, requested={self._embedding_dimensions}"
+            )
 
     def _ensure_memory_columns(self, conn: sqlite3.Connection) -> None:
         rows = conn.execute("PRAGMA table_info(memories)").fetchall()

@@ -19,7 +19,7 @@ No external database is required.
 
 - Python 3.12+
 - `uv`
-- a Mistral API key
+- Ollama
 - Vibe
 
 Use Python 3.12 for `uv tool install`. In this environment, `tree-sitter-languages` does not have cp313 wheels.
@@ -48,7 +48,7 @@ vibe-rag --version
 Pinned release:
 
 ```bash
-uv tool install vibe-rag@0.0.14
+uv tool install vibe-rag@0.0.15
 ```
 
 If your machine defaults `uv` tools to Python 3.13:
@@ -60,6 +60,7 @@ uv tool install --python 3.12 vibe-rag
 ## Quick Start
 
 ```bash
+vibe-rag setup-ollama
 vibe-rag init my-project
 cd my-project
 vibe
@@ -76,12 +77,47 @@ name = "memory"
 transport = "stdio"
 command = "vibe-rag"
 args = ["serve"]
-env = { MISTRAL_API_KEY = "your_mistral_api_key" }
 
 [background_mcp_hook]
 enabled = true
 tool_name = "memory_load_session_context"
 task_arg = "task"
+```
+
+Optional Ollama overrides:
+
+```toml
+[[mcp_servers]]
+name = "memory"
+transport = "stdio"
+command = "vibe-rag"
+args = ["serve"]
+env = {
+  VIBE_RAG_EMBEDDING_PROVIDER = "ollama",
+  VIBE_RAG_EMBEDDING_MODEL = "qwen3-embedding:0.6b",
+  VIBE_RAG_EMBEDDING_DIMENSIONS = "1024"
+}
+```
+
+Optional:
+
+- `VIBE_RAG_OLLAMA_HOST`
+- `MISTRAL_API_KEY` if you switch to the Mistral provider
+- `OPENAI_API_KEY` if you switch to the OpenAI provider
+- `VOYAGE_API_KEY` if you switch to the Voyage provider
+
+If `VIBE_RAG_OLLAMA_HOST` is not set, `vibe-rag` checks:
+
+- `OLLAMA_HOST`
+- `http://localhost:11434`
+- `http://127.0.0.1:11434`
+
+Helper commands:
+
+```bash
+vibe-rag doctor
+vibe-rag doctor --fix
+vibe-rag setup-ollama
 ```
 
 First prompts:
@@ -108,6 +144,25 @@ Success looks like:
 | --- | --- | --- | --- |
 | Project index | semantic code and docs retrieval in the current repo | `.vibe/index.db` | `index_project`, `search_code`, `search_docs` |
 | User memory | durable cross-session memory | `~/.vibe/memory.db` | `remember`, `search_memory`, `forget`, `load_session_context` |
+
+## Embedding Providers
+
+Current providers:
+
+- `ollama` (default)
+- `mistral`
+- `openai`
+- `voyage`
+
+Provider env vars:
+
+- `VIBE_RAG_EMBEDDING_PROVIDER`
+- `VIBE_RAG_EMBEDDING_MODEL`
+- `VIBE_RAG_EMBEDDING_DIMENSIONS`
+- `VIBE_RAG_OLLAMA_HOST` for Ollama
+- `OPENAI_API_KEY` for OpenAI
+- `VOYAGE_API_KEY` for Voyage
+- `VIBE_RAG_CODE_EMBEDDING_MODEL` for Voyage code embeddings
 
 ## Docs
 
