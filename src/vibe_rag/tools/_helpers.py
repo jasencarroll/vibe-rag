@@ -377,11 +377,31 @@ def _vector_match_score(result: dict) -> float | None:
     return 1.0 - float(distance)
 
 
+def _memory_recency_boost(result: dict) -> float:
+    """Gentle recency tiebreaker: 0.05 for brand-new, decays to 0 at 90 days."""
+    created_at = result.get("created_at")
+    if not created_at:
+        return 0.0
+    try:
+        if isinstance(created_at, str):
+            ts = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+        else:
+            ts = created_at
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        age_days = (datetime.now(timezone.utc) - ts).total_seconds() / 86400.0
+        return 0.05 * max(0.0, 1.0 - age_days / 90.0)
+    except (ValueError, TypeError, OverflowError):
+        return 0.0
+
+
 def _memory_rank_score(result: dict) -> float:
     distance = result.get("distance")
     if distance is None:
-        return 1.0
-    return 1.0 / (1.0 + max(0.0, float(distance)))
+        base = 1.0
+    else:
+        base = 1.0 / (1.0 + max(0.0, float(distance)))
+    return base + _memory_recency_boost(result)
 
 
 def _with_source_db(result: MemoryRow, source_db: SourceDB) -> MemoryRow:
@@ -858,7 +878,22 @@ def _path_intent_boost(query: str, file_path: str) -> float:
     return boost
 
 
+def _path_query_term_boost(query: str, file_path: str) -> float:
+    """Small boost (up to 0.05) when any query term appears in the file path."""
+    terms = _query_terms(query)
+    if not terms:
+        return 0.0
+    path_parts = file_path.lower().replace("/", " ").replace("\\", " ").replace("_", " ").replace("-", " ").replace(".", " ")
+    if any(term in path_parts for term in terms):
+        return 0.05
+    return 0.0
+
+
 def _rerank_results(query: str, results: list[dict], *, content_key: str = "content") -> list[dict]:
+    for item in results:
+        file_path = str(item.get("file_path") or "")
+        path_boost = _path_query_term_boost(query, file_path)
+        item["rank_score"] = float(item.get("rank_score") or 0.0) + path_boost
     return sorted(
         results,
         key=lambda item: (
@@ -1869,7 +1904,7 @@ def _search_docs_results(query: str, limit: int = 10) -> tuple[ToolError | None,
     return None, results
 
 
-def _search_memory_results(query: str, limit: int = 10) -> tuple[ToolError | None, list[dict]]:
+def _search_memory_results(query: str, limit: int = 10, tags: str = "") -> tuple[ToolError | None, list[dict]]:
     error = _validate_query(query)
     if error:
         return error, []
@@ -1883,8 +1918,10 @@ def _search_memory_results(query: str, limit: int = 10) -> tuple[ToolError | Non
     except RuntimeError as e:
         return _tool_error("embedding_failed", f"embedding failed: {e}", operation="search_memory"), []
 
+    # Fetch more results when tag-filtering so we have enough after the post-filter.
+    fetch_limit = limit * 3 if tags else limit
     current_project_id = _ensure_project_id()
-    project_limit, user_limit = _memory_limit_split(limit)
+    project_limit, user_limit = _memory_limit_split(fetch_limit)
     project_results = project_db.search_memories(
         embeddings[0], limit=project_limit, project_id=current_project_id
     )
@@ -1892,9 +1929,25 @@ def _search_memory_results(query: str, limit: int = 10) -> tuple[ToolError | Non
     results = _merge_memory_results(
         [_with_source_db(result, "project") for result in project_results],
         [_with_source_db(result, "user") for result in user_results],
-        limit=limit,
+        limit=fetch_limit,
         current_project_id=current_project_id,
     )
+
+    # Post-filter by tags when requested.
+    if tags:
+        requested_tags = {t.strip().lower() for t in tags.split(",") if t.strip()}
+        if requested_tags:
+            filtered: list[dict] = []
+            for result in results:
+                raw_tags = result.get("tags") or ""
+                if isinstance(raw_tags, list):
+                    memory_tags = {t.strip().lower() for t in raw_tags if t.strip()}
+                else:
+                    memory_tags = {t.strip().lower() for t in str(raw_tags).split(",") if t.strip()}
+                if memory_tags & requested_tags:
+                    filtered.append(result)
+            results = filtered[:limit]
+
     return None, results
 
 

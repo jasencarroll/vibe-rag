@@ -2412,8 +2412,8 @@ def test_search_memory_scores_are_bounded_positive(tmp_db, mock_embedder):
             "source_message_id": "",
             "supersedes": None,
             "superseded_by": None,
-            "created_at": "2026-03-23 00:00:00",
-            "updated_at": "2026-03-23 00:00:00",
+            "created_at": "2024-01-01 00:00:00",
+            "updated_at": "2024-01-01 00:00:00",
             "distance": 1.05,
         }
     ]
@@ -2426,6 +2426,7 @@ def test_search_memory_scores_are_bounded_positive(tmp_db, mock_embedder):
 
     assert result["ok"] is True
     assert result["results"][0]["score"] > 0
+    # Base score: 1/(1+1.05) ≈ 0.49, recency boost ≈ 0 for old memories
     assert round(result["results"][0]["score"], 2) == 0.49
 
 
