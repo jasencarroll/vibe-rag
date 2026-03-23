@@ -50,6 +50,7 @@ class SqliteVecDB:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 content TEXT NOT NULL,
                 tags TEXT,
+                project_id TEXT,
                 memory_kind TEXT DEFAULT 'note',
                 summary TEXT,
                 metadata_json TEXT DEFAULT '{}',
@@ -94,6 +95,7 @@ class SqliteVecDB:
         rows = conn.execute("PRAGMA table_info(memories)").fetchall()
         columns = {row["name"] for row in rows}
         additions = {
+            "project_id": "ALTER TABLE memories ADD COLUMN project_id TEXT",
             "memory_kind": "ALTER TABLE memories ADD COLUMN memory_kind TEXT DEFAULT 'note'",
             "summary": "ALTER TABLE memories ADD COLUMN summary TEXT",
             "metadata_json": "ALTER TABLE memories ADD COLUMN metadata_json TEXT DEFAULT '{}'",
@@ -173,13 +175,20 @@ class SqliteVecDB:
 
     # --- Memories ---
 
-    def remember(self, content: str, embedding: list[float], tags: str = "") -> int:
+    def remember(
+        self,
+        content: str,
+        embedding: list[float],
+        tags: str = "",
+        project_id: str | None = None,
+    ) -> int:
         return self.remember_structured(
             summary=content[:200],
             content=content,
             embedding=embedding,
             tags=tags,
             memory_kind="note",
+            project_id=project_id,
         )
 
     def remember_structured(
@@ -188,6 +197,7 @@ class SqliteVecDB:
         content: str,
         embedding: list[float],
         tags: str = "",
+        project_id: str | None = None,
         memory_kind: str = "note",
         metadata: dict | None = None,
         source_session_id: str | None = None,
@@ -198,14 +208,15 @@ class SqliteVecDB:
         cursor = conn.execute(
             """
             INSERT INTO memories (
-                content, tags, memory_kind, summary, metadata_json,
+                content, tags, project_id, memory_kind, summary, metadata_json,
                 source_session_id, source_message_id, supersedes, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
             """,
             (
                 content,
                 tags,
+                project_id,
                 memory_kind,
                 summary,
                 json.dumps(metadata or {}),
@@ -227,19 +238,29 @@ class SqliteVecDB:
         conn.commit()
         return row_id
 
-    def search_memories(self, query_embedding: list[float], limit: int = 10, include_superseded: bool = False) -> list[dict]:
+    def search_memories(
+        self,
+        query_embedding: list[float],
+        limit: int = 10,
+        include_superseded: bool = False,
+        project_id: str | None = None,
+    ) -> list[dict]:
         conn = self._get_conn()
         serialized = sqlite_vec.serialize_float32(query_embedding)
         superseded_filter = "" if include_superseded else "AND m.superseded_by IS NULL"
+        project_filter = "" if project_id is None else "AND m.project_id = ?"
+        params: tuple[object, ...] = (serialized, limit)
+        if project_id is not None:
+            params += (project_id,)
         rows = conn.execute(
-            f"""SELECT m.id, m.content, m.tags, m.memory_kind, m.summary, m.metadata_json,
+            f"""SELECT m.id, m.content, m.tags, m.project_id, m.memory_kind, m.summary, m.metadata_json,
                        m.source_session_id, m.source_message_id, m.supersedes, m.superseded_by,
                        m.created_at, m.updated_at, v.distance
                 FROM memories_vec v
                 JOIN memories m ON m.id = v.id
-                WHERE v.embedding MATCH ? AND k = ? {superseded_filter}
+                WHERE v.embedding MATCH ? AND k = ? {superseded_filter} {project_filter}
                 ORDER BY v.distance""",
-            (serialized, limit),
+            params,
         ).fetchall()
         results = []
         for row in rows:

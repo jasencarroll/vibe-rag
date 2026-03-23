@@ -1,109 +1,68 @@
 # vibe-rag User Guide
 
-Day-to-day workflow after setup.
-
-If you have not installed Vibe, `vibe-rag`, PostgreSQL, and the MCP config yet, start here first:
-
-- [Setup Guide](setup-guide.md)
-
-## Mental Model
-
 Use `vibe-rag` as two systems:
 
-| System | What it is for | Where it lives |
+| System | Purpose | Storage |
 | --- | --- | --- |
 | Project index | semantic code and docs retrieval in the current repo | `.vibe/index.db` |
-| Durable memory | cross-session decisions, conventions, constraints, TODO context | PostgreSQL via `pgvector` |
+| User memory | durable cross-session memory | `~/.vibe/memory.db` |
 
-Use it like this:
+If setup is not done yet, start with the [Setup Guide](setup-guide.md).
 
-- `index this project` teaches Vibe the current repo
-- `remember ...` stores something worth keeping
-- `load session context for ...` gives Vibe one retrieval step that bundles likely memory, code, and docs context
+## Normal Flow
 
-Do not mix these up:
-
-- `index this project` helps Vibe understand the current repo now
-- `remember ...` helps Vibe remember something later
-- these are not interchangeable
-
-## First Session in a Repo
-
-Use this order:
+Start with:
 
 ```text
 load session context for understanding this repo
 index this project
-search the code for authentication handling
-search docs for deployment instructions
 ```
 
-If the repo is large or changed recently, run `index this project`.
+Then use:
 
-If you skip indexing, Vibe may still have durable memory, but code/docs retrieval quality will be worse.
+```text
+search the code for where config is written
+search docs for release steps
+search memory for prior decisions
+```
 
 ## What to Remember
 
 Good durable memories:
 
 - architecture decisions
-- boundaries between services
-- repo-specific naming rules
+- service boundaries
+- naming rules
 - chosen libraries
-- migration rules
+- migration notes
 - deployment constraints
-- known gotchas
+- repo-specific gotchas
 
-Do not remember:
+Do not store:
 
 - secrets
-- transient debugging notes
-- things already obvious from a single file
+- temporary debugging noise
+- facts obvious from one current file
 
-Rule:
-
-If you would want the same fact available next week without rereading the whole repo, store it.
-
-## Prompt Patterns That Work
-
-Good openers:
+## Useful Prompts
 
 ```text
 load session context for continuing the auth refactor
-load session context for investigating billing failures
 load session context for release automation work
-```
-
-Good follow-ups:
-
-```text
-search the code for where config is written
-search docs for release steps
-search memory for invoice rules
+search the code for authentication handling
+search docs for deployment instructions
 remember that auth tokens are validated in the API gateway
-```
-
-Good “resume later” loop:
-
-```text
-remember that invoice ids must stay human-readable
-remember that webhook retries are capped at 5
-```
-
-Next session:
-
-```text
-load session context for working on invoice webhooks
+search memory for auth tokens
 ```
 
 ## Structured Memory
 
-If your host or automation wants cleaner records, prefer:
+Use:
 
 - `remember_structured`
 - `supersede_memory`
 
-Use structured memory for things like:
+Good memory kinds:
 
 - `decision`
 - `constraint`
@@ -111,149 +70,19 @@ Use structured memory for things like:
 - `summary`
 - `fact`
 
-Use supersession when an old decision is no longer valid.
+## Session Memory
 
-## How to Think About Search
+If the Vibe fork hooks are enabled:
 
-Use `search_code` when:
+- completed turns are distilled into durable memory
+- rolling session summaries are updated automatically
+- new sessions can pull that context back through `memory_load_session_context`
 
-- you know behavior but not the exact symbol
-- the relevant code may be spread across files
-- you want semantic matches, not exact string matches
+## Retrieval Order
 
-Use `search_docs` when:
+Memory retrieval is merged in this order:
 
-- the answer is likely in README or markdown
-- you are looking for process, setup, release, or architecture notes
+1. current project memory
+2. user memory
 
-Use `search_memory` when:
-
-- you want prior decisions
-- you are resuming a task from another day
-- you want cross-repo context from durable memory
-
-Use `grep` only when you already know the literal string or identifier.
-
-If Vibe keeps defaulting to `grep`, use a more semantic prompt:
-
-```text
-search the code for where auth tokens are validated
-```
-
-## Recommended Session Openers
-
-### Resume a task
-
-```text
-load session context for continuing the auth work
-index this project
-```
-
-### Start a new task
-
-```text
-load session context for investigating the billing flow
-index this project
-```
-
-### Confirm a prior decision
-
-```text
-search memory for UUID decisions
-search memory for auth architecture
-```
-
-### Save a new decision
-
-```text
-remember that we deploy from main after green tests
-remember that invoice numbers must remain human-readable
-```
-
-## Working with IDs
-
-When `remember` stores a pgvector memory, it returns something like:
-
-```text
-Remembered in pgvector (id=ce630541-633a-411e-9b7d-3e79835cb59a): ...
-```
-
-Use that exact id with:
-
-```text
-forget memory ce630541-633a-411e-9b7d-3e79835cb59a
-```
-
-If durable memory is backed by pgvector, ids are UUID-like. If you only have local fallback memory, the behavior may be different.
-
-## Default Workflow
-
-Default loop:
-
-1. `load session context for ...`
-2. `index this project`
-3. `search the code for ...`
-4. make changes
-5. `remember ...` if you created a durable rule or decision
-
-Example:
-
-```text
-load session context for working on database connections
-index this project
-search the code for where database connections are created
-remember that postgres memory ids are UUIDs
-```
-
-Minimal successful day:
-
-1. `load session context for ...`
-2. `index this project`
-3. ask 2-3 semantic questions
-4. store one durable decision
-
-## Troubleshooting
-
-### Vibe does not seem to remember anything
-
-- check `DATABASE_URL` in `.vibe/config.toml`
-- run `vibe-rag status`
-- run `search memory for ...` explicitly
-
-### Search feels stale
-
-```text
-index this project
-```
-
-### Vibe keeps using grep instead of memory tools
-
-- ask directly with `search memory for ...`
-- ask directly with `search the code for ...`
-- make sure the repo is trusted so project-local skills load
-
-### Background bootstrap does not seem to happen
-
-Check:
-
-- the repo is trusted
-- `[background_mcp_hook]` exists in `.vibe/config.toml`
-- the MCP server `env` includes both `MISTRAL_API_KEY` and `DATABASE_URL`
-
-On macOS, also verify the trusted path matches the real repo path from:
-
-```bash
-pwd -P
-```
-
-## Quick Reference
-
-```text
-load session context for continuing auth work
-index this project
-search memory for auth decisions
-search the code for where config is written
-search docs for release steps
-remember that we deploy from main after green tests
-forget memory <id>
-```
+That keeps repo-local facts first while still allowing cross-repo carry-over.

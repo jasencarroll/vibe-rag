@@ -12,8 +12,7 @@ from vibe_rag.server import (
     _ensure_project_id,
     _get_db,
     _get_embedder,
-    _get_pg,
-    _run_async,
+    _get_user_db,
     mcp,
 )
 
@@ -160,6 +159,7 @@ def _score(result: dict) -> float:
 def _memory_payload(result: dict) -> dict:
     payload = {
         "id": str(result["id"]),
+        "source_db": result.get("source_db"),
         "summary": result.get("summary") or result.get("content", "")[:200],
         "content": result.get("content", ""),
         "score": round(_score(result), 4),
@@ -177,6 +177,29 @@ def _memory_payload(result: dict) -> dict:
     if isinstance(payload["tags"], str):
         payload["tags"] = [tag.strip() for tag in payload["tags"].split(",") if tag.strip()]
     return payload
+
+
+def _merge_memory_results(*result_sets: list[dict], limit: int) -> list[dict]:
+    seen_ids: set[tuple[str, str]] = set()
+    merged: list[dict] = []
+    for results in result_sets:
+        for result in results:
+            dedupe_key = (str(result.get("source_db") or "unknown"), str(result["id"]))
+            if dedupe_key in seen_ids:
+                continue
+            seen_ids.add(dedupe_key)
+            merged.append(result)
+            if len(merged) >= limit:
+                return merged
+    return merged
+
+
+def _memory_limit_split(limit: int) -> tuple[int, int]:
+    if limit <= 1:
+        return limit, limit
+    project_limit = max(1, limit // 2)
+    user_limit = max(1, limit - project_limit)
+    return project_limit, user_limit
 
 
 def _search_code_results(
@@ -233,60 +256,26 @@ def _search_memory_results(query: str, limit: int = 10) -> tuple[str | None, lis
     if error:
         return error, []
 
-    pg = _get_pg()
-    if pg:
-        try:
-            count = _run_async(pg.memory_count())
-        except Exception as e:
-            return f"Error checking pgvector memories: {e}", []
-        if count == 0:
-            return "No memories stored yet.", []
-        try:
-            embeddings = _get_embedder().embed_text_sync([query])
-        except Exception as e:
-            return f"Embedding failed: {e}", []
-        try:
-            current_project_id = _ensure_project_id()
-            global_results = _run_async(
-                pg.search_memories(embeddings[0], limit=max(limit * 5, 20), project_id=None)
-            )
-            cross_repo_results = [
-                result
-                for result in global_results
-                if result.get("project_id") != current_project_id
-            ]
-        except Exception as e:
-            return f"Error searching pgvector memories: {e}", []
-        try:
-            local_results = _run_async(
-                pg.search_memories(embeddings[0], limit=limit, project_id=current_project_id)
-            )
-        except Exception as e:
-            return f"Error searching pgvector memories: {e}", []
-
-        seen_ids: set[str] = set()
-        results: list[dict] = []
-        for result in local_results + cross_repo_results:
-            memory_id = str(result["id"])
-            if memory_id in seen_ids:
-                continue
-            seen_ids.add(memory_id)
-            results.append(result)
-            if len(results) >= limit:
-                break
-
-        if not results:
-            return "No matching memories found.", []
-        return None, results
-
-    db = _get_db()
-    if db.memory_count() == 0:
+    project_db = _get_db()
+    user_db = _get_user_db()
+    if project_db.memory_count() == 0 and user_db.memory_count() == 0:
         return "No memories stored yet.", []
     try:
         embeddings = _get_embedder().embed_text_sync([query])
     except Exception as e:
         return f"Embedding failed: {e}", []
-    results = db.search_memories(embeddings[0], limit=limit)
+
+    current_project_id = _ensure_project_id()
+    project_limit, user_limit = _memory_limit_split(limit)
+    project_results = project_db.search_memories(
+        embeddings[0], limit=project_limit, project_id=current_project_id
+    )
+    user_results = user_db.search_memories(embeddings[0], limit=max(user_limit, 10))
+    for result in project_results:
+        result["source_db"] = "project"
+    for result in user_results:
+        result["source_db"] = "user"
+    results = _merge_memory_results(project_results, user_results, limit=limit)
     if not results:
         return "No matching memories found.", []
     return None, results
@@ -437,17 +426,9 @@ def remember(content: str, tags: str = "") -> str:
     except Exception as e:
         return f"Embedding failed: {e}"
 
-    pg = _get_pg()
-    if pg:
-        try:
-            memory_id = _run_async(pg.remember(content, embeddings[0], tags, _ensure_project_id()))
-        except Exception as e:
-            return f"Error storing in pgvector: {e}"
-        return f"Remembered in pgvector (id={memory_id}): {content[:200]}"
-
     db = _get_db()
-    memory_id = db.remember(content, embeddings[0], tags)
-    return f"Remembered (id={memory_id}): {content[:200]}"
+    memory_id = db.remember(content, embeddings[0], tags, project_id=_ensure_project_id())
+    return f"Remembered in project memory (id={memory_id}): {content[:200]}"
 
 
 @mcp.tool()
@@ -564,46 +545,13 @@ def remember_structured(
     except Exception as e:
         return {"ok": False, "error": f"Embedding failed: {e}"}
 
-    pg = _get_pg()
-    if pg:
-        try:
-            memory_id = _run_async(
-                pg.remember_structured(
-                    summary=summary,
-                    content=content,
-                    embedding=embeddings[0],
-                    tags=tags,
-                    project_id=_ensure_project_id(),
-                    memory_kind=memory_kind,
-                    metadata=metadata,
-                    source_session_id=source_session_id or None,
-                    source_message_id=source_message_id or None,
-                )
-            )
-        except Exception as e:
-            return {"ok": False, "error": f"Error storing in pgvector: {e}"}
-        return {
-            "ok": True,
-            "backend": "pgvector",
-            "memory": {
-                "id": str(memory_id),
-                "summary": summary,
-                "content": content,
-                "project_id": _ensure_project_id(),
-                "memory_kind": memory_kind,
-                "tags": [tag.strip() for tag in tags.split(",") if tag.strip()],
-                "metadata": metadata or {},
-                "source_session_id": source_session_id or None,
-                "source_message_id": source_message_id or None,
-            },
-        }
-
     db = _get_db()
     memory_id = db.remember_structured(
         summary=summary,
         content=content,
         embedding=embeddings[0],
         tags=tags,
+        project_id=_ensure_project_id(),
         memory_kind=memory_kind,
         metadata=metadata,
         source_session_id=source_session_id or None,
@@ -611,7 +559,7 @@ def remember_structured(
     )
     return {
         "ok": True,
-        "backend": "sqlite",
+        "backend": "project-sqlite",
         "memory": {
             "id": str(memory_id),
             "summary": summary,
@@ -667,82 +615,38 @@ def save_session_memory(
 
     summary, content = _distill_session_turn(task, response)
 
-    pg = _get_pg()
-    if pg:
-        try:
-            existing = _run_async(
-                pg.get_memory_by_source(
-                    source_session_id=source_session_id.strip(),
-                    source_message_id=source_message_id.strip(),
-                )
-            )
-        except Exception as e:
-            return {"ok": False, "error": f"Error checking pgvector memory: {e}"}
-        if existing:
-            return {
-                "ok": True,
-                "backend": "pgvector",
-                "deduplicated": True,
-                "memory": _memory_payload(existing),
-            }
-
-    else:
-        existing = _get_db().get_memory_by_source(
-            source_session_id.strip(), source_message_id.strip()
-        )
-        if existing:
-            return {
-                "ok": True,
-                "backend": "sqlite",
-                "deduplicated": True,
-                "memory": _memory_payload(existing),
-            }
+    user_db = _get_user_db()
+    existing = user_db.get_memory_by_source(
+        source_session_id.strip(), source_message_id.strip()
+    )
+    if existing:
+        return {
+            "ok": True,
+            "backend": "user-sqlite",
+            "deduplicated": True,
+            "memory": _memory_payload(existing),
+        }
 
     try:
         embedding = _get_embedder().embed_text_sync([content])[0]
     except Exception as e:
         return {"ok": False, "error": f"Embedding failed: {e}"}
 
-    if pg:
-        try:
-            memory_id = _run_async(
-                pg.remember_structured(
-                    summary=summary,
-                    content=content,
-                    embedding=embedding,
-                    tags=tags,
-                    project_id=_ensure_project_id(),
-                    memory_kind=memory_kind,
-                    metadata=enriched_metadata,
-                    source_session_id=source_session_id.strip(),
-                    source_message_id=source_message_id.strip(),
-                )
-            )
-            stored = _run_async(pg.get_memory(memory_id))
-        except Exception as e:
-            return {"ok": False, "error": f"Error storing session memory in pgvector: {e}"}
-        return {
-            "ok": True,
-            "backend": "pgvector",
-            "deduplicated": False,
-            "memory": _memory_payload(stored or {"id": memory_id, "summary": summary, "content": content}),
-        }
-
-    db = _get_db()
-    memory_id = db.remember_structured(
+    memory_id = user_db.remember_structured(
         summary=summary,
         content=content,
         embedding=embedding,
         tags=tags,
+        project_id=_ensure_project_id(),
         memory_kind=memory_kind,
         metadata=enriched_metadata,
         source_session_id=source_session_id.strip(),
         source_message_id=source_message_id.strip(),
     )
-    stored = db.get_memory(memory_id)
+    stored = user_db.get_memory(memory_id)
     return {
         "ok": True,
-        "backend": "sqlite",
+        "backend": "user-sqlite",
         "deduplicated": False,
         "memory": _memory_payload(stored or {"id": memory_id, "summary": summary, "content": content}),
     }
@@ -797,75 +701,33 @@ def save_session_summary(
     except Exception as e:
         return {"ok": False, "error": f"Embedding failed: {e}"}
 
-    pg = _get_pg()
-    if pg:
-        try:
-            existing = _run_async(
-                pg.get_memory_by_source(
-                    source_session_id=source_session_id.strip(),
-                    source_message_id=summary_source_message_id,
-                )
-            )
-        except Exception as e:
-            return {"ok": False, "error": f"Error checking pgvector summary memory: {e}"}
-        if existing and _metadata_dict(existing.get("metadata")).get("latest_message_id") == source_message_id.strip():
-            return {
-                "ok": True,
-                "backend": "pgvector",
-                "deduplicated": True,
-                "memory": _memory_payload(existing),
-            }
-        try:
-            memory_id = _run_async(
-                pg.remember_structured(
-                    summary=summary,
-                    content=content,
-                    embedding=embedding,
-                    tags=tags,
-                    project_id=_ensure_project_id(),
-                    memory_kind="summary",
-                    metadata=enriched_metadata,
-                    source_session_id=source_session_id.strip(),
-                    source_message_id=summary_source_message_id,
-                    supersedes=existing["id"] if existing else None,
-                )
-            )
-            stored = _run_async(pg.get_memory(memory_id))
-        except Exception as e:
-            return {"ok": False, "error": f"Error storing session summary in pgvector: {e}"}
-        return {
-            "ok": True,
-            "backend": "pgvector",
-            "deduplicated": False,
-            "memory": _memory_payload(stored or {"id": memory_id, "summary": summary, "content": content}),
-        }
-
-    db = _get_db()
-    existing = db.get_memory_by_source(
+    user_db = _get_user_db()
+    existing = user_db.get_memory_by_source(
         source_session_id.strip(), summary_source_message_id
     )
     if existing and _metadata_dict(existing.get("metadata")).get("latest_message_id") == source_message_id.strip():
         return {
             "ok": True,
-            "backend": "sqlite",
+            "backend": "user-sqlite",
             "deduplicated": True,
             "memory": _memory_payload(existing),
         }
-    memory_id = db.remember_structured(
+    memory_id = user_db.remember_structured(
         summary=summary,
         content=content,
         embedding=embedding,
         tags=tags,
+        project_id=_ensure_project_id(),
         memory_kind="summary",
         metadata=enriched_metadata,
         source_session_id=source_session_id.strip(),
         source_message_id=summary_source_message_id,
         supersedes=str(existing["id"]) if existing else None,
     )
-    stored = db.get_memory(memory_id)
+    stored = user_db.get_memory(memory_id)
     return {
         "ok": True,
-        "backend": "sqlite",
+        "backend": "user-sqlite",
         "deduplicated": False,
         "memory": _memory_payload(stored or {"id": memory_id, "summary": summary, "content": content}),
     }
@@ -904,48 +766,13 @@ def supersede_memory(
     except Exception as e:
         return {"ok": False, "error": f"Embedding failed: {e}"}
 
-    pg = _get_pg()
-    if pg:
-        try:
-            new_memory_id = _run_async(
-                pg.remember_structured(
-                    summary=summary,
-                    content=content,
-                    embedding=embedding,
-                    tags=tags,
-                    project_id=_ensure_project_id(),
-                    memory_kind=memory_kind,
-                    metadata=metadata,
-                    source_session_id=source_session_id or None,
-                    source_message_id=source_message_id or None,
-                    supersedes=old_memory_id,
-                )
-            )
-        except Exception as e:
-            return {"ok": False, "error": f"Error superseding in pgvector: {e}"}
-        return {
-            "ok": True,
-            "backend": "pgvector",
-            "memory": {
-                "id": str(new_memory_id),
-                "summary": summary,
-                "content": content,
-                "project_id": _ensure_project_id(),
-                "memory_kind": memory_kind,
-                "tags": [tag.strip() for tag in tags.split(",") if tag.strip()],
-                "metadata": metadata or {},
-                "source_session_id": source_session_id or None,
-                "source_message_id": source_message_id or None,
-                "supersedes": old_memory_id,
-            },
-        }
-
-    db = _get_db()
+    db = _get_user_db()
     new_memory_id = db.remember_structured(
         summary=summary,
         content=content,
         embedding=embedding,
         tags=tags,
+        project_id=_ensure_project_id(),
         memory_kind=memory_kind,
         metadata=metadata,
         source_session_id=source_session_id or None,
@@ -954,7 +781,7 @@ def supersede_memory(
     )
     return {
         "ok": True,
-        "backend": "sqlite",
+        "backend": "user-sqlite",
         "memory": {
             "id": str(new_memory_id),
             "summary": summary,
@@ -973,24 +800,21 @@ def supersede_memory(
 @mcp.tool()
 def forget(memory_id: str) -> str:
     """Delete a remembered item by ID."""
-    pg = _get_pg()
-    if pg:
-        try:
-            content = _run_async(pg.forget(memory_id))
-        except Exception as e:
-            return f"Error deleting from pgvector: {e}"
-        if content:
-            return f"Deleted from pgvector: {content[:200]}"
-        return f"Memory {memory_id} not found."
-
     db = _get_db()
     try:
         sqlite_id = int(memory_id)
     except (TypeError, ValueError):
+        sqlite_id = None
+    if sqlite_id is not None:
+        content = db.forget(sqlite_id)
+        if content:
+            return f"Deleted from project memory: {content[:200]}"
+    user_db = _get_user_db()
+    if sqlite_id is None:
         return f"Memory {memory_id} not found."
-    content = db.forget(sqlite_id)
+    content = user_db.forget(sqlite_id)
     if content:
-        return f"Deleted: {content[:200]}"
+        return f"Deleted from user memory: {content[:200]}"
     return f"Memory {memory_id} not found."
 
 
@@ -1001,16 +825,9 @@ def project_status() -> str:
     lines = [
         f"Code chunks: {db.code_chunk_count()}",
         f"Doc chunks: {db.doc_count()}",
-        f"Local sqlite memories: {db.memory_count()}",
+        f"Project memories: {db.memory_count()}",
+        f"User memories: {_get_user_db().memory_count()}",
     ]
-    pg = _get_pg()
-    if pg:
-        try:
-            lines.append(f"pgvector memories: {_run_async(pg.memory_count())}")
-        except Exception as e:
-            lines.append(f"pgvector memories: error ({e})")
-    else:
-        lines.append("pgvector memories: not configured")
     language_stats = db.language_stats()
     if language_stats:
         language_summary = ", ".join(

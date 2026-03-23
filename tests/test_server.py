@@ -44,8 +44,8 @@ def test_get_embedder_without_key_raises():
 
 
 def test_get_db_creates_and_returns_db(tmp_path: Path, monkeypatch):
-    old_db = srv._db
-    srv._db = None
+    old_db = srv._project_db
+    srv._project_db = None
     monkeypatch.setenv("VIBE_RAG_DB", str(tmp_path / "test_srv.db"))
     try:
         db = srv._get_db()
@@ -54,18 +54,21 @@ def test_get_db_creates_and_returns_db(tmp_path: Path, monkeypatch):
         assert "memories" in tables
         assert "code_chunks" in tables
     finally:
-        if srv._db:
-            srv._db.close()
-        srv._db = old_db
+        if srv._project_db:
+            srv._project_db.close()
+        srv._project_db = old_db
 
 
-def test_run_async_uses_single_background_loop():
-    async def get_loop_id():
-        import asyncio
-
-        return id(asyncio.get_running_loop())
-
-    first = srv._run_async(get_loop_id())
-    second = srv._run_async(get_loop_id())
-
-    assert first == second
+def test_get_user_db_creates_and_returns_db(tmp_path: Path, monkeypatch):
+    old_db = srv._user_db
+    srv._user_db = None
+    monkeypatch.setenv("VIBE_RAG_USER_DB", str(tmp_path / "user_srv.db"))
+    try:
+        db = srv._get_user_db()
+        assert db is not None
+        tables = db.list_tables()
+        assert "memories" in tables
+    finally:
+        if srv._user_db:
+            srv._user_db.close()
+        srv._user_db = old_db

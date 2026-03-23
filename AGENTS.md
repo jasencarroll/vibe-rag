@@ -34,7 +34,6 @@ Update all version references together:
 - `src/vibe_rag/__init__.py`
 - `tests/test_cli.py`
 - `README.md`
-- `CHANGELOG.md`
 - `uv.lock`
 
 ### 2. If packaging or scaffold behavior changed
@@ -166,7 +165,8 @@ uv tool install --upgrade --python 3.12 vibe-rag@X.Y.Z
   - packaged `vibe`
   - packaged `vibe-rag`
   - trusted project-local `.vibe/config.toml`
-  - `DATABASE_URL` in the MCP server `env`
+  - `MISTRAL_API_KEY` in the MCP server `env`
+  - local user memory at `~/.vibe/memory.db`
 
 ## E2E Verification Pattern
 
@@ -174,7 +174,7 @@ For a real packaged E2E smoke test:
 
 1. `vibe-rag init demo`
 2. add small `src/` and `docs/` files
-3. add `MISTRAL_API_KEY` and `DATABASE_URL` to `.vibe/config.toml`
+3. add `MISTRAL_API_KEY` to `.vibe/config.toml`
 4. add:
 
 ```toml

@@ -17,12 +17,12 @@ from vibe_rag.tools import (
 
 
 def test_remember_and_search_memory(tmp_db, mock_embedder):
-    result = remember("pgvector is great for vectors")
-    assert "Remembered" in result
+    result = remember("sqlite-vec is local and simple")
+    assert "Remembered in project memory" in result
     assert "id=" in result
 
     result = search_memory("what is good for vectors?")
-    assert "pgvector" in result
+    assert "sqlite-vec" in result
 
 
 def test_forget_existing(tmp_db, mock_embedder):
@@ -343,248 +343,78 @@ def test_save_session_summary_skips_low_signal_no_memory_response(
     assert result["skipped"] is True
 
 
-def test_save_session_summary_updates_pgvector_rollup_when_existing_metadata_is_string(
-    tmp_db, mock_embedder
-):
+def test_search_memory_falls_back_to_user_memory_results(tmp_db, mock_embedder):
     import vibe_rag.server as srv
-
-    class FakePG:
-        def __init__(self):
-            self.memories = {}
-
-        async def get_memory_by_source(self, source_session_id, source_message_id):
-            return self.memories.get((source_session_id, source_message_id))
-
-        async def remember_structured(
-            self,
-            summary,
-            content,
-            embedding,
-            tags="",
-            project_id=None,
-            memory_kind="summary",
-            metadata=None,
-            source_session_id=None,
-            source_message_id=None,
-            supersedes=None,
-        ):
-            memory_id = f"memory-{len(self.memories) + 1}"
-            self.memories[(source_session_id, source_message_id)] = {
-                "id": memory_id,
-                "summary": summary,
-                "content": content,
-                "project_id": project_id,
-                "memory_kind": memory_kind,
-                "metadata": metadata if supersedes is None else '{"latest_message_id":"m2"}',
-                "source_session_id": source_session_id,
-                "source_message_id": source_message_id,
-                "supersedes": supersedes,
-            }
-            return memory_id
-
-        async def get_memory(self, memory_id):
-            for memory in self.memories.values():
-                if memory["id"] == memory_id:
-                    return memory
-            return None
-
-    old_pg = srv._pg
+    user_db = srv._get_user_db()
     old_project_id = srv._project_id
-    fake_pg = FakePG()
-    srv._pg = fake_pg
-    srv._project_id = "source-repo"
-    try:
-        first = save_session_summary(
-            task="auth",
-            turns=[{"user": "u1", "assistant": "a1"}],
-            source_session_id="sess-2",
-            source_message_id="m1",
-        )
-        fake_pg.memories[("sess-2", "__session_summary__")]["metadata"] = '{"latest_message_id":"m1"}'
-        second = save_session_summary(
-            task="auth",
-            turns=[{"user": "u1", "assistant": "a1"}, {"user": "u2", "assistant": "a2"}],
-            source_session_id="sess-2",
-            source_message_id="m2",
-        )
-    finally:
-        srv._pg = old_pg
-        srv._project_id = old_project_id
-
-    assert first["ok"] is True
-    assert second["ok"] is True
-    assert second["deduplicated"] is False
-
-
-def test_pg_memory_tools_work_inside_running_event_loop(tmp_db, mock_embedder):
-    import asyncio
-    import vibe_rag.server as srv
-
-    class FakePG:
-        async def remember(self, content, embedding, tags="", project_id=None):
-            return 42
-
-        async def memory_count(self):
-            return 1
-
-        async def search_memories(self, embedding, limit=10, project_id=None):
-            return [
-                {
-                    "id": 42,
-                    "content": "architecture note",
-                    "project_id": project_id,
-                    "score": 0.91,
-                }
-            ]
-
-        async def forget(self, memory_id):
-            return "architecture note"
-
-    old_pg = srv._pg
-    old_project_id = srv._project_id
-    srv._pg = FakePG()
-    srv._project_id = "test-project"
-    try:
-        async def run_tools():
-            remembered = remember("architecture note")
-            searched = search_memory("architecture")
-            deleted = forget(42)
-            return remembered, searched, deleted
-
-        remembered, searched, deleted = asyncio.run(run_tools())
-    finally:
-        srv._pg = old_pg
-        srv._project_id = old_project_id
-
-    assert "Remembered in pgvector" in remembered
-    assert "[id=42 [test-project] score=0.91]" in searched
-    assert "Deleted from pgvector" in deleted
-
-
-def test_search_memory_falls_back_to_cross_repo_pgvector_results(tmp_db, mock_embedder):
-    import vibe_rag.server as srv
-
-    class FakePG:
-        async def memory_count(self):
-            return 1
-
-        async def search_memories(self, embedding, limit=10, project_id=None):
-            if project_id == "vibe-rag":
-                return []
-            return [
-                {
-                    "id": "b26f3768-c21f-4656-8990-fbf5ae77576d",
-                    "content": "The E2E repo marker for mistral-vibe is CERULEAN_PINEAPPLE_20260322.",
-                    "summary": "The E2E repo marker for mistral-vibe is CERULEAN_PINEAPPLE_20260322.",
-                    "project_id": "mistral-vibe",
-                    "memory_kind": "fact",
-                    "score": 0.87,
-                }
-            ]
-
-    old_pg = srv._pg
-    old_project_id = srv._project_id
-    srv._pg = FakePG()
     srv._project_id = "vibe-rag"
     try:
+        user_db.remember_structured(
+            summary="The E2E repo marker for mistral-vibe is CERULEAN_PINEAPPLE_20260322.",
+            content="The E2E repo marker for mistral-vibe is CERULEAN_PINEAPPLE_20260322.",
+            embedding=[0.0] * 1536,
+            project_id="mistral-vibe",
+            memory_kind="fact",
+        )
         result = search_memory("CERULEAN_PINEAPPLE_20260322")
     finally:
-        srv._pg = old_pg
         srv._project_id = old_project_id
 
     assert "mistral-vibe" in result
     assert "CERULEAN_PINEAPPLE_20260322" in result
 
 
-def test_search_memory_global_fallback_excludes_current_project_results(
-    tmp_db, mock_embedder
-):
+def test_search_memory_prefers_project_results_before_user_results(tmp_db, mock_embedder):
     import vibe_rag.server as srv
-
-    class FakePG:
-        async def memory_count(self):
-            return 3
-
-        async def search_memories(self, embedding, limit=10, project_id=None):
-            if project_id == "sink-repo":
-                return [
-                    {
-                        "id": "sink-1",
-                        "content": "I have no durable memory about QUARTZ.",
-                        "summary": "I have no durable memory about QUARTZ.",
-                        "project_id": "sink-repo",
-                        "memory_kind": "summary",
-                        "score": 0.99,
-                    }
-                ]
-            return [
-                {
-                    "id": "sink-1",
-                    "content": "I have no durable memory about QUARTZ.",
-                    "summary": "I have no durable memory about QUARTZ.",
-                    "project_id": "sink-repo",
-                    "memory_kind": "summary",
-                    "score": 0.99,
-                },
-                {
-                    "id": "source-1",
-                    "content": "The marker is QUARTZ_MERIDIAN_20260322_Z9.",
-                    "summary": "The marker is QUARTZ_MERIDIAN_20260322_Z9.",
-                    "project_id": "source-repo",
-                    "memory_kind": "summary",
-                    "score": 0.92,
-                },
-            ]
-
-    old_pg = srv._pg
     old_project_id = srv._project_id
-    srv._pg = FakePG()
+    srv._get_db().remember_structured(
+        summary="The marker is QUARTZ_MERIDIAN_20260322_Z9.",
+        content="The marker is QUARTZ_MERIDIAN_20260322_Z9.",
+        embedding=[0.0] * 1536,
+        project_id="sink-repo",
+        memory_kind="summary",
+    )
+    srv._get_user_db().remember_structured(
+        summary="The marker is QUARTZ_MERIDIAN_20260322_Z9 in source-repo.",
+        content="The marker is QUARTZ_MERIDIAN_20260322_Z9 in source-repo.",
+        embedding=[0.0] * 1536,
+        project_id="source-repo",
+        memory_kind="summary",
+    )
     srv._project_id = "sink-repo"
     try:
         result = search_memory("QUARTZ_MERIDIAN_20260322_Z9")
     finally:
-        srv._pg = old_pg
         srv._project_id = old_project_id
 
+    assert "sink-repo" in result
     assert "source-repo" in result
     assert "QUARTZ_MERIDIAN_20260322_Z9" in result
 
 
-def test_load_session_context_uses_pg_memory_results(tmp_db, mock_embedder, tmp_path: Path):
+def test_load_session_context_uses_user_memory_results(tmp_db, mock_embedder, tmp_path: Path):
     import os
     import vibe_rag.server as srv
-
-    class FakePG:
-        async def memory_count(self):
-            return 1
-
-        async def search_memories(self, embedding, limit=10, project_id=None):
-            return [
-                {
-                    "id": "abc-123",
-                    "content": "gateway owns auth validation",
-                    "summary": "gateway owns auth validation",
-                    "project_id": project_id,
-                    "memory_kind": "decision",
-                    "metadata": {"source": "session"},
-                    "score": 0.88,
-                }
-            ]
 
     (tmp_path / "auth.py").write_text("def validate_token(token):\n    return token\n")
 
     old_cwd = os.getcwd()
-    old_pg = srv._pg
     old_project_id = srv._project_id
     os.chdir(tmp_path)
-    srv._pg = FakePG()
     srv._project_id = "test-project"
     try:
+        srv._get_user_db().remember_structured(
+            summary="gateway owns auth validation",
+            content="gateway owns auth validation",
+            embedding=[0.0] * 1536,
+            project_id="shared",
+            memory_kind="decision",
+            metadata={"source": "session"},
+        )
         index_project()
         result = load_session_context("continue auth validation", memory_limit=3, code_limit=2, docs_limit=1)
     finally:
         os.chdir(old_cwd)
-        srv._pg = old_pg
         srv._project_id = old_project_id
 
     assert result["memories"][0]["summary"] == "gateway owns auth validation"
@@ -596,7 +426,7 @@ def test_supersede_memory_marks_replacement(tmp_db, mock_embedder):
     first = remember_structured(summary="use sqlite for local search", memory_kind="decision")
     replacement = supersede_memory(
         old_memory_id=first["memory"]["id"],
-        summary="use sqlite for local search and pgvector for shared memory",
+        summary="use sqlite for local search and user memory",
         memory_kind="decision",
     )
 
@@ -723,8 +553,8 @@ def test_project_status_empty(tmp_db, mock_embedder):
     result = project_status()
     assert "Code chunks: 0" in result
     assert "Doc chunks: 0" in result
-    assert "Local sqlite memories: 0" in result
-    assert "pgvector memories:" in result
+    assert "Project memories: 0" in result
+    assert "User memories: 0" in result
     assert "Languages" not in result
 
 
@@ -773,8 +603,8 @@ def test_search_code_min_score_filters(tmp_db, mock_embedder, tmp_path: Path):
              "distance": 0.8},  # score = 0.2
         ]
         import vibe_rag.server as srv
-        original_search = srv._db.search_code
-        srv._db.search_code = lambda *a, **kw: fake_results
+        original_search = srv._project_db.search_code
+        srv._project_db.search_code = lambda *a, **kw: fake_results
         try:
             # min_score=0.5 should filter out result with score=0.2
             result_filtered = search_code("hello", min_score=0.5)
@@ -784,7 +614,7 @@ def test_search_code_min_score_filters(tmp_db, mock_embedder, tmp_path: Path):
             result_kept = search_code("hello", min_score=0.1)
             assert "app.py" in result_kept
         finally:
-            srv._db.search_code = original_search
+            srv._project_db.search_code = original_search
     finally:
         os.chdir(old_cwd)
 

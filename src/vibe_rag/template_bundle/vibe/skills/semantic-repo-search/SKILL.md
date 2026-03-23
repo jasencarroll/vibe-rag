@@ -45,4 +45,4 @@ Use this skill for repo-understanding tasks where the user describes behavior, i
 - Refresh the index after major edits, after pulling changes, or when search results look stale.
 - If memory and source disagree, trust the source and re-index.
 - Never store secrets with `memory_remember`.
-- If memory tools seem unavailable or low-quality, check whether the repo is trusted and whether the MCP server has `MISTRAL_API_KEY` and `DATABASE_URL`.
+- If memory tools seem unavailable or low-quality, check whether the repo is trusted and whether the MCP server has `MISTRAL_API_KEY`.

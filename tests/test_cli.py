@@ -11,7 +11,7 @@ def test_cli_version():
     runner = CliRunner()
     result = runner.invoke(main, ["--version"])
     assert result.exit_code == 0
-    assert "0.0.13" in result.output
+    assert "0.0.14" in result.output
 
 
 def test_cli_status():
@@ -36,7 +36,7 @@ def test_cli_module_entrypoint():
     )
 
     assert result.returncode == 0
-    assert "0.0.13" in result.stdout
+    assert "0.0.14" in result.stdout
 
 
 def test_cli_init_does_not_persist_secrets():
@@ -47,7 +47,7 @@ def test_cli_init_does_not_persist_secrets():
             ["init", "demo"],
             env={
                 "MISTRAL_API_KEY": "top-secret-key",
-                "DATABASE_URL": "postgresql://user:pass@example.com:5432/vibe_rag",
+                "VIBE_RAG_USER_DB": "/tmp/vibe-user.db",
             },
         )
 
@@ -55,7 +55,7 @@ def test_cli_init_does_not_persist_secrets():
 
         config_text = Path("demo/.vibe/config.toml").read_text()
         assert "top-secret-key" not in config_text
-        assert "postgresql://user:pass@example.com:5432/vibe_rag" not in config_text
+        assert "/tmp/vibe-user.db" not in config_text
         assert "env =" not in config_text
         assert 'skill_paths = [".vibe/skills"]' in config_text
 

@@ -1,5 +1,4 @@
 from __future__ import annotations
-import os
 import shutil
 from pathlib import Path
 
@@ -81,21 +80,13 @@ def init(name: str | None):
     click.echo(f"    cd {target}")
     click.echo(f"    vibe")
 
-
-async def _pg_count(pg: PostgresDB) -> int:
-    await pg.connect()
-    count = await pg.memory_count()
-    await pg.close()
-    return count
-
-
 @main.command()
 def status():
     """Check memory status for current project."""
     from vibe_rag.db.sqlite import SqliteVecDB
-    from vibe_rag.db.postgres import PostgresDB
 
     db_path = Path.cwd() / ".vibe" / "index.db"
+    user_db_path = Path.home() / ".vibe" / "memory.db"
     click.echo(f"\n  vibe-rag {__version__}")
     click.echo(f"  DB: {db_path}\n")
 
@@ -104,22 +95,18 @@ def status():
         db.initialize()
         click.echo(f"  Code chunks: {db.code_chunk_count()}")
         click.echo(f"  Doc chunks:  {db.doc_count()}")
-        click.echo(f"  Memories:    {db.memory_count()}")
+        click.echo(f"  Project:     {db.memory_count()} memories")
         db.close()
     else:
         click.echo("  No index yet. Run vibe and use index_project.")
 
-    database_url = os.environ.get("DATABASE_URL", "")
-    if database_url:
-        import asyncio
-        try:
-            pg = PostgresDB(database_url)
-            count = asyncio.run(_pg_count(pg))
-            click.echo(f"  pgvector:    {count} memories (cross-repo)")
-        except Exception as e:
-            click.echo(f"  pgvector:    error — {e}")
+    if user_db_path.exists():
+        user_db = SqliteVecDB(user_db_path)
+        user_db.initialize()
+        click.echo(f"  User:        {user_db.memory_count()} memories ({user_db_path})")
+        user_db.close()
     else:
-        click.echo(f"  pgvector:    not configured (set DATABASE_URL for cross-repo memory)")
+        click.echo(f"  User:        0 memories ({user_db_path})")
     click.echo()
 
 

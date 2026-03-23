@@ -18,13 +18,19 @@ class FakeEmbedder:
 def tmp_db(tmp_path: Path):
     """Provides an initialized SqliteVecDB and patches the server global."""
     import vibe_rag.server as srv
-    db = SqliteVecDB(tmp_path / "test.db")
-    db.initialize()
-    old_db = srv._db
-    srv._db = db
-    yield db
-    srv._db = old_db
-    db.close()
+    project_db = SqliteVecDB(tmp_path / "project.db")
+    user_db = SqliteVecDB(tmp_path / "user.db")
+    project_db.initialize()
+    user_db.initialize()
+    old_project_db = srv._project_db
+    old_user_db = srv._user_db
+    srv._project_db = project_db
+    srv._user_db = user_db
+    yield project_db
+    srv._project_db = old_project_db
+    srv._user_db = old_user_db
+    project_db.close()
+    user_db.close()
 
 
 @pytest.fixture
