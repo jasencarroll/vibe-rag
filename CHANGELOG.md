@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.27] - 2026-03-23
+
 ### Added
 - `update_memory` for in-place edits so agents can revise an existing memory without creating a replacement record
 
