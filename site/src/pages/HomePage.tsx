@@ -34,6 +34,11 @@ const entryPoints = [
     href: '/setup'
   },
   {
+    title: 'Maintainer Guide',
+    body: 'Release workflow, packaging checks, and the wheel-first acceptance path.',
+    href: '/maintainer'
+  },
+  {
     title: 'User Guide',
     body: 'Normal operator flow, memory hygiene, and retrieval order.',
     href: '/guide'
@@ -136,7 +141,7 @@ Docs: docs/setup-guide.md`}
             Open the repo
           </a>
         </div>
-        <div className="grid gap-5 md:grid-cols-3">
+        <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-4">
           {entryPoints.map((item) => (
             <Link
               key={item.title}

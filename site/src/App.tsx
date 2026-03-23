@@ -34,6 +34,17 @@ export function App() {
             }
           />
           <Route
+            path="/maintainer"
+            element={
+              <MarkdownPage
+                title={docs.maintainer.title}
+                kicker={docs.maintainer.kicker}
+                sourcePath={docs.maintainer.sourcePath}
+                markdown={docs.maintainer.markdown}
+              />
+            }
+          />
+          <Route
             path="/guide"
             element={
               <MarkdownPage

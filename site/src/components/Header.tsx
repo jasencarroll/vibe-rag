@@ -28,6 +28,9 @@ export function Header() {
           <NavLink to="/setup" className={navClass}>
             Setup
           </NavLink>
+          <NavLink to="/maintainer" className={navClass}>
+            Maintainer
+          </NavLink>
           <NavLink to="/guide" className={navClass}>
             User Guide
           </NavLink>
@@ -42,4 +45,3 @@ export function Header() {
     </header>
   );
 }
-

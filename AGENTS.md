@@ -2,7 +2,9 @@
 
 ## Purpose
 
-This is the maintainer guide for the `vibe-rag` repo itself.
+This is the internal maintainer guide for the `vibe-rag` repo itself.
+
+The public maintainer guide lives at `docs/maintainer-guide.md`.
 
 Use it when making changes in this repository, especially for packaging, releases, and publishing.
 

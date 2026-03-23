@@ -1,4 +1,5 @@
 import readme from '../../README.md?raw';
+import maintainerGuide from '../../docs/maintainer-guide.md?raw';
 import setupGuide from '../../docs/setup-guide.md?raw';
 import userGuide from '../../docs/user-guide.md?raw';
 
@@ -14,6 +15,12 @@ export const docs = {
     kicker: 'setup',
     sourcePath: 'docs/setup-guide.md',
     markdown: setupGuide
+  },
+  maintainer: {
+    title: 'Maintainer Guide',
+    kicker: 'maintainer',
+    sourcePath: 'docs/maintainer-guide.md',
+    markdown: maintainerGuide
   },
   guide: {
     title: 'User Guide',

@@ -6,8 +6,10 @@ type MarkdownDocumentProps = {
   sourcePath: string;
 };
 
-const DOC_ROUTES: Record<string, string> = {
+export const DOC_ROUTES: Record<string, string> = {
   'README.md': '#/readme',
+  'AGENTS.md': '#/maintainer',
+  'docs/maintainer-guide.md': '#/maintainer',
   'docs/setup-guide.md': '#/setup',
   'docs/user-guide.md': '#/guide'
 };
@@ -28,7 +30,7 @@ function normalizeRepoPath(path: string): string {
   return output.join('/');
 }
 
-function resolveMarkdownHref(href: string, sourcePath: string): string {
+export function resolveMarkdownHref(href: string, sourcePath: string): string {
   if (
     href.startsWith('http://') ||
     href.startsWith('https://') ||
@@ -46,7 +48,7 @@ function resolveMarkdownHref(href: string, sourcePath: string): string {
     : [sourceDir, rawPath].filter(Boolean).join('/');
   const resolvedPath = normalizeRepoPath(combined);
 
-  if (!hash && DOC_ROUTES[resolvedPath]) {
+  if (DOC_ROUTES[resolvedPath]) {
     return DOC_ROUTES[resolvedPath];
   }
 

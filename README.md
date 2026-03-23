@@ -320,4 +320,4 @@ When a one-turn auto capture is worth keeping, `vibe-rag` now infers a stronger 
 
 - [Setup Guide](docs/setup-guide.md)
 - [User Guide](docs/user-guide.md)
-- [Maintainer Guide](AGENTS.md)
+- [Maintainer Guide](docs/maintainer-guide.md)
