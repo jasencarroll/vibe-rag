@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.17] - 2026-03-22
+
+### Added
+- Packaged Codex, Claude Code, and Gemini CLI scaffolding in `vibe-rag init`
+- `hook-session-start` CLI bridge for client session-start context injection
+
+### Changed
+- Generated project docs now describe Vibe as first-class with experimental Codex, Claude Code, and Gemini CLI support
+
 ## [0.0.12] - 2026-03-22
 
 ### Added

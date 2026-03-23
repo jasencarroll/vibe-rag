@@ -8,6 +8,7 @@ Target state:
 - local durable memory in `~/.vibe/memory.db`
 - background session bootstrap
 - Ollama embeddings with `qwen3-embedding:0.6b`
+- optional Codex and Claude Code scaffolding
 
 ## 1. Install the Tools
 
@@ -50,6 +51,11 @@ This writes:
 - `AGENTS.md`
 - `.vibe/config.toml`
 - `.vibe/skills/semantic-repo-search/SKILL.md`
+- `.codex/config.toml`
+- `.codex/hooks.json`
+- `.claude/settings.json`
+- `.gemini/settings.json`
+- `.mcp.json`
 
 ## 3. Configure the MCP Server
 
@@ -107,7 +113,30 @@ Helper commands:
 vibe-rag doctor
 vibe-rag doctor --fix
 vibe-rag setup-ollama
+vibe-rag hook-session-start --format codex
 ```
+
+## 3A. Optional Codex And Claude Code Scaffolding
+
+`vibe-rag init` also writes:
+
+- `.codex/config.toml`
+- `.codex/hooks.json`
+- `.claude/settings.json`
+- `.gemini/settings.json`
+- `.mcp.json`
+
+Those files do two things:
+
+- register `vibe-rag serve` as an MCP server for the client
+- run `vibe-rag hook-session-start --format <client>` at session start
+
+Current support level:
+
+- Vibe: first-class
+- Codex: experimental
+- Claude Code: experimental
+- Gemini CLI: experimental
 
 ## 4. Trust the Repo
 

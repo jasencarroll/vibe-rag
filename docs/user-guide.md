@@ -78,6 +78,21 @@ If the Vibe fork hooks are enabled:
 - rolling session summaries are updated automatically
 - new sessions can pull that context back through `memory_load_session_context`
 
+## Other Clients
+
+Generated repos also include experimental session-start scaffolding for:
+
+- Codex
+- Claude Code
+- Gemini CLI
+
+Those clients currently get:
+
+- MCP server registration for `vibe-rag serve`
+- session-start context injection through `vibe-rag hook-session-start`
+
+Vibe remains the primary supported client.
+
 ## Retrieval Order
 
 Memory retrieval is merged in this order:

@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "vibe-rag": {
+      "command": "__VIBE_RAG_BIN__",
+      "args": ["serve"]
+    }
+  }
+}

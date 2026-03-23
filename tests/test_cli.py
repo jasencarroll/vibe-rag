@@ -11,7 +11,7 @@ def test_cli_version():
     runner = CliRunner()
     result = runner.invoke(main, ["--version"])
     assert result.exit_code == 0
-    assert "0.0.16" in result.output
+    assert "0.0.17" in result.output
 
 
 def test_cli_status():
@@ -140,7 +140,7 @@ def test_cli_module_entrypoint():
     )
 
     assert result.returncode == 0
-    assert "0.0.16" in result.stdout
+    assert "0.0.17" in result.stdout
 
 
 def test_cli_init_does_not_persist_secrets():
@@ -202,3 +202,106 @@ def test_cli_init_installs_semantic_repo_search_skill():
         assert "memory_load_session_context" in skill_text
         assert "memory_search_code" in skill_text
         assert "Prefer memory tools over `grep`" in skill_text
+
+
+def test_cli_init_installs_codex_and_claude_scaffolding():
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        result = runner.invoke(main, ["init", "demo"])
+
+        assert result.exit_code == 0
+
+        codex_config = Path("demo/.codex/config.toml").read_text()
+        codex_hooks = Path("demo/.codex/hooks.json").read_text()
+        claude_settings = Path("demo/.claude/settings.json").read_text()
+        gemini_settings = Path("demo/.gemini/settings.json").read_text()
+        claude_mcp = Path("demo/.mcp.json").read_text()
+
+        assert "__VIBE_RAG_BIN__" not in codex_config
+        assert "__VIBE_RAG_BIN__" not in codex_hooks
+        assert "__VIBE_RAG_BIN__" not in claude_settings
+        assert "__VIBE_RAG_BIN__" not in gemini_settings
+        assert "__VIBE_RAG_BIN__" not in claude_mcp
+
+        assert "codex_hooks = true" in codex_config
+        assert 'args = ["serve"]' in codex_config
+        assert "hook-session-start --format codex" in codex_hooks
+        assert "hook-session-start --format claude" in claude_settings
+        assert "hook-session-start --format gemini" in gemini_settings
+        assert '"mcpServers"' in gemini_settings
+        assert '"mcpServers"' in claude_mcp
+        assert '"vibe-rag"' in claude_mcp
+
+
+def test_cli_hook_session_start_renders_codex_output(monkeypatch):
+    runner = CliRunner()
+
+    monkeypatch.setattr(
+        "vibe_rag.hook_bridge.load_session_context",
+        lambda **kwargs: {
+            "ok": True,
+            "project_id": "demo-project",
+            "memories": [{"id": "1", "summary": "Use memory tools first"}],
+            "code": [{"file_path": "src/app.py", "start_line": 12, "content": "def run(): pass"}],
+            "docs": [{"file_path": "README.md", "preview": "Quick start for the project"}],
+        },
+    )
+
+    result = runner.invoke(
+        main,
+        ["hook-session-start", "--format", "codex"],
+        input='{"source":"startup"}',
+    )
+
+    assert result.exit_code == 0
+    assert '"hookEventName": "SessionStart"' in result.output
+    assert '"additionalContext": "vibe-rag context for project `demo-project`' in result.output
+
+
+def test_cli_hook_session_start_renders_claude_output(monkeypatch):
+    runner = CliRunner()
+
+    monkeypatch.setattr(
+        "vibe_rag.hook_bridge.load_session_context",
+        lambda **kwargs: {
+            "ok": True,
+            "project_id": "demo-project",
+            "memories": [],
+            "code": [],
+            "docs": [],
+        },
+    )
+
+    result = runner.invoke(
+        main,
+        ["hook-session-start", "--format", "claude"],
+        input='{"source":"resume"}',
+    )
+
+    assert result.exit_code == 0
+    assert '"hookEventName": "SessionStart"' in result.output
+    assert "demo-project" in result.output
+
+
+def test_cli_hook_session_start_renders_gemini_output(monkeypatch):
+    runner = CliRunner()
+
+    monkeypatch.setattr(
+        "vibe_rag.hook_bridge.load_session_context",
+        lambda **kwargs: {
+            "ok": True,
+            "project_id": "demo-project",
+            "memories": [],
+            "code": [],
+            "docs": [],
+        },
+    )
+
+    result = runner.invoke(
+        main,
+        ["hook-session-start", "--format", "gemini"],
+        input='{"source":"clear"}',
+    )
+
+    assert result.exit_code == 0
+    assert '"additionalContext": "vibe-rag context for project `demo-project`' in result.output

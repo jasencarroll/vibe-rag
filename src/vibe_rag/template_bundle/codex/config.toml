@@ -1,0 +1,6 @@
+[features]
+codex_hooks = true
+
+[mcp_servers.vibe-rag]
+command = "__VIBE_RAG_BIN__"
+args = ["serve"]

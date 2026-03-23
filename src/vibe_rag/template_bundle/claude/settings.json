@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "__VIBE_RAG_BIN__ hook-session-start --format claude"
+          }
+        ]
+      }
+    ]
+  }
+}

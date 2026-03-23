@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "__VIBE_RAG_BIN__ hook-session-start --format codex",
+            "statusMessage": "Loading vibe-rag session context",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

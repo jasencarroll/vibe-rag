@@ -2,6 +2,7 @@ from __future__ import annotations
 import os
 import subprocess
 import shutil
+import sys
 import time
 from pathlib import Path
 
@@ -64,19 +65,24 @@ def init(name: str | None):
     # AGENTS.md
     shutil.copy2(templates_dir / "AGENTS.md", target / "AGENTS.md")
 
-    # .vibe/config.toml
-    vibe_dir = target / ".vibe"
-    vibe_dir.mkdir(exist_ok=True)
-    config_text = (bundle_dir / "vibe" / "config.toml").read_text()
-
     vibe_rag_bin = shutil.which("vibe-rag") or "vibe-rag"
-    config_text = config_text.replace("__VIBE_RAG_BIN__", vibe_rag_bin)
+    bundle_mappings = {
+        "vibe": ".vibe",
+        "codex": ".codex",
+        "claude": ".claude",
+        "gemini": ".gemini",
+    }
 
-    (vibe_dir / "config.toml").write_text(config_text)
+    for bundle_name, target_name in bundle_mappings.items():
+        source_dir = bundle_dir / bundle_name
+        if source_dir.exists():
+            shutil.copytree(source_dir, target / target_name, dirs_exist_ok=True)
 
-    skills_template_dir = bundle_dir / "vibe" / "skills"
-    if skills_template_dir.exists():
-        shutil.copytree(skills_template_dir, vibe_dir / "skills", dirs_exist_ok=True)
+    mcp_json_template = bundle_dir / "mcp.json"
+    if mcp_json_template.exists():
+        shutil.copy2(mcp_json_template, target / ".mcp.json")
+
+    _replace_placeholder_in_tree(target, "__VIBE_RAG_BIN__", vibe_rag_bin)
 
     # .gitignore
     gitignore = target / ".gitignore"
@@ -89,10 +95,23 @@ def init(name: str | None):
 
     click.echo(f"\n  ✓ {name} created at {target}\n")
     click.echo(f"    AGENTS.md          — project coding rules")
-    click.echo(f"    .vibe/config.toml  — vibe-rag MCP server")
+    click.echo(f"    .vibe/config.toml  — Vibe MCP + hooks")
+    click.echo(f"    .codex/            — Codex MCP + session-start hook")
+    click.echo(f"    .claude/           — Claude Code session-start hook")
+    click.echo(f"    .gemini/           — Gemini CLI MCP + session-start hook")
+    click.echo(f"    .mcp.json          — Claude Code MCP server config")
     click.echo(f"\n  Next:")
     click.echo(f"    cd {target}")
     click.echo(f"    vibe")
+
+
+def _replace_placeholder_in_tree(root: Path, placeholder: str, value: str) -> None:
+    for path in root.rglob("*"):
+        if not path.is_file():
+            continue
+        text = path.read_text()
+        if placeholder in text:
+            path.write_text(text.replace(placeholder, value))
 
 @main.command()
 def status():
@@ -215,6 +234,16 @@ def setup_ollama(model: str):
     click.echo(f'    VIBE_RAG_EMBEDDING_MODEL = "{model}"')
     click.echo('    VIBE_RAG_EMBEDDING_DIMENSIONS = "1024"')
     click.echo()
+
+
+@main.command("hook-session-start")
+@click.option("--format", "target_format", type=click.Choice(["codex", "claude", "gemini"]), required=True)
+def hook_session_start(target_format: str):
+    """Render SessionStart hook output for supported agent CLIs."""
+    from vibe_rag.hook_bridge import render_session_start_hook_json
+
+    raw_input = sys.stdin.read()
+    click.echo(render_session_start_hook_json(target_format, raw_input))
 
 
 @main.command()

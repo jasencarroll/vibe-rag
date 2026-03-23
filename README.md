@@ -2,6 +2,14 @@
 
 `vibe-rag` is a memory and semantic search MCP server for Vibe.
 
+Vibe is the first-class client.
+
+Generated repos also include experimental scaffolding for:
+
+- Codex
+- Claude Code
+- Gemini CLI
+
 It adds:
 
 - semantic code search
@@ -48,7 +56,7 @@ vibe-rag --version
 Pinned release:
 
 ```bash
-uv tool install vibe-rag@0.0.16
+uv tool install vibe-rag@0.0.17
 ```
 
 If your machine defaults `uv` tools to Python 3.13:
@@ -118,6 +126,7 @@ Helper commands:
 vibe-rag doctor
 vibe-rag doctor --fix
 vibe-rag setup-ollama
+vibe-rag hook-session-start --format codex
 ```
 
 First prompts:
@@ -137,6 +146,28 @@ Success looks like:
 - `search docs for ...` returns a relevant text chunk
 - `remember ...` returns a memory id
 - a fresh Vibe session can answer from prior context
+
+## Experimental Codex And Claude Code Scaffolding
+
+`vibe-rag init` also writes:
+
+- `.codex/config.toml`
+- `.codex/hooks.json`
+- `.claude/settings.json`
+- `.gemini/settings.json`
+- `.mcp.json`
+
+These files use:
+
+- `vibe-rag serve` for MCP tools
+- `vibe-rag hook-session-start --format <client>` for session-start context injection
+
+Current support level:
+
+- Vibe: first-class
+- Codex: experimental
+- Claude Code: experimental
+- Gemini CLI: experimental
 
 ## Storage Model
 

@@ -30,6 +30,12 @@ Use the memory MCP tools first when the task is about:
 - durable user memory lives in `~/.vibe/memory.db`
 - Ollama is the default embedding provider
 
+## Client Scaffolding
+
+- Vibe is the first-class client.
+- Generated repos also include experimental Codex and Claude Code session-start scaffolding.
+- If hook-loaded context disagrees with the source tree, trust the source and re-index.
+
 ## Good prompts
 
 - "load session context for understanding this repo"
