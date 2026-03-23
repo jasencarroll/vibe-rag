@@ -17,6 +17,19 @@ from vibe_rag.tools._helpers import (
 )
 
 
+def _cleanup_candidate_summary(candidate: dict) -> dict:
+    return {
+        "id": candidate.get("id"),
+        "source_db": candidate.get("source_db"),
+        "summary": candidate.get("summary"),
+        "memory_kind": candidate.get("memory_kind"),
+        "cleanup_reasons": list(candidate.get("cleanup_reasons") or []),
+        "cleanup_priority": int(candidate.get("cleanup_priority") or 0),
+        "is_stale": bool(candidate.get("is_stale")),
+        "is_superseded": bool(candidate.get("is_superseded")),
+    }
+
+
 def _resolve_all_memory_payloads():
     """Allow monkeypatching ``vibe_rag.tools._all_memory_payloads`` in tests."""
     import vibe_rag.tools as _pkg
@@ -77,7 +90,7 @@ def _memory_health_summary() -> dict:
             "superseded_memories": len(superseded),
             "duplicate_auto_memory_groups": len(duplicate_groups),
         },
-        "top_cleanup_candidates": cleanup_candidates[:3],
+        "top_cleanup_candidates": [_cleanup_candidate_summary(item) for item in cleanup_candidates[:3]],
         "recommended_actions": recommended_actions[:3],
         "by_capture_kind": capture_kind_counts,
         "by_source_type": source_type_counts,
@@ -103,7 +116,7 @@ def project_status(include_memory_health: bool = True) -> dict:
         "metadata": metadata_state,
         "stale": stale,
         "language_stats": language_stats,
-        "cleanup_candidates": cleanup_candidates,
+        "cleanup_candidates": [_cleanup_candidate_summary(item) for item in cleanup_candidates],
     }
 
     if include_memory_health:

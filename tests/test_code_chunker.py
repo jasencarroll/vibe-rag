@@ -101,6 +101,20 @@ class TestTryTreeSitterChunk:
         result = _try_tree_sitter_chunk("x = 1", "f.txt", "plaintext")
         assert result is None
 
+    def test_supported_language_returns_symbol_chunks(self):
+        code = """
+def hello():
+    return 1
+
+class Greeter:
+    def greet(self):
+        return hello()
+"""
+        result = _try_tree_sitter_chunk(code, "f.py", "python")
+        assert result is not None
+        assert len(result) >= 2
+        assert {chunk["symbol"] for chunk in result} >= {"hello", "Greeter"}
+
 
 class TestSubsplitLargeChunks:
     def test_small_chunks_unchanged(self):

@@ -108,10 +108,12 @@ def _index_project_impl(
             continue
         digest = _content_hash(content)
         if code_hashes.get(rel_path) == digest:
+            if language := EXT_TO_LANG.get(path.suffix.lower()):
+                db.backfill_code_chunk_language(rel_path, language)
             code_unchanged += 1
             continue
 
-        language = EXT_TO_LANG.get(path.suffix)
+        language = EXT_TO_LANG.get(path.suffix.lower())
         file_chunks = chunk_code(content, rel_path, language)
         code_updates.append((rel_path, digest, file_chunks))
         code_chunks.extend(file_chunks)

@@ -6,6 +6,7 @@ import sqlite3
 from pathlib import Path
 
 import sqlite_vec
+from vibe_rag.constants import EXT_TO_LANG
 from vibe_rag.types import CodeChunk, DocChunk, MemoryRow, RankedCodeResult, RankedDocResult
 
 
@@ -607,9 +608,29 @@ class SqliteVecDB:
     def language_stats(self) -> dict[str, int]:
         conn = self._get_conn()
         rows = conn.execute(
-            "SELECT language, COUNT(*) as cnt FROM code_chunks GROUP BY language"
+            "SELECT file_path, language FROM code_chunks"
         ).fetchall()
-        return {row["language"]: row["cnt"] for row in rows}
+        counts: dict[str, int] = {}
+        for row in rows:
+            language = row["language"]
+            if not language:
+                language = EXT_TO_LANG.get(Path(str(row["file_path"])).suffix.lower(), "unknown")
+            counts[str(language)] = counts.get(str(language), 0) + 1
+        return counts
+
+    def backfill_code_chunk_language(self, file_path: str, language: str) -> int:
+        conn = self._get_conn()
+        cursor = conn.execute(
+            """
+            UPDATE code_chunks
+            SET language = ?
+            WHERE file_path = ?
+              AND (language IS NULL OR language = '')
+            """,
+            (language, file_path),
+        )
+        conn.commit()
+        return int(cursor.rowcount)
 
     # --- File hashes (incremental indexing) ---
 

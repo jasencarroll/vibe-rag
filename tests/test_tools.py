@@ -1969,6 +1969,7 @@ def test_project_status_includes_memory_cleanup_candidates(tmp_db, mock_embedder
     assert status["ok"] is True
     assert status["status"]["cleanup_candidates"]
     assert status["status"]["cleanup_candidates"][0]["summary"] == "temporary cleanup candidate"
+    assert "content" not in status["status"]["cleanup_candidates"][0]
 
 
 def test_project_status_memory_health_summarizes_provenance_and_cleanup(tmp_db, mock_embedder):
@@ -2286,6 +2287,51 @@ def test_language_stats_reports_python_not_none(tmp_db, mock_embedder, tmp_path:
     lang_stats = result["status"]["language_stats"]
     assert "None" not in lang_stats, f"language_stats contains 'None': {lang_stats}"
     assert lang_stats.get("python", 0) > 0, f"expected 'python' in language_stats: {lang_stats}"
+
+
+def test_language_stats_reports_fallback_language_not_none(tmp_db, mock_embedder, tmp_path: Path):
+    """Non-tree-sitter fallback chunks should still carry their extension-derived language."""
+    import os
+
+    (tmp_path / "config.yml").write_text("name: vibe-rag\nmode: test\n")
+
+    old_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        index_project()
+        result = project_status()
+    finally:
+        os.chdir(old_cwd)
+
+    lang_stats = result["status"]["language_stats"]
+    assert "None" not in lang_stats, f"language_stats contains 'None': {lang_stats}"
+    assert lang_stats.get("yaml", 0) > 0, f"expected 'yaml' in language_stats: {lang_stats}"
+
+
+def test_reindex_backfills_language_for_unchanged_chunks(tmp_db, mock_embedder, tmp_path: Path):
+    """Incremental reindex should repair stale NULL language metadata without forcing file changes."""
+    import os
+    import vibe_rag.server as srv
+
+    (tmp_path / "config.yml").write_text("name: vibe-rag\nmode: test\n")
+
+    old_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        first = index_project()
+        assert first["ok"] is True
+        srv._get_db()._get_conn().execute("UPDATE code_chunks SET language = NULL WHERE file_path = 'config.yml'")
+        srv._get_db()._get_conn().commit()
+
+        second = index_project()
+        assert second["ok"] is True
+
+        result = search("vibe-rag", scope="code", language="yaml")
+    finally:
+        os.chdir(old_cwd)
+
+    assert result["ok"] is True
+    assert "config.yml" in _search_paths(result)
 
 
 # --- min_score filtering tests ---
@@ -2629,6 +2675,32 @@ def test_remember_structured_compat_wrapper(tmp_db, mock_embedder):
     assert result["memory"]["summary"] == "compat test"
     assert result["memory"]["memory_kind"] == "fact"
     assert result["memory"]["metadata"]["capture_kind"] == "manual"
+
+
+def test_remember_content_with_explicit_kind_uses_manual_capture_kind(tmp_db, mock_embedder):
+    result = remember(
+        "gateway validates JWT tokens before routing requests",
+        memory_kind="decision",
+        tags="auth,architecture",
+    )
+    assert result["ok"] is True
+    assert result["memory"]["memory_kind"] == "decision"
+    assert result["memory"]["metadata"]["capture_kind"] == "manual"
+    assert result["memory"]["provenance"]["capture_kind"] == "manual"
+
+
+def test_explicitly_typed_remember_is_not_flagged_as_freeform_capture(tmp_db, mock_embedder):
+    result = remember(
+        "gateway validates JWT tokens before routing requests",
+        memory_kind="decision",
+        tags="auth,architecture",
+    )
+    assert result["ok"] is True
+
+    candidates = _memory_cleanup_candidates(limit=5)
+    matching = [item for item in candidates if item["id"] == result["memory"]["id"] and item["source_db"] == "project"]
+    if matching:
+        assert "freeform_capture" not in matching[0]["cleanup_reasons"]
 
 
 # --- update_memory tests ---

@@ -110,11 +110,13 @@ def remember(
 
     inferred_kind = _infer_auto_memory_kind("", content, content)
     resolved_kind = inferred_kind if inferred_kind != "summary" else "note"
+    capture_kind = "freeform"
     if memory_kind:
         kind_error = _validate_memory_kind(memory_kind)
         if kind_error:
             return _failure_from_error(kind_error)
         resolved_kind = memory_kind
+        capture_kind = "manual"
 
     db = _get_db() if scope == "project" else _get_user_db()
     source_db_label = "project" if scope == "project" else "user"
@@ -125,7 +127,7 @@ def remember(
         tags=tags,
         project_id=_ensure_project_id(),
         memory_kind=resolved_kind,
-        metadata={"capture_kind": "freeform", **(metadata or {})},
+        metadata={"capture_kind": capture_kind, **(metadata or {})},
         source_session_id=source_session_id or None,
         source_message_id=source_message_id or None,
     )
@@ -140,7 +142,7 @@ def remember(
                     "summary": _truncate(_single_line(content), 200),
                     "content": content,
                     "memory_kind": resolved_kind,
-                    "metadata": {"capture_kind": "freeform"},
+                    "metadata": {"capture_kind": capture_kind},
                 },
                 source_db_label,
             ),
