@@ -71,6 +71,26 @@ def _batch_by_limits(
     return batches
 
 
+def _resolve_embedding_provider_name() -> str:
+    explicit = os.environ.get("VIBE_RAG_EMBEDDING_PROVIDER", "").strip().lower()
+    if explicit:
+        return explicit
+
+    try:
+        _resolve_ollama_host()
+        return "ollama"
+    except RuntimeError:
+        pass
+
+    if os.environ.get("VOYAGE_API_KEY", "").strip():
+        return "voyage"
+    if os.environ.get("MISTRAL_API_KEY", "").strip():
+        return "mistral"
+    if os.environ.get("OPENAI_API_KEY", "").strip():
+        return "openai"
+    return "ollama"
+
+
 class EmbeddingProvider(Protocol):
     def embed_text_sync(
         self, texts: list[str], *, progress_callback: ProgressCallback | None = None
@@ -449,7 +469,7 @@ class VoyageEmbeddingProvider:
 
 
 def create_embedding_provider() -> EmbeddingProvider:
-    provider = os.environ.get("VIBE_RAG_EMBEDDING_PROVIDER", "ollama").strip().lower() or "ollama"
+    provider = _resolve_embedding_provider_name()
     if provider == "mistral":
         api_key = os.environ.get("MISTRAL_API_KEY", "")
         if not api_key:
@@ -509,7 +529,7 @@ def _resolve_ollama_host() -> str:
 
 
 def embedding_provider_status() -> dict[str, object]:
-    provider = os.environ.get("VIBE_RAG_EMBEDDING_PROVIDER", "ollama").strip().lower() or "ollama"
+    provider = _resolve_embedding_provider_name()
     model = os.environ.get("VIBE_RAG_EMBEDDING_MODEL", "").strip()
 
     if provider == "mistral":

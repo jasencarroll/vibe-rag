@@ -179,8 +179,7 @@ def test_memory_eval_current_project_memory_beats_cross_project_memory(tmp_db):
 
     assert payload["memories"][0]["provenance"]["is_current_project"] is True
     assert payload["memories"][0]["provenance"]["is_stale"] is False
-    assert payload["memories"][1]["provenance"]["is_current_project"] is False
-    assert payload["memories"][1]["provenance"]["is_stale"] is True
+    assert len(payload["memories"]) == 1
 
 
 def test_memory_eval_duplicate_and_low_signal_auto_memories_do_not_interfere(tmp_db):

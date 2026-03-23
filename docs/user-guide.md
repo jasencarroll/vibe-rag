@@ -18,6 +18,12 @@ load session context for understanding this repo
 index this project
 ```
 
+If you need to refresh the local index outside the client loop, run:
+
+```bash
+vibe-rag reindex
+```
+
 Then use:
 
 ```text
@@ -113,6 +119,8 @@ Memory usefulness is also now covered by scenario tests around `load_session_con
 For longer-running eval work, the retrieval eval runner can now summarize cross-artifact trends so you can track fallback usage, noise, index timing, and memory cleanup pressure over time instead of inspecting one JSON file at a time.
 
 Auto-captured session memories also go through a write-time durability/novelty gate now, so transient status chatter and repetitive restatements are more likely to be skipped instead of stored and cleaned up later.
+
+Current-project durable memories are also favored more aggressively during memory search now, so stale cross-project user memories and session-summary noise are less likely to crowd out the answer you actually wanted.
 
 If you want the same style of evidence for the maintainer repo's real persistent memory, use the `--persistent-memory`, `--persistent-memory-summary`, and `--persistent-memory-trends` modes in the eval runner. Those snapshots track the actual repo/user memory state over time rather than the eval runner's temporary DBs.
 For release prep, `--release-evidence` combines the latest retrieval snapshot, retrieval trends, persistent-memory snapshot, and persistent-memory trends into one compact report.

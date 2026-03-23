@@ -1,5 +1,6 @@
 from __future__ import annotations
 import json
+import logging
 import os
 import shlex
 import shutil
@@ -16,7 +17,9 @@ from vibe_rag import __version__
 @click.group()
 @click.version_option(version=__version__)
 def main():
-    """vibe-rag — Memory and semantic code search for Mistral Vibe."""
+    """vibe-rag — Semantic repo search and coding memory over MCP."""
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
     pass
 
 
@@ -426,7 +429,7 @@ def status():
         click.echo(f"  Project:     {db.memory_count()} memories")
         db.close()
     else:
-        click.echo("  No index yet. Run vibe and use index_project.")
+        click.echo("  No index yet. Run `vibe-rag reindex` or use `index_project` through your client.")
 
     if user_db_path.exists():
         user_db = SqliteVecDB(user_db_path, embedding_dimensions=embedding_dimensions)
@@ -435,6 +438,18 @@ def status():
         user_db.close()
     else:
         click.echo(f"  User:        0 memories ({user_db_path})")
+    click.echo()
+
+
+@main.command("reindex")
+@click.argument("paths", nargs=-1)
+def reindex(paths: tuple[str, ...]):
+    """Refresh the current project's code and docs index."""
+    from vibe_rag.tools import index_project
+
+    target_paths: list[str] | str = list(paths) if paths else "."
+    click.echo()
+    click.echo(index_project(target_paths))
     click.echo()
 
 
@@ -512,6 +527,7 @@ def doctor(fix: bool):
         click.echo("  [warn] Stale state     " + stale_state["warnings"][0]["detail"])
         for warning in stale_state["warnings"][1:]:
             click.echo(f"                    {warning['detail']}")
+        click.echo("  Suggested stale fix: vibe-rag reindex")
     else:
         click.echo("  [ok] Stale state     no stale index warnings")
 

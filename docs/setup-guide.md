@@ -130,6 +130,14 @@ vibe-rag hook-session-start --format codex
 - Vibe and Codex trust state
 - stale index warnings
 
+If you want to refresh the local index outside the client loop, run:
+
+```bash
+vibe-rag reindex
+```
+
+If Ollama is unavailable but a hosted provider key is already configured, `vibe-rag` now falls back to that hosted provider automatically.
+
 ## 3A. Optional Codex And Claude Code Scaffolding
 
 `vibe-rag init` also writes:
@@ -204,12 +212,13 @@ If code or docs search is empty:
 
 - trust the repo
 - run `index this project`
+- or run `vibe-rag reindex`
 - run `vibe-rag doctor`
 - make sure Ollama is running and `qwen3-embedding:0.6b` is pulled
 
 If `vibe-rag doctor` reports stale state:
 
-- re-run `index this project`
+- run `vibe-rag reindex`
 - make sure you are in the intended repo root
 - check whether git `HEAD` changed since the last index
 

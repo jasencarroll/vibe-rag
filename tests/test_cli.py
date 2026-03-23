@@ -14,6 +14,14 @@ def test_cli_version():
     assert "0.0.20" in result.output
 
 
+def test_cli_help_uses_broader_product_framing():
+    runner = CliRunner()
+    result = runner.invoke(main, ["--help"])
+    assert result.exit_code == 0
+    assert "Semantic repo search and coding memory over MCP." in result.output
+    assert "for Mistral Vibe" not in result.output
+
+
 def test_cli_status():
     runner = CliRunner()
     result = runner.invoke(main, ["status"])
@@ -34,6 +42,40 @@ def test_cli_status_uses_env_db_paths_and_dimensions(monkeypatch, tmp_path):
     assert result.exit_code == 0
     assert str(project_db) in result.output
     assert str(user_db) in result.output
+
+
+def test_cli_reindex_uses_index_project(monkeypatch):
+    runner = CliRunner()
+    calls = {}
+
+    def fake_index_project(paths):
+        calls["paths"] = paths
+        return "Indexed 2 files"
+
+    monkeypatch.setattr("vibe_rag.tools.index_project", fake_index_project)
+
+    result = runner.invoke(main, ["reindex", "src", "docs"])
+
+    assert result.exit_code == 0
+    assert calls["paths"] == ["src", "docs"]
+    assert "Indexed 2 files" in result.output
+
+
+def test_cli_reindex_defaults_to_current_project(monkeypatch):
+    runner = CliRunner()
+    calls = {}
+
+    def fake_index_project(paths):
+        calls["paths"] = paths
+        return "Indexed current project"
+
+    monkeypatch.setattr("vibe_rag.tools.index_project", fake_index_project)
+
+    result = runner.invoke(main, ["reindex"])
+
+    assert result.exit_code == 0
+    assert calls["paths"] == "."
+    assert "Indexed current project" in result.output
 
 
 def test_cli_doctor_defaults_to_ollama(monkeypatch):
@@ -224,6 +266,7 @@ def test_cli_doctor_reports_stale_state(monkeypatch):
     assert result.exit_code == 0
     assert "[warn] Stale state" in result.output
     assert "git HEAD changed since index" in result.output
+    assert "Suggested stale fix: vibe-rag reindex" in result.output
 
 
 def test_cli_init_prints_provider_recommendation(monkeypatch):
@@ -298,8 +341,11 @@ def test_cli_init_does_not_persist_secrets():
         config_text = Path("demo/.vibe/config.toml").read_text()
         assert "top-secret-key" not in config_text
         assert "/tmp/vibe-user.db" not in config_text
-        assert "env =" not in config_text
         assert 'skill_paths = [".vibe/skills"]' in config_text
+        assert 'command = "/bin/zsh"' in config_text
+        assert "source ~/.zprofile" in config_text
+        assert "source ~/.zshrc" in config_text
+        assert "__VIBE_RAG_BIN__" not in config_text
         assert "[background_mcp_hook]" in config_text
         assert 'tool_name = "memory_load_session_context"' in config_text
         assert "[session_memory_hook]" in config_text

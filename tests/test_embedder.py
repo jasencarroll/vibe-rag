@@ -106,6 +106,35 @@ def test_create_embedding_provider_defaults_to_ollama(monkeypatch):
     assert provider._model == DEFAULT_OLLAMA_MODEL
 
 
+def test_create_embedding_provider_auto_falls_back_to_voyage_when_ollama_unreachable(monkeypatch):
+    monkeypatch.delenv("VIBE_RAG_EMBEDDING_PROVIDER", raising=False)
+    monkeypatch.delenv("VIBE_RAG_EMBEDDING_MODEL", raising=False)
+    monkeypatch.setenv("VOYAGE_API_KEY", "test-voyage-key")
+    monkeypatch.setattr(
+        "vibe_rag.indexing.embedder._resolve_ollama_host",
+        lambda: (_ for _ in ()).throw(RuntimeError("Ollama not reachable")),
+    )
+
+    provider = create_embedding_provider()
+
+    assert isinstance(provider, VoyageEmbeddingProvider)
+
+
+def test_embedding_provider_status_auto_reports_voyage_when_ollama_unreachable(monkeypatch):
+    monkeypatch.delenv("VIBE_RAG_EMBEDDING_PROVIDER", raising=False)
+    monkeypatch.delenv("VIBE_RAG_EMBEDDING_MODEL", raising=False)
+    monkeypatch.setenv("VOYAGE_API_KEY", "test-voyage-key")
+    monkeypatch.setattr(
+        "vibe_rag.indexing.embedder._resolve_ollama_host",
+        lambda: (_ for _ in ()).throw(RuntimeError("Ollama not reachable")),
+    )
+
+    status = embedding_provider_status()
+
+    assert status["provider"] == "voyage"
+    assert status["ok"] is True
+
+
 def test_create_embedding_provider_rejects_unknown_provider(monkeypatch):
     monkeypatch.setenv("VIBE_RAG_EMBEDDING_PROVIDER", "unknown")
 

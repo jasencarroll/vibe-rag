@@ -29,6 +29,14 @@ def test_remember_and_search_memory(tmp_db, mock_embedder):
     assert "sqlite-vec" in result
 
 
+def test_remember_inferrs_constraint_kind_from_freeform_content(tmp_db, mock_embedder):
+    remember("Only demo tokens are allowed in this smoke-test API.")
+
+    result = load_session_context("demo tokens", memory_limit=4, code_limit=0, docs_limit=0)
+
+    assert result["memories"][0]["memory_kind"] == "constraint"
+
+
 def test_forget_existing(tmp_db, mock_embedder):
     result = remember("temporary fact")
     assert "id=1" in result
@@ -586,6 +594,8 @@ def test_index_project_no_api_key(tmp_db, tmp_path: Path, monkeypatch):
     old_embedder = srv._embedder
     srv._embedder = None
     monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
+    monkeypatch.delenv("VOYAGE_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("VIBE_RAG_EMBEDDING_PROVIDER", raising=False)
     monkeypatch.setattr(
         "vibe_rag.indexing.embedder._resolve_ollama_host",
@@ -979,7 +989,7 @@ def test_search_memory_falls_back_to_user_memory_results(tmp_db, mock_embedder):
     assert "CERULEAN_PINEAPPLE_20260322" in result
 
 
-def test_search_memory_prefers_project_results_before_user_results(tmp_db, mock_embedder):
+def test_search_memory_filters_stale_cross_project_results_when_project_memory_exists(tmp_db, mock_embedder):
     import vibe_rag.server as srv
     old_project_id = srv._project_id
     srv._get_db().remember_structured(
@@ -1003,7 +1013,7 @@ def test_search_memory_prefers_project_results_before_user_results(tmp_db, mock_
         srv._project_id = old_project_id
 
     assert "sink-repo" in result
-    assert "source-repo" in result
+    assert "source-repo" not in result
     assert "QUARTZ_MERIDIAN_20260322_Z9" in result
 
 
@@ -1173,12 +1183,58 @@ def test_load_session_context_downranks_cross_project_user_memory(tmp_db, mock_e
     finally:
         srv._project_id = old_project_id
 
-    assert [item["id"] for item in result["memories"][:2]] == [str(current_id), str(other_id)]
+    assert [item["id"] for item in result["memories"][:1]] == [str(current_id)]
     assert result["memories"][0]["provenance"]["is_current_project"] is True
     assert result["memories"][0]["provenance"]["is_stale"] is False
-    assert result["memories"][1]["provenance"]["is_current_project"] is False
-    assert result["memories"][1]["provenance"]["is_stale"] is True
-    assert "project_id_mismatch" in result["memories"][1]["provenance"]["stale_reasons"]
+
+
+def test_load_session_context_filters_stale_cross_project_memory_when_current_project_hit_exists(
+    tmp_db, mock_embedder
+):
+    import vibe_rag.server as srv
+
+    old_project_id = srv._project_id
+    srv._project_id = "demo-repo"
+    try:
+        remember_structured(
+            summary="demo token constraint",
+            details="Only demo tokens are accepted.",
+            memory_kind="constraint",
+        )
+        srv._get_user_db().remember_structured(
+            summary="demo token constraint in another repo",
+            content="Another repo also talks about demo tokens.",
+            embedding=[0.0] * 1024,
+            project_id="other-repo",
+            memory_kind="constraint",
+            metadata={"capture_kind": "manual"},
+        )
+
+        result = load_session_context("demo tokens", memory_limit=5, code_limit=0, docs_limit=0)
+    finally:
+        srv._project_id = old_project_id
+
+    assert len(result["memories"]) == 1
+    assert result["memories"][0]["provenance"]["is_current_project"] is True
+
+
+def test_load_session_context_filters_auto_memories_when_durable_memory_exists(tmp_db, mock_embedder):
+    save_session_summary(
+        task="search memory for demo tokens",
+        turns=[{"user": "search memory for demo tokens", "assistant": "Found demo token note"}],
+        source_session_id="sess-demo-memory",
+        source_message_id="msg-demo-memory",
+    )
+    remember("Only demo tokens are allowed in this smoke-test API.")
+
+    result = load_session_context("demo tokens", memory_limit=5, code_limit=0, docs_limit=0)
+
+    assert result["memories"][0]["memory_kind"] == "constraint"
+    assert result["memories"][0]["provenance"]["capture_kind"] == "freeform"
+    assert all(
+        item["provenance"]["capture_kind"] not in {"session_rollup", "session_distillation"}
+        for item in result["memories"][1:]
+    )
 
 
 def test_memory_cleanup_report_surfaces_freeform_and_cross_project_candidates(tmp_db, mock_embedder):

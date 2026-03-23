@@ -58,7 +58,7 @@ DURABLE_MEMORY_TERMS = {
     "gateway",
 }
 DECISION_TERMS = {"decision", "decided", "choose", "chosen", "prefer", "policy", "owns", "owner"}
-CONSTRAINT_TERMS = {"constraint", "must", "cannot", "required", "requires", "never", "always", "limit"}
+CONSTRAINT_TERMS = {"constraint", "must", "cannot", "required", "requires", "never", "always", "limit", "allowed", "accepted"}
 TODO_TERMS = {"todo", "follow-up", "followup", "next", "still", "open", "pending", "finish", "add", "implement"}
 FACT_TERMS = {"fact", "lives", "located", "uses", "version", "path", "project", "id"}
 TRANSIENT_STATUS_PATTERNS = (
@@ -348,6 +348,15 @@ def _is_low_signal_auto_memory(result: dict) -> bool:
     return False
 
 
+def _memory_capture_kind(result: dict) -> str:
+    metadata = result.get("metadata") or {}
+    return str(metadata.get("capture_kind") or "").strip()
+
+
+def _is_auto_capture_memory(result: dict) -> bool:
+    return _memory_capture_kind(result) in {"session_rollup", "session_distillation"}
+
+
 def _is_low_signal_auto_capture(
     *,
     task: str,
@@ -475,11 +484,16 @@ def _memory_rank_penalty(result: dict, current_project_id: str | None) -> int:
     state = _memory_state(result, current_project_id)
     penalty = 0
     if not state["is_current_project"] and result.get("source_db") == "user":
-        penalty += 1
+        penalty += 3
     if state["is_stale"]:
+        penalty += 4
+    capture_kind = _memory_capture_kind(result)
+    if capture_kind == "session_distillation":
+        penalty += 1
+    if capture_kind == "session_rollup":
         penalty += 2
     if _is_low_signal_auto_memory(result):
-        penalty += 1
+        penalty += 3
     return penalty
 
 
@@ -1044,6 +1058,30 @@ def _merge_memory_results(
                 continue
             seen_ids.add(dedupe_key)
             merged.append(result)
+
+    current_project_results = [
+        result
+        for result in merged
+        if _memory_state(result, current_project_id)["is_current_project"]
+        and not _memory_state(result, current_project_id)["is_stale"]
+    ]
+    if current_project_results:
+        merged = [
+            result
+            for result in merged
+            if "project_id_mismatch" not in _memory_state(result, current_project_id)["stale_reasons"]
+        ]
+
+    if any(not _is_auto_capture_memory(result) for result in current_project_results):
+        merged = [
+            result
+            for result in merged
+            if not (
+                _memory_state(result, current_project_id)["is_current_project"]
+                and _is_auto_capture_memory(result)
+            )
+        ]
+
     return _sort_memory_results(merged, current_project_id=current_project_id)[:limit]
 
 
@@ -1546,6 +1584,9 @@ def remember(content: str, tags: str = "") -> str:
     except Exception as e:
         return f"Embedding failed: {e}"
 
+    inferred_kind = _infer_auto_memory_kind("", content, content)
+    memory_kind = inferred_kind if inferred_kind != "summary" else "note"
+
     db = _get_db()
     memory_id = db.remember_structured(
         summary=_truncate(_single_line(content), 200),
@@ -1553,7 +1594,7 @@ def remember(content: str, tags: str = "") -> str:
         embedding=embeddings[0],
         tags=tags,
         project_id=_ensure_project_id(),
-        memory_kind="note",
+        memory_kind=memory_kind,
         metadata={"capture_kind": "freeform"},
     )
     return f"Remembered in project memory (id={memory_id}): {content[:200]}"

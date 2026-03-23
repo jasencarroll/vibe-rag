@@ -18,6 +18,8 @@ It adds:
 - semantic docs search
 - durable session memory
 
+When Ollama is unavailable, `vibe-rag` now auto-falls back to a configured hosted embedding provider instead of failing just because no explicit provider env was set.
+
 Storage is local and simple:
 
 - project index: `.vibe/index.db`
@@ -157,6 +159,12 @@ vibe-rag hook-session-start --format codex
 - Vibe and Codex trust status
 - stale index warnings
 
+When `doctor` reports stale state, run:
+
+```bash
+vibe-rag reindex
+```
+
 First prompts:
 
 ```text
@@ -170,6 +178,7 @@ remember that auth tokens are validated in the API gateway
 Success looks like:
 
 - `index this project` reports code and docs indexed
+- `vibe-rag reindex` refreshes the local `.vibe/index.db` directly from the CLI
 - `search the code for ...` returns a relevant file or snippet
 - `search docs for ...` returns a relevant text chunk
 - `remember ...` returns a memory id

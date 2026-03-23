@@ -5,8 +5,8 @@ skill_paths = [".vibe/skills"]
 [[mcp_servers]]
 name = "memory"
 transport = "stdio"
-command = "__VIBE_RAG_BIN__"
-args = ["serve"]
+command = "/bin/zsh"
+args = ["-lc", "source ~/.zprofile >/dev/null 2>&1 || true; source ~/.zshrc >/dev/null 2>&1 || true; __VIBE_RAG_BIN__ serve"]
 
 [background_mcp_hook]
 enabled = true

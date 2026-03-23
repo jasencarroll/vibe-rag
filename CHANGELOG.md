@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `vibe-rag reindex` as a direct CLI path for refreshing the local `.vibe/index.db` without going through a client MCP prompt
+
+### Changed
+- CLI help text now describes `vibe-rag` as a client-agnostic MCP repo-memory/search tool instead of narrowing it to Mistral Vibe
+- Embedding provider resolution now falls back to configured hosted providers when Ollama is unavailable and no explicit provider env was set
+- Freeform `remember(...)` captures now infer stronger durable kinds like `constraint` when the content supports it
+- Memory search now filters stale cross-project user memories and current-project auto-session noise more aggressively when durable local memory exists
+
+### Fixed
+- Normal CLI commands like `doctor` and `reindex` now suppress noisy hosted-provider `httpx` request logs in regular output
+- Generated Vibe scaffolds now launch the MCP server through the user's shell startup files so persisted local env setup reaches `vibe-rag serve` without storing secrets in project config
+
 ## [0.0.20] - 2026-03-23
 
 ### Added
