@@ -563,6 +563,31 @@ def test_cli_hook_session_start_renders_gemini_output(monkeypatch):
     assert '"additionalContext": "vibe-rag context for project `demo-project`' in result.output
 
 
+def test_cli_hook_session_start_renders_vibe_output(monkeypatch):
+    runner = CliRunner()
+
+    monkeypatch.setattr(
+        "vibe_rag.hook_bridge.load_session_context",
+        lambda **kwargs: {
+            "ok": True,
+            "project_id": "demo-project",
+            "memories": [],
+            "code": [],
+            "docs": [],
+        },
+    )
+
+    result = runner.invoke(
+        main,
+        ["hook-session-start", "--format", "vibe"],
+        input='{"source":"startup"}',
+    )
+
+    assert result.exit_code == 0
+    assert '"hookEventName": "SessionStart"' in result.output
+    assert '"additionalContext": "vibe-rag context for project `demo-project`' in result.output
+
+
 def test_cli_hook_session_start_categorizes_failures(monkeypatch):
     runner = CliRunner()
 

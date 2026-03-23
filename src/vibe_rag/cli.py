@@ -619,7 +619,7 @@ def setup_ollama(model: str):
 
 
 @main.command("hook-session-start")
-@click.option("--format", "target_format", type=click.Choice(["codex", "claude", "gemini"]), required=True)
+@click.option("--format", "target_format", type=click.Choice(["codex", "claude", "gemini", "vibe"]), required=True)
 def hook_session_start(target_format: str):
     """Render SessionStart hook output for supported agent CLIs."""
     from vibe_rag.hook_bridge import render_session_start_hook_json

@@ -98,7 +98,7 @@ def _response_for_format(target_format: str, additional_context: str, system_mes
     if system_message:
         response["systemMessage"] = system_message
 
-    if target_format in {"codex", "claude"}:
+    if target_format in {"codex", "claude", "vibe"}:
         response["hookSpecificOutput"] = {
             "hookEventName": "SessionStart",
             "additionalContext": additional_context,
