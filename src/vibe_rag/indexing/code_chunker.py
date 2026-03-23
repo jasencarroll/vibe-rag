@@ -27,6 +27,7 @@ def chunk_code_sliding_window(
     file_path: str,
     window: int = SLIDING_WINDOW_SIZE,
     overlap: int = SLIDING_WINDOW_OVERLAP,
+    language: str | None = None,
 ) -> list[CodeChunk]:
     lines = content.splitlines(keepends=True)
     if not lines:
@@ -40,7 +41,7 @@ def chunk_code_sliding_window(
         chunk_content = "".join(lines[start:end])
         chunks.append({
             "file_path": file_path, "chunk_index": chunk_index, "content": chunk_content,
-            "language": None, "symbol": None, "start_line": start + 1, "end_line": end,
+            "language": language, "symbol": None, "start_line": start + 1, "end_line": end,
         })
         chunk_index += 1
         if end >= len(lines):
@@ -126,4 +127,4 @@ def chunk_code(content: str, file_path: str, language: str | None = None) -> lis
         ts_chunks = _try_tree_sitter_chunk(content, file_path, language)
         if ts_chunks:
             return _subsplit_large_chunks(ts_chunks)
-    return chunk_code_sliding_window(content, file_path)
+    return chunk_code_sliding_window(content, file_path, language=language)
