@@ -567,3 +567,129 @@ def test_hosted_embedding_providers_close_httpx_clients(provider_factory, client
 
     assert getattr(provider, client_attr) is None
     assert client.is_closed is True
+
+
+# ---------------------------------------------------------------------------
+# Embedding cache tests
+# ---------------------------------------------------------------------------
+
+
+def test_mistral_embed_cache_avoids_duplicate_api_call(httpx_mock):
+    """Embedding the same single text twice should only hit the API once."""
+    provider = MistralEmbeddingProvider(api_key="test-key")
+    httpx_mock.add_response(
+        url="https://api.mistral.ai/v1/embeddings",
+        json={"data": [{"embedding": [0.1] * 1536}]},
+    )
+
+    result1 = provider.embed_text_sync(["hello world"])
+    result2 = provider.embed_text_sync(["hello world"])
+
+    assert result1 == result2
+    assert len(httpx_mock.get_requests()) == 1
+
+
+def test_openai_embed_cache_avoids_duplicate_api_call(httpx_mock):
+    """OpenAI provider: same single text twice -> one API call."""
+    provider = OpenAIEmbeddingProvider(api_key="test-key")
+    httpx_mock.add_response(
+        url="https://api.openai.com/v1/embeddings",
+        json={"data": [{"embedding": [0.2] * 1536}]},
+    )
+
+    result1 = provider.embed_text_sync(["hello world"])
+    result2 = provider.embed_text_sync(["hello world"])
+
+    assert result1 == result2
+    assert len(httpx_mock.get_requests()) == 1
+
+
+def test_ollama_embed_cache_avoids_duplicate_call(monkeypatch):
+    """Ollama provider: same single text twice -> one embed() call."""
+    calls = []
+
+    class FakeClient:
+        def __init__(self, host):
+            self.host = host
+
+        def embed(self, **kwargs):
+            calls.append(kwargs)
+            return {"embeddings": [[0.3, 0.4, 0.5]]}
+
+    monkeypatch.setattr("vibe_rag.indexing.embedder.OllamaClient", FakeClient)
+    provider = OllamaEmbeddingProvider(model="qwen3-embedding:0.6b", host="http://localhost:11434")
+
+    result1 = provider.embed_text_sync(["hello world"])
+    result2 = provider.embed_text_sync(["hello world"])
+
+    assert result1 == result2
+    assert len(calls) == 1
+
+
+def test_voyage_embed_cache_avoids_duplicate_api_call():
+    """Voyage provider: same single text twice -> one API call."""
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(200, json={"data": [{"embedding": [0.6, 0.7, 0.8]}]})
+
+    transport = httpx.MockTransport(handler)
+    provider = VoyageEmbeddingProvider(api_key="test-key")
+    provider._client = httpx.Client(transport=transport)
+
+    result1 = provider.embed_text_sync(["hello world"])
+    result2 = provider.embed_text_sync(["hello world"])
+
+    assert result1 == result2
+    assert len(requests) == 1
+
+
+def test_embed_cache_separates_text_and_code_methods(httpx_mock):
+    """embed_text_sync and embed_code_sync for the same text should each call the API."""
+    provider = MistralEmbeddingProvider(api_key="test-key")
+    httpx_mock.add_response(
+        url="https://api.mistral.ai/v1/embeddings",
+        json={"data": [{"embedding": [0.1] * 1536}]},
+    )
+    httpx_mock.add_response(
+        url="https://api.mistral.ai/v1/embeddings",
+        json={"data": [{"embedding": [0.2] * 1536}]},
+    )
+
+    provider.embed_text_sync(["hello world"])
+    provider.embed_code_sync(["hello world"])
+
+    assert len(httpx_mock.get_requests()) == 2
+
+
+def test_embed_cache_skipped_for_batch_calls(httpx_mock):
+    """Batch calls (len > 1) should bypass the cache entirely."""
+    provider = MistralEmbeddingProvider(api_key="test-key")
+    for _ in range(2):
+        httpx_mock.add_response(
+            url="https://api.mistral.ai/v1/embeddings",
+            json={"data": [{"embedding": [0.1] * 1536}, {"embedding": [0.2] * 1536}]},
+        )
+
+    provider.embed_text_sync(["hello", "world"])
+    provider.embed_text_sync(["hello", "world"])
+
+    assert len(httpx_mock.get_requests()) == 2
+
+
+def test_embed_cache_evicts_oldest_entries(httpx_mock):
+    """Cache should evict oldest entries when exceeding _EMBED_CACHE_MAX."""
+    from vibe_rag.indexing.embedder import _EMBED_CACHE_MAX
+
+    provider = MistralEmbeddingProvider(api_key="test-key")
+
+    # Fill cache beyond max
+    for i in range(_EMBED_CACHE_MAX + 10):
+        httpx_mock.add_response(
+            url="https://api.mistral.ai/v1/embeddings",
+            json={"data": [{"embedding": [float(i)] * 1536}]},
+        )
+        provider.embed_text_sync([f"text-{i}"])
+
+    assert len(provider._embed_cache) == _EMBED_CACHE_MAX

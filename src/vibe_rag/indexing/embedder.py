@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
+from collections import OrderedDict
 from collections.abc import Callable
 from typing import Protocol
 
@@ -223,11 +225,51 @@ class EmbeddingProvider(Protocol):
     def close(self) -> None: ...
 
 
-class MistralEmbeddingProvider:
+_EMBED_CACHE_MAX = 256
+
+
+class _CachedEmbeddingMixin:
+    """Per-instance LRU cache for single-text embedding calls.
+
+    When ``embed_text_sync``, ``embed_code_sync``, or ``embed_code_query_sync``
+    is called with exactly **one** text, the result is cached keyed on a SHA-256
+    digest of the text + method name.  Batch calls (len > 1) bypass the cache
+    entirely so indexing workloads are never affected.
+
+    Subclasses must call ``_init_embed_cache()`` in their ``__init__``.
+    """
+
+    _embed_cache: OrderedDict[str, list[float]]
+
+    def _init_embed_cache(self) -> None:
+        self._embed_cache = OrderedDict()
+
+    @staticmethod
+    def _cache_key(method_name: str, text: str) -> str:
+        digest = hashlib.sha256(f"{method_name}:{text}".encode("utf-8")).hexdigest()
+        return digest
+
+    def _get_cached(self, method_name: str, text: str) -> list[float] | None:
+        key = self._cache_key(method_name, text)
+        value = self._embed_cache.get(key)
+        if value is not None:
+            self._embed_cache.move_to_end(key)
+        return value
+
+    def _put_cached(self, method_name: str, text: str, vector: list[float]) -> None:
+        key = self._cache_key(method_name, text)
+        self._embed_cache[key] = vector
+        self._embed_cache.move_to_end(key)
+        while len(self._embed_cache) > _EMBED_CACHE_MAX:
+            self._embed_cache.popitem(last=False)
+
+
+class MistralEmbeddingProvider(_CachedEmbeddingMixin):
     def __init__(self, api_key: str, model: str = DEFAULT_MODEL):
         self._api_key = api_key
         self._model = model
         self._client: httpx.Client | None = None
+        self._init_embed_cache()
 
     def _get_client(self) -> httpx.Client:
         if self._client is None:
@@ -290,16 +332,37 @@ class MistralEmbeddingProvider:
     def embed_text_sync(
         self, texts: list[str], *, progress_callback: ProgressCallback | None = None
     ) -> list[list[float]]:
+        if len(texts) == 1:
+            cached = self._get_cached("embed_text_sync", texts[0])
+            if cached is not None:
+                return [cached]
+            result = self._embed_all(texts, input_kind="text", progress_callback=progress_callback)
+            self._put_cached("embed_text_sync", texts[0], result[0])
+            return result
         return self._embed_all(texts, input_kind="text", progress_callback=progress_callback)
 
     def embed_code_sync(
         self, texts: list[str], *, progress_callback: ProgressCallback | None = None
     ) -> list[list[float]]:
+        if len(texts) == 1:
+            cached = self._get_cached("embed_code_sync", texts[0])
+            if cached is not None:
+                return [cached]
+            result = self._embed_all(texts, input_kind="code", progress_callback=progress_callback)
+            self._put_cached("embed_code_sync", texts[0], result[0])
+            return result
         return self._embed_all(texts, input_kind="code", progress_callback=progress_callback)
 
     def embed_code_query_sync(
         self, texts: list[str], *, progress_callback: ProgressCallback | None = None
     ) -> list[list[float]]:
+        if len(texts) == 1:
+            cached = self._get_cached("embed_code_query_sync", texts[0])
+            if cached is not None:
+                return [cached]
+            result = self._embed_all(texts, input_kind="code", progress_callback=progress_callback)
+            self._put_cached("embed_code_query_sync", texts[0], result[0])
+            return result
         return self._embed_all(texts, input_kind="code", progress_callback=progress_callback)
 
     def close(self) -> None:
@@ -308,7 +371,7 @@ class MistralEmbeddingProvider:
             self._client = None
 
 
-class OllamaEmbeddingProvider:
+class OllamaEmbeddingProvider(_CachedEmbeddingMixin):
     def __init__(
         self,
         model: str,
@@ -320,6 +383,7 @@ class OllamaEmbeddingProvider:
         self._dimensions = dimensions
         self._truncate = truncate
         self._client = OllamaClient(host=host)
+        self._init_embed_cache()
 
     def _embed_all(
         self,
@@ -381,16 +445,37 @@ class OllamaEmbeddingProvider:
     def embed_text_sync(
         self, texts: list[str], *, progress_callback: ProgressCallback | None = None
     ) -> list[list[float]]:
+        if len(texts) == 1:
+            cached = self._get_cached("embed_text_sync", texts[0])
+            if cached is not None:
+                return [cached]
+            result = self._embed_all(texts, input_kind="text", progress_callback=progress_callback)
+            self._put_cached("embed_text_sync", texts[0], result[0])
+            return result
         return self._embed_all(texts, input_kind="text", progress_callback=progress_callback)
 
     def embed_code_sync(
         self, texts: list[str], *, progress_callback: ProgressCallback | None = None
     ) -> list[list[float]]:
+        if len(texts) == 1:
+            cached = self._get_cached("embed_code_sync", texts[0])
+            if cached is not None:
+                return [cached]
+            result = self._embed_all(texts, input_kind="code", progress_callback=progress_callback)
+            self._put_cached("embed_code_sync", texts[0], result[0])
+            return result
         return self._embed_all(texts, input_kind="code", progress_callback=progress_callback)
 
     def embed_code_query_sync(
         self, texts: list[str], *, progress_callback: ProgressCallback | None = None
     ) -> list[list[float]]:
+        if len(texts) == 1:
+            cached = self._get_cached("embed_code_query_sync", texts[0])
+            if cached is not None:
+                return [cached]
+            result = self._embed_all(texts, input_kind="code", progress_callback=progress_callback)
+            self._put_cached("embed_code_query_sync", texts[0], result[0])
+            return result
         return self._embed_all(texts, input_kind="code", progress_callback=progress_callback)
 
     def close(self) -> None:
@@ -399,12 +484,13 @@ class OllamaEmbeddingProvider:
             close()
 
 
-class OpenAIEmbeddingProvider:
+class OpenAIEmbeddingProvider(_CachedEmbeddingMixin):
     def __init__(self, api_key: str, model: str = DEFAULT_OPENAI_MODEL, dimensions: int | None = None):
         self._api_key = api_key
         self._model = model
         self._dimensions = dimensions
         self._client: httpx.Client | None = None
+        self._init_embed_cache()
 
     def _get_client(self) -> httpx.Client:
         if self._client is None:
@@ -467,16 +553,37 @@ class OpenAIEmbeddingProvider:
     def embed_text_sync(
         self, texts: list[str], *, progress_callback: ProgressCallback | None = None
     ) -> list[list[float]]:
+        if len(texts) == 1:
+            cached = self._get_cached("embed_text_sync", texts[0])
+            if cached is not None:
+                return [cached]
+            result = self._embed_all(texts, input_kind="text", progress_callback=progress_callback)
+            self._put_cached("embed_text_sync", texts[0], result[0])
+            return result
         return self._embed_all(texts, input_kind="text", progress_callback=progress_callback)
 
     def embed_code_sync(
         self, texts: list[str], *, progress_callback: ProgressCallback | None = None
     ) -> list[list[float]]:
+        if len(texts) == 1:
+            cached = self._get_cached("embed_code_sync", texts[0])
+            if cached is not None:
+                return [cached]
+            result = self._embed_all(texts, input_kind="code", progress_callback=progress_callback)
+            self._put_cached("embed_code_sync", texts[0], result[0])
+            return result
         return self._embed_all(texts, input_kind="code", progress_callback=progress_callback)
 
     def embed_code_query_sync(
         self, texts: list[str], *, progress_callback: ProgressCallback | None = None
     ) -> list[list[float]]:
+        if len(texts) == 1:
+            cached = self._get_cached("embed_code_query_sync", texts[0])
+            if cached is not None:
+                return [cached]
+            result = self._embed_all(texts, input_kind="code", progress_callback=progress_callback)
+            self._put_cached("embed_code_query_sync", texts[0], result[0])
+            return result
         return self._embed_all(texts, input_kind="code", progress_callback=progress_callback)
 
     def close(self) -> None:
@@ -485,7 +592,7 @@ class OpenAIEmbeddingProvider:
             self._client = None
 
 
-class VoyageEmbeddingProvider:
+class VoyageEmbeddingProvider(_CachedEmbeddingMixin):
     def __init__(
         self,
         api_key: str,
@@ -498,6 +605,7 @@ class VoyageEmbeddingProvider:
         self._dimensions = dimensions
         self._api_key = api_key
         self._client: httpx.Client | None = None
+        self._init_embed_cache()
 
     def _get_client(self) -> httpx.Client:
         if self._client is None:
@@ -611,6 +719,19 @@ class VoyageEmbeddingProvider:
     def embed_text_sync(
         self, texts: list[str], *, progress_callback: ProgressCallback | None = None
     ) -> list[list[float]]:
+        if len(texts) == 1:
+            cached = self._get_cached("embed_text_sync", texts[0])
+            if cached is not None:
+                return [cached]
+            result = self._embed_all(
+                texts,
+                model=self._text_model,
+                input_type="document",
+                input_kind="text",
+                progress_callback=progress_callback,
+            )
+            self._put_cached("embed_text_sync", texts[0], result[0])
+            return result
         return self._embed_all(
             texts,
             model=self._text_model,
@@ -622,6 +743,19 @@ class VoyageEmbeddingProvider:
     def embed_code_sync(
         self, texts: list[str], *, progress_callback: ProgressCallback | None = None
     ) -> list[list[float]]:
+        if len(texts) == 1:
+            cached = self._get_cached("embed_code_sync", texts[0])
+            if cached is not None:
+                return [cached]
+            result = self._embed_all(
+                texts,
+                model=self._code_model,
+                input_type="document",
+                input_kind="code",
+                progress_callback=progress_callback,
+            )
+            self._put_cached("embed_code_sync", texts[0], result[0])
+            return result
         return self._embed_all(
             texts,
             model=self._code_model,
@@ -633,6 +767,19 @@ class VoyageEmbeddingProvider:
     def embed_code_query_sync(
         self, texts: list[str], *, progress_callback: ProgressCallback | None = None
     ) -> list[list[float]]:
+        if len(texts) == 1:
+            cached = self._get_cached("embed_code_query_sync", texts[0])
+            if cached is not None:
+                return [cached]
+            result = self._embed_all(
+                texts,
+                model=self._code_model,
+                input_type="query",
+                input_kind="code",
+                progress_callback=progress_callback,
+            )
+            self._put_cached("embed_code_query_sync", texts[0], result[0])
+            return result
         return self._embed_all(
             texts,
             model=self._code_model,
