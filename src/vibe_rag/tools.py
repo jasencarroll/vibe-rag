@@ -4,7 +4,6 @@ import hashlib
 import inspect
 import json
 import logging
-import os
 import re
 import subprocess
 import time
@@ -12,7 +11,7 @@ from pathlib import Path
 import tomllib
 from typing import Any, cast
 
-from vibe_rag.chunking import chunk_doc, collect_files
+from vibe_rag.chunking import chunk_doc, collect_files, collect_files_with_skips
 from vibe_rag.constants import EXT_TO_LANG
 from vibe_rag.indexing.code_chunker import chunk_code
 from vibe_rag.server import (
@@ -23,7 +22,21 @@ from vibe_rag.server import (
     mcp,
 )
 from vibe_rag.indexing.embedder import ProgressCallback
-from vibe_rag.types import CodeSearchResult, DocSearchResult, MemoryKind, MemoryPayload, ToolError
+from vibe_rag.types import (
+    CodeChunk,
+    CodeSearchResult,
+    DocChunk,
+    DocSearchResult,
+    MemoryKind,
+    MemoryPayload,
+    MemoryProvenance,
+    MemoryRow,
+    RankedCodeResult,
+    RankedDocResult,
+    SearchProvenance,
+    SourceDB,
+    ToolError,
+)
 
 MAX_QUERY_LENGTH = 10_000
 MAX_MEMORY_LENGTH = 10_000
@@ -305,8 +318,40 @@ def _memory_rank_score(result: dict) -> float:
     return 1.0 / (1.0 + max(0.0, float(distance)))
 
 
-def _with_source_db(result: dict, source_db: str) -> dict:
+def _with_source_db(result: MemoryRow, source_db: SourceDB) -> MemoryRow:
     return {**result, "source_db": source_db}
+
+
+def _resolve_superseded_memory(
+    memory_id: int, current_project_id: str
+) -> tuple[object, SourceDB, MemoryRow] | ToolError:
+    candidates: list[tuple[object, SourceDB, MemoryRow]] = []
+    for db, source_db in ((_get_db(), "project"), (_get_user_db(), "user")):
+        memory = db.get_memory(memory_id)
+        if memory:
+            candidates.append((db, source_db, memory))
+
+    if not candidates:
+        return _tool_error(
+            "memory_not_found",
+            f"memory {memory_id} not found",
+            memory_id=memory_id,
+        )
+    if len(candidates) == 1:
+        return candidates[0]
+
+    current_project_matches = [
+        candidate for candidate in candidates if candidate[2].get("project_id") == current_project_id
+    ]
+    if len(current_project_matches) == 1:
+        return current_project_matches[0]
+
+    return _tool_error(
+        "ambiguous_old_memory_id",
+        f"memory {memory_id} exists in multiple memory stores",
+        memory_id=memory_id,
+        source_dbs=[candidate[1] for candidate in candidates],
+    )
 
 
 def _result_key(result: dict) -> tuple[str, int | str]:
@@ -472,7 +517,6 @@ def _find_non_novel_auto_memory(
         if str(item.get("project_id") or "") == current_project_id:
             candidates.append(_with_source_db(item, "user"))
     for item in candidates:
-        existing_summary = str(item.get("summary") or "")
         existing_content = str(item.get("content") or "")
         if _text_term_similarity(content, existing_content) >= 0.55:
             return item
@@ -596,7 +640,7 @@ def _sort_memory_results(results: list[dict], current_project_id: str | None = N
 
 
 def _query_terms(query: str) -> set[str]:
-    return {term for term in re.findall(r"[a-z0-9]+", query.lower()) if len(term) >= 3}
+    return {term for term in re.findall(r"[a-z0-9]+", query.lower()) if len(term) >= 2}
 
 
 def _text_term_overlap(query: str, *parts: str | None) -> float:
@@ -808,7 +852,11 @@ def _rrf_merge(*result_sets: tuple[str, list[dict]], k: int = 60, limit: int) ->
     return results[:limit]
 
 
-def _code_result_payload(result: dict) -> CodeSearchResult:
+def _code_result_payload(result: RankedCodeResult) -> CodeSearchResult:
+    provenance: SearchProvenance = {
+        "source": "project-index",
+        "indexed_at": result.get("indexed_at"),
+    }
     return {
         "file_path": str(result["file_path"]),
         "start_line": int(result["start_line"]),
@@ -819,15 +867,16 @@ def _code_result_payload(result: dict) -> CodeSearchResult:
         "indexed_at": result.get("indexed_at"),
         "rank_score": round(float(result.get("rank_score") or 0.0), 6),
         "match_sources": list(result.get("match_sources") or []),
-        "provenance": {
-            "source": "project-index",
-            "indexed_at": result.get("indexed_at"),
-        },
+        "provenance": provenance,
     }
 
 
-def _doc_result_payload(result: dict) -> DocSearchResult:
+def _doc_result_payload(result: RankedDocResult) -> DocSearchResult:
     content = str(result["content"])
+    provenance: SearchProvenance = {
+        "source": "project-index",
+        "indexed_at": result.get("indexed_at"),
+    }
     return {
         "file_path": str(result["file_path"]),
         "chunk_index": int(result["chunk_index"]),
@@ -836,28 +885,19 @@ def _doc_result_payload(result: dict) -> DocSearchResult:
         "indexed_at": result.get("indexed_at"),
         "rank_score": round(float(result.get("rank_score") or 0.0), 6),
         "match_sources": list(result.get("match_sources") or []),
-        "provenance": {
-            "source": "project-index",
-            "indexed_at": result.get("indexed_at"),
-        },
+        "provenance": provenance,
     }
 
 
-def _memory_payload(result: dict, current_project_id: str | None = None) -> MemoryPayload:
+def _memory_payload(result: MemoryRow, current_project_id: str | None = None) -> MemoryPayload:
     metadata = result.get("metadata") or {}
     capture_kind = str(metadata.get("capture_kind") or "").strip() or "unknown"
     superseded_by = _int_or_none(result.get("superseded_by"))
     supersedes = _int_or_none(result.get("supersedes"))
     state = _memory_state(result, current_project_id)
-    provenance = {
-        "source_db": result.get("source_db"),
-        "project_id": result.get("project_id"),
+    provenance: MemoryProvenance = {
         "capture_kind": capture_kind,
         "source_type": "structured" if result.get("memory_kind") != "note" else "freeform",
-        "source_session_id": result.get("source_session_id"),
-        "source_message_id": result.get("source_message_id"),
-        "created_at": str(result.get("created_at")) if result.get("created_at") is not None else None,
-        "updated_at": str(result.get("updated_at")) if result.get("updated_at") is not None else None,
         "is_current_project": state["is_current_project"],
     }
     if capture_kind == "session_distillation":
@@ -1073,16 +1113,6 @@ def _merge_memory_results(
             result
             for result in merged
             if "project_id_mismatch" not in _memory_state(result, current_project_id)["stale_reasons"]
-        ]
-
-    if any(not _is_auto_capture_memory(result) for result in current_project_results):
-        merged = [
-            result
-            for result in merged
-            if not (
-                _memory_state(result, current_project_id)["is_current_project"]
-                and _is_auto_capture_memory(result)
-            )
         ]
 
     return _sort_memory_results(merged, current_project_id=current_project_id)[:limit]
@@ -1330,7 +1360,7 @@ def _search_code_results(
         return _tool_error("no_code_index", "no code index; run index_project first"), []
 
     try:
-        embeddings = _get_embedder().embed_code_sync([query])
+        embeddings = _get_embedder().embed_code_query_sync([query])
     except RuntimeError as e:
         return _tool_error("embedding_failed", f"embedding failed: {e}", operation="search_code"), []
 
@@ -1437,7 +1467,7 @@ def _index_project_impl(
     except RuntimeError as e:
         return _failure("embedding_provider_unavailable", str(e))
 
-    code_files, doc_files = collect_files(root_paths)
+    code_files, doc_files, discovered_skips = collect_files_with_skips(root_paths)
     if not code_files and not doc_files:
         return _failure("no_files_found", "no files found to index", paths=paths)
     _emit_progress(
@@ -1445,6 +1475,8 @@ def _index_project_impl(
         phase="file_discovery_complete",
         code_file_total=len(code_files),
         doc_file_total=len(doc_files),
+        code_skipped_total=sum(1 for skip in discovered_skips if skip["kind"] == "code"),
+        doc_skipped_total=sum(1 for skip in discovered_skips if skip["kind"] == "doc"),
         project_root=str(project_root),
     )
 
@@ -1465,24 +1497,41 @@ def _index_project_impl(
     for stale in sorted(set(doc_hashes) - current_doc_paths):
         db.delete_file_chunks(stale, kind="doc")
 
-    code_chunks: list[dict] = []
+    warnings = [
+        {
+            "kind": "file_skipped",
+            "path": _relative_to_project(Path(skip["path"]), project_root),
+            "file_kind": skip["kind"],
+            "reason": skip["reason"],
+        }
+        for skip in discovered_skips
+    ]
+    code_chunks: list[CodeChunk] = []
     code_embeddings_input: list[str] = []
-    code_updates: list[tuple[str, str, list[dict]]] = []
-    doc_chunks: list[dict] = []
+    code_updates: list[tuple[str, str, list[CodeChunk]]] = []
+    doc_chunks: list[DocChunk] = []
     doc_embeddings_input: list[str] = []
-    doc_updates: list[tuple[str, str, list[dict]]] = []
+    doc_updates: list[tuple[str, str, list[DocChunk]]] = []
     code_unchanged = 0
     doc_unchanged = 0
-    code_skipped = 0
-    doc_skipped = 0
+    code_skipped = sum(1 for skip in discovered_skips if skip["kind"] == "code")
+    doc_skipped = sum(1 for skip in discovered_skips if skip["kind"] == "doc")
     _emit_progress(progress_callback, phase="code_chunking_start", file_total=len(code_files))
 
     for path in code_files:
         rel_path = _relative_to_project(path, project_root)
         try:
             content = path.read_text(errors="replace")
-        except Exception:
+        except Exception as exc:
             code_skipped += 1
+            warnings.append(
+                {
+                    "kind": "file_skipped",
+                    "path": rel_path,
+                    "file_kind": "code",
+                    "reason": f"read failed: {exc}",
+                }
+            )
             continue
         digest = _content_hash(content)
         if code_hashes.get(rel_path) == digest:
@@ -1509,8 +1558,16 @@ def _index_project_impl(
         rel_path = _relative_to_project(path, project_root)
         try:
             content = path.read_text(errors="replace")
-        except Exception:
+        except Exception as exc:
             doc_skipped += 1
+            warnings.append(
+                {
+                    "kind": "file_skipped",
+                    "path": rel_path,
+                    "file_kind": "doc",
+                    "reason": f"read failed: {exc}",
+                }
+            )
             continue
         digest = _content_hash(content)
         if doc_hashes.get(rel_path) == digest:
@@ -1631,7 +1688,7 @@ def _index_project_impl(
             "indexed_code_chunks": db.code_chunk_count(),
             "indexed_doc_chunks": db.doc_count(),
         },
-        warnings=[],
+        warnings=warnings,
     )
 
 
@@ -2176,26 +2233,42 @@ def supersede_memory(
     if kind_error:
         return _failure_from_error(kind_error)
 
+    current_project_id = _ensure_project_id()
+    resolved = _resolve_superseded_memory(old_memory_int, current_project_id)
+    if isinstance(resolved, dict):
+        return _failure_from_error(resolved)
+    owner_db, owner_source_db, _old_memory = resolved
+
     content = summary if not details else f"{summary}\n\n{details}"
     try:
         embedding = _get_embedder().embed_text_sync([content])[0]
     except RuntimeError as e:
         return _failure("embedding_failed", f"embedding failed: {e}")
 
-    db = _get_user_db()
-    new_memory_id = db.remember_structured(
+    user_db = _get_user_db()
+    new_memory_id = user_db.remember_structured(
         summary=summary,
         content=content,
         embedding=embedding,
         tags=tags,
-        project_id=_ensure_project_id(),
+        project_id=current_project_id,
         memory_kind=memory_kind,
         metadata={"capture_kind": "manual", **(metadata or {})},
         source_session_id=source_session_id or None,
         source_message_id=source_message_id or None,
         supersedes=old_memory_int,
+        update_superseded=False,
     )
-    stored = db.get_memory(new_memory_id)
+    if not owner_db.set_memory_superseded_by(old_memory_int, new_memory_id):
+        user_db.forget(new_memory_id)
+        return _failure(
+            "supersede_failed",
+            f"failed to mark memory {old_memory_int} as superseded",
+            old_memory_id=old_memory_int,
+            source_db=owner_source_db,
+        )
+
+    stored = user_db.get_memory(new_memory_id)
     return _success(
         backend="user-sqlite",
         memory=_memory_payload(
@@ -2209,7 +2282,7 @@ def supersede_memory(
                 },
                 "user",
             ),
-            current_project_id=_ensure_project_id(),
+            current_project_id=current_project_id,
         ),
     )
 
@@ -2221,15 +2294,14 @@ def forget(memory_id: str) -> dict:
     sqlite_id = _int_or_none(memory_id)
     if sqlite_id is None:
         return _failure("invalid_memory_id", "memory_id must be an integer", memory_id=memory_id)
-    if sqlite_id is not None:
-        content = db.forget(sqlite_id)
-        if content:
-            return _success(
-                backend="project-sqlite",
-                deleted=True,
-                memory_id=sqlite_id,
-                content_preview=content[:200],
-            )
+    content = db.forget(sqlite_id)
+    if content:
+        return _success(
+            backend="project-sqlite",
+            deleted=True,
+            memory_id=sqlite_id,
+            content_preview=content[:200],
+        )
     user_db = _get_user_db()
     content = user_db.forget(sqlite_id)
     if content:
@@ -2355,7 +2427,13 @@ def cleanup_duplicate_auto_memories(limit: int = 20, apply: bool = False) -> dic
     if limit < 1:
         return _failure("invalid_limit", "limit must be at least 1", limit=limit)
 
-    groups = _duplicate_auto_memory_groups(_all_memory_payloads())[:limit]
+    payloads = _all_memory_payloads()
+    groups = _duplicate_auto_memory_groups(payloads)[:limit]
+    source_db_by_id = {
+        int(item.get("id")): str(item.get("source_db") or "user")
+        for item in payloads
+        if item.get("id") is not None
+    }
     results: list[dict] = []
     deleted_total = 0
     for group in groups:
@@ -2368,11 +2446,7 @@ def cleanup_duplicate_auto_memories(limit: int = 20, apply: bool = False) -> dic
         for memory_id in delete_ids:
             if not apply:
                 continue
-            source_db = "user"
-            for item in _all_memory_payloads():
-                if int(item.get("id") or 0) == int(memory_id):
-                    source_db = str(item.get("source_db") or "user")
-                    break
+            source_db = source_db_by_id.get(int(memory_id), "user")
             if _delete_memory_by_source_db(source_db, memory_id):
                 deleted_ids.append(memory_id)
         deleted_total += len(deleted_ids)

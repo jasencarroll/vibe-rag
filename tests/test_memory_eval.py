@@ -46,6 +46,12 @@ class MemoryEvalEmbedder:
     def embed_code_sync(self, texts: list[str]) -> list[list[float]]:
         return [self._vector(text) for text in texts]
 
+    def embed_code_query_sync(self, texts: list[str]) -> list[list[float]]:
+        return self.embed_code_sync(texts)
+
+    def close(self) -> None:
+        return None
+
 
 def _clear_all_memories() -> None:
     project_db = srv._get_db()

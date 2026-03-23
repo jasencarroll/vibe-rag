@@ -77,3 +77,28 @@ def test_get_user_db_creates_and_returns_db(tmp_path: Path, monkeypatch):
         if srv._user_db:
             srv._user_db.close()
         srv._user_db = old_db
+
+
+def test_cleanup_closes_embedder_and_clears_global():
+    class FakeEmbedder:
+        def __init__(self):
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    old_project_db = srv._project_db
+    old_user_db = srv._user_db
+    old_embedder = srv._embedder
+    srv._project_db = None
+    srv._user_db = None
+    fake = FakeEmbedder()
+    srv._embedder = fake
+    try:
+        srv._cleanup()
+        assert fake.closed is True
+        assert srv._embedder is None
+    finally:
+        srv._project_db = old_project_db
+        srv._user_db = old_user_db
+        srv._embedder = old_embedder

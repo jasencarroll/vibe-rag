@@ -42,13 +42,20 @@ def _status_label(ok: bool, warning: bool = False) -> str:
     return "fail"
 
 
-def _read_toml(path: Path) -> dict | None:
+def _read_toml_state(path: Path) -> tuple[dict | None, str]:
     if not path.exists():
-        return None
+        return None, "missing"
     try:
-        return tomllib.loads(path.read_text())
-    except (OSError, tomllib.TOMLDecodeError):
-        return None
+        return tomllib.loads(path.read_text()), "ok"
+    except OSError:
+        return None, "unreadable"
+    except tomllib.TOMLDecodeError:
+        return None, "corrupt"
+
+
+def _read_toml(path: Path) -> dict | None:
+    parsed, _ = _read_toml_state(path)
+    return parsed
 
 
 def _resolve_command(command: str) -> tuple[bool, str]:
@@ -64,9 +71,13 @@ def _resolve_command(command: str) -> tuple[bool, str]:
 
 
 def _project_mcp_command_status(project_root: Path) -> dict:
-    vibe_config = _read_toml(project_root / ".vibe" / "config.toml")
-    if not vibe_config:
-        return {"ok": False, "detail": "missing or unreadable .vibe/config.toml"}
+    vibe_config, state = _read_toml_state(project_root / ".vibe" / "config.toml")
+    if vibe_config is None:
+        if state == "corrupt":
+            return {"ok": False, "detail": "invalid TOML in .vibe/config.toml"}
+        if state == "unreadable":
+            return {"ok": False, "detail": "unreadable .vibe/config.toml"}
+        return {"ok": False, "detail": "missing .vibe/config.toml"}
 
     servers = vibe_config.get("mcp_servers")
     if not isinstance(servers, list):
@@ -116,9 +127,13 @@ def _vibe_cli_status() -> dict:
 
 
 def _project_vibe_hook_status(project_root: Path) -> dict:
-    vibe_config = _read_toml(project_root / ".vibe" / "config.toml")
-    if not vibe_config:
-        return {"ok": False, "warning": True, "detail": "missing or unreadable .vibe/config.toml"}
+    vibe_config, state = _read_toml_state(project_root / ".vibe" / "config.toml")
+    if vibe_config is None:
+        if state == "corrupt":
+            return {"ok": False, "warning": True, "detail": "invalid TOML in .vibe/config.toml"}
+        if state == "unreadable":
+            return {"ok": False, "warning": True, "detail": "unreadable .vibe/config.toml"}
+        return {"ok": False, "warning": True, "detail": "missing .vibe/config.toml"}
 
     background = vibe_config.get("background_mcp_hook")
     session_memory = vibe_config.get("session_memory_hook")
@@ -359,22 +374,22 @@ def init(name: str | None):
         gitignore.write_text("\n".join(ignore_lines) + "\n")
 
     click.echo(f"\n  ✓ {name} created at {target}\n")
-    click.echo(f"    AGENTS.md          — project coding rules")
-    click.echo(f"    .vibe/config.toml  — Vibe MCP + hooks")
-    click.echo(f"    .codex/            — Codex MCP + session-start hook")
-    click.echo(f"    .claude/           — Claude Code session-start hook")
-    click.echo(f"    .gemini/           — Gemini CLI MCP + session-start hook")
-    click.echo(f"    .mcp.json          — Claude Code MCP server config")
-    click.echo(f"\n  Client support:")
-    click.echo(f"    Vibe is first-class and expects the mistral-vibe fork for session bootstrap.")
-    click.echo(f"    Codex, Claude Code, and Gemini CLI scaffolding are experimental.")
+    click.echo("    AGENTS.md          — project coding rules")
+    click.echo("    .vibe/config.toml  — Vibe MCP + hooks")
+    click.echo("    .codex/            — Codex MCP + session-start hook")
+    click.echo("    .claude/           — Claude Code session-start hook")
+    click.echo("    .gemini/           — Gemini CLI MCP + session-start hook")
+    click.echo("    .mcp.json          — Claude Code MCP server config")
+    click.echo("\n  Client support:")
+    click.echo("    Vibe is first-class and expects the mistral-vibe fork for session bootstrap.")
+    click.echo("    Codex, Claude Code, and Gemini CLI scaffolding are experimental.")
     recommended = _recommended_provider()
-    click.echo(f"\n  Embeddings:")
+    click.echo("\n  Embeddings:")
     click.echo(f"    Recommended provider: {recommended['provider']} ({recommended['reason']})")
     click.echo(f"    Next step: {_provider_setup_hint(recommended['provider'])}")
-    click.echo(f"\n  Next:")
+    click.echo("\n  Next:")
     click.echo(f"    cd {target}")
-    click.echo(f"    vibe")
+    click.echo("    vibe")
 
 def _initialize_git_repo(target: Path) -> None:
     if (target / ".git").exists():
@@ -599,7 +614,7 @@ def setup_ollama(model: str):
 
     click.echo(f"  Pulled {model}")
     click.echo("\n  MCP env:")
-    click.echo(f'    VIBE_RAG_EMBEDDING_PROVIDER = "ollama"')
+    click.echo('    VIBE_RAG_EMBEDDING_PROVIDER = "ollama"')
     click.echo(f'    VIBE_RAG_EMBEDDING_MODEL = "{model}"')
     click.echo('    VIBE_RAG_EMBEDDING_DIMENSIONS = "1024"')
     click.echo()

@@ -41,6 +41,17 @@ def _truncate_context(text: str, limit: int = 1800) -> str:
     return text[: limit - 1].rstrip() + "…"
 
 
+def _payload_error_message(payload: dict[str, Any]) -> str:
+    raw_error = payload.get("error")
+    if isinstance(raw_error, dict):
+        message = raw_error.get("message")
+        if isinstance(message, str) and message.strip():
+            return message
+    if isinstance(raw_error, str) and raw_error.strip():
+        return raw_error
+    return "unknown error"
+
+
 def _format_context(payload: dict[str, Any]) -> str:
     lines: list[str] = []
 
@@ -134,9 +145,7 @@ def render_session_start_hook(target_format: str, hook_input: dict[str, Any]) ->
         )
 
     if not isinstance(payload, dict) or not payload.get("ok"):
-        error = "unknown error"
-        if isinstance(payload, dict):
-            error = str(payload.get("error") or error)
+        error = _payload_error_message(payload) if isinstance(payload, dict) else "unknown error"
         return _response_for_format(
             target_format,
             "vibe-rag session bootstrap did not return usable context.",

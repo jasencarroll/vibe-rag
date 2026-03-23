@@ -3,6 +3,8 @@ from pathlib import Path
 
 from vibe_rag.tools import (
     _embed_sync_with_progress,
+    _merge_memory_results,
+    _query_terms,
     _rrf_merge,
     _index_project_impl,
     cleanup_duplicate_auto_memories,
@@ -39,6 +41,24 @@ def test_remember_and_search_memory(tmp_db, mock_embedder):
     result = search_memory("what is good for vectors?")
     assert result["ok"] is True
     assert result["results"][0]["summary"] == "sqlite-vec is local and simple"
+
+
+def test_fake_embedder_prefers_semantically_closer_memory(tmp_db, mock_embedder):
+    remember_structured(
+        summary="gateway token validation",
+        details="gateway validates bearer tokens before routing requests",
+        memory_kind="decision",
+    )
+    remember_structured(
+        summary="billing invoice generation",
+        details="billing creates invoices and receipts for customer orders",
+        memory_kind="decision",
+    )
+
+    result = search_memory("who validates bearer tokens")
+
+    assert result["ok"] is True
+    assert result["results"][0]["summary"] == "gateway token validation"
 
 
 def test_remember_inferrs_constraint_kind_from_freeform_content(tmp_db, mock_embedder):
@@ -535,7 +555,7 @@ def test_load_session_context_bundles_memory_code_and_docs(tmp_db, mock_embedder
 
     assert result["ok"] is True
     assert result["memories"][0]["content"] == "billing uses invoices and customer ids"
-    assert result["memories"][0]["provenance"]["project_id"] == result["project_id"]
+    assert result["memories"][0]["project_id"] == result["project_id"]
     assert result["code"][0]["file_path"] == "billing.py"
     assert result["code"][0]["start_line"] == 1
     assert result["code"][0]["rank_score"] > 0
@@ -1045,7 +1065,6 @@ def test_supersede_memory_marks_replacement(tmp_db, mock_embedder):
         memory_kind="decision",
         metadata={"capture_kind": "manual"},
     )
-    first = srv._get_user_db().get_memory(first_id)
     replacement = supersede_memory(
         old_memory_id=str(first_id),
         summary="use sqlite for local search and user memory",
@@ -1054,10 +1073,40 @@ def test_supersede_memory_marks_replacement(tmp_db, mock_embedder):
 
     assert replacement["ok"] is True
     assert replacement["memory"]["supersedes"] == first_id
+    assert srv._get_user_db().get_memory(first_id)["superseded_by"] == replacement["memory"]["id"]
     refreshed = load_session_context("sqlite local search", memory_limit=3, code_limit=0, docs_limit=0)
     assert refreshed["memories"][0]["summary"] == "use sqlite for local search and user memory"
     assert refreshed["memories"][0]["provenance"]["source_type"] == "manual_structured"
     assert refreshed["memories"][0]["is_superseded"] is False
+
+
+def test_supersede_memory_marks_project_db_memory_as_superseded(tmp_db, mock_embedder):
+    import vibe_rag.server as srv
+
+    first_id = srv._get_db().remember_structured(
+        summary="gateway owns token validation",
+        content="gateway owns token validation",
+        embedding=[0.0] * 1024,
+        project_id=srv._ensure_project_id(),
+        memory_kind="decision",
+        metadata={"capture_kind": "manual"},
+    )
+
+    replacement = supersede_memory(
+        old_memory_id=str(first_id),
+        summary="auth service owns token validation",
+        memory_kind="decision",
+    )
+
+    assert replacement["ok"] is True
+    assert replacement["memory"]["source_db"] == "user"
+    assert replacement["memory"]["supersedes"] == first_id
+    assert srv._get_db().get_memory(first_id)["superseded_by"] == replacement["memory"]["id"]
+
+    refreshed = load_session_context("token validation", memory_limit=5, code_limit=0, docs_limit=0)
+    summaries = [memory["summary"] for memory in refreshed["memories"]]
+    assert "auth service owns token validation" in summaries
+    assert "gateway owns token validation" not in summaries
 
 
 def test_remember_empty_content(tmp_db, mock_embedder):
@@ -1176,7 +1225,7 @@ def test_load_session_context_downranks_cross_project_user_memory(tmp_db, mock_e
             memory_kind="constraint",
             metadata={"capture_kind": "manual"},
         )
-        other_id = srv._get_user_db().remember_structured(
+        srv._get_user_db().remember_structured(
             summary="auth constraint for source repo",
             content="auth constraint for source repo",
             embedding=[0.0] * 1024,
@@ -1223,10 +1272,10 @@ def test_load_session_context_filters_stale_cross_project_memory_when_current_pr
     assert result["memories"][0]["provenance"]["is_current_project"] is True
 
 
-def test_load_session_context_filters_auto_memories_when_durable_memory_exists(tmp_db, mock_embedder):
-    save_session_summary(
-        task="search memory for demo tokens",
-        turns=[{"user": "search memory for demo tokens", "assistant": "Found demo token note"}],
+def test_load_session_context_retains_auto_memories_when_durable_memory_exists(tmp_db, mock_embedder):
+    save_session_memory(
+        task="Where should demo tokens be used?",
+        response="Only demo tokens are allowed in this smoke-test API and production tokens are rejected.",
         source_session_id="sess-demo-memory",
         source_message_id="msg-demo-memory",
     )
@@ -1236,10 +1285,37 @@ def test_load_session_context_filters_auto_memories_when_durable_memory_exists(t
 
     assert result["memories"][0]["memory_kind"] == "constraint"
     assert result["memories"][0]["provenance"]["capture_kind"] == "freeform"
-    assert all(
-        item["provenance"]["capture_kind"] not in {"session_rollup", "session_distillation"}
+    assert any(
+        item["provenance"]["capture_kind"] in {"session_rollup", "session_distillation"}
         for item in result["memories"][1:]
     )
+
+
+def test_merge_memory_results_keeps_auto_captures_visible_when_manual_memory_exists():
+    manual = {
+        "id": 1,
+        "source_db": "project",
+        "project_id": "demo-repo",
+        "memory_kind": "decision",
+        "summary": "gateway owns token validation",
+        "content": "gateway owns token validation",
+        "metadata": {"capture_kind": "manual"},
+        "updated_at": "2026-03-23 10:00:00",
+    }
+    auto = {
+        "id": 2,
+        "source_db": "user",
+        "project_id": "demo-repo",
+        "memory_kind": "summary",
+        "summary": "session summary for auth work",
+        "content": "Session covered auth validation and refresh issuance.",
+        "metadata": {"capture_kind": "session_rollup"},
+        "updated_at": "2026-03-23 10:05:00",
+    }
+
+    merged = _merge_memory_results([manual], [auto], limit=5, current_project_id="demo-repo")
+
+    assert [item["id"] for item in merged] == [1, 2]
 
 
 def test_memory_cleanup_report_surfaces_freeform_and_cross_project_candidates(tmp_db, mock_embedder):
@@ -1376,6 +1452,49 @@ def test_cleanup_duplicate_auto_memories_reports_and_deletes_duplicates(tmp_db, 
     assert applied["deleted_total"] == 1
     assert len(applied["groups"][0]["deleted_ids"]) == 1
     assert report["summary"]["duplicate_auto_memory_groups"] == 0
+
+
+def test_cleanup_duplicate_auto_memories_only_loads_payloads_once(tmp_db, monkeypatch):
+    import vibe_rag.tools as tools_mod
+
+    payloads = [
+        {
+            "id": 1,
+            "source_db": "project",
+            "project_id": "sink-repo",
+            "summary": "Session summary: duplicate",
+            "content": "Session covered 1 turns.",
+            "updated_at": "2026-03-23 10:00:00",
+            "provenance": {"capture_kind": "session_rollup"},
+        },
+        {
+            "id": 2,
+            "source_db": "user",
+            "project_id": "sink-repo",
+            "summary": "Session summary: duplicate",
+            "content": "Session covered 1 turns.",
+            "updated_at": "2026-03-23 10:01:00",
+            "provenance": {"capture_kind": "session_rollup"},
+        },
+    ]
+    calls = {"payloads": 0}
+
+    def fake_all_memory_payloads():
+        calls["payloads"] += 1
+        return payloads
+
+    monkeypatch.setattr(tools_mod, "_all_memory_payloads", fake_all_memory_payloads)
+    monkeypatch.setattr(tools_mod, "_delete_memory_by_source_db", lambda source_db, memory_id: True)
+
+    result = cleanup_duplicate_auto_memories(limit=5, apply=True)
+
+    assert result["ok"] is True
+    assert result["deleted_total"] == 1
+    assert calls["payloads"] == 1
+
+
+def test_query_terms_keeps_two_character_tokens():
+    assert _query_terms("CI QA DB AI ML pipeline") == {"ci", "qa", "db", "ai", "ml", "pipeline"}
 
 
 def test_project_status_includes_index_metadata(tmp_db, mock_embedder, tmp_path: Path):
@@ -1584,6 +1703,9 @@ def test_index_project_reports_skipped_unreadable_files(tmp_db, mock_embedder, t
         os.chdir(old_cwd)
 
     assert "1 code skipped" in result["summary"]
+    assert result["warnings"][0]["file_kind"] == "code"
+    assert result["warnings"][0]["path"] == "bad.py"
+    assert "read failed" in result["warnings"][0]["reason"]
 
 
 def test_index_project_does_not_persist_new_hashes_when_embedding_fails(

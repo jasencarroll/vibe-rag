@@ -4,6 +4,7 @@ import subprocess
 import sys
 
 from click.testing import CliRunner
+import vibe_rag.cli as cli
 from vibe_rag.cli import main
 
 
@@ -219,6 +220,31 @@ def test_cli_doctor_fix_invokes_setup_ollama(monkeypatch):
     assert result.exit_code == 0
     assert invoked["command"] == "setup-ollama"
     assert invoked["kwargs"]["model"] == "qwen3-embedding:0.6b"
+
+
+def test_project_mcp_command_status_reports_invalid_toml(tmp_path: Path):
+    vibe_dir = tmp_path / ".vibe"
+    vibe_dir.mkdir()
+    (vibe_dir / "config.toml").write_text("[mcp_servers\nname = 'memory'\n")
+
+    status = cli._project_mcp_command_status(tmp_path)
+
+    assert status["ok"] is False
+    assert status["detail"] == "invalid TOML in .vibe/config.toml"
+
+
+def test_project_vibe_hook_status_distinguishes_missing_and_invalid_toml(tmp_path: Path):
+    missing = cli._project_vibe_hook_status(tmp_path)
+    assert missing["ok"] is False
+    assert missing["detail"] == "missing .vibe/config.toml"
+
+    vibe_dir = tmp_path / ".vibe"
+    vibe_dir.mkdir()
+    (vibe_dir / "config.toml").write_text("[background_mcp_hook\nenabled = true\n")
+
+    invalid = cli._project_vibe_hook_status(tmp_path)
+    assert invalid["ok"] is False
+    assert invalid["detail"] == "invalid TOML in .vibe/config.toml"
 
 
 def test_cli_doctor_reports_stale_state(monkeypatch):
@@ -607,6 +633,33 @@ def test_cli_hook_session_start_categorizes_failures(monkeypatch):
 
     assert result.exit_code == 0
     assert "embedding failure" in result.output
+
+
+def test_cli_hook_session_start_extracts_structured_error_message(monkeypatch):
+    runner = CliRunner()
+
+    monkeypatch.setattr(
+        "vibe_rag.hook_bridge.load_session_context",
+        lambda **kwargs: {
+            "ok": False,
+            "error": {
+                "code": "no_memories",
+                "message": "no memories stored yet",
+                "details": {},
+            },
+        },
+    )
+
+    result = runner.invoke(
+        main,
+        ["hook-session-start", "--format", "codex"],
+        input='{"source":"startup"}',
+    )
+
+    assert result.exit_code == 0
+    assert "empty retrieval" in result.output
+    assert "no memories stored yet" in result.output
+    assert "'code': 'no_memories'" not in result.output
 
 
 def test_cli_hook_session_start_handles_bootstrap_exceptions(monkeypatch):

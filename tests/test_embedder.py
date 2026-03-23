@@ -354,16 +354,21 @@ def test_voyage_provider_uses_document_and_query_modes(monkeypatch):
 
     provider.embed_text_sync(["hello world"])
     provider.embed_code_sync(["def hello(): pass"])
+    provider.embed_code_query_sync(["def hello(): pass"])
 
     first = requests[0]
     second = requests[1]
+    third = requests[2]
     assert first.url == httpx.URL("https://api.voyageai.com/v1/embeddings")
     assert second.url == httpx.URL("https://api.voyageai.com/v1/embeddings")
+    assert third.url == httpx.URL("https://api.voyageai.com/v1/embeddings")
     assert b'"model":"voyage-4"' in first.content
     assert b'"input_type":"document"' in first.content
     assert b'"output_dimension":1024' in first.content
     assert b'"model":"voyage-code-3"' in second.content
-    assert b'"input_type":"query"' in second.content
+    assert b'"input_type":"document"' in second.content
+    assert b'"model":"voyage-code-3"' in third.content
+    assert b'"input_type":"query"' in third.content
 
 
 def test_embedding_provider_status_for_voyage(monkeypatch):
@@ -467,3 +472,22 @@ def test_voyage_provider_retries_with_smaller_batches_on_token_cap():
 
     assert len(result) == 2
     assert requests == [2, 1, 1]
+
+
+@pytest.mark.parametrize(
+    ("provider_factory", "client_attr"),
+    [
+        (lambda: MistralEmbeddingProvider(api_key="test-key"), "_client"),
+        (lambda: OpenAIEmbeddingProvider(api_key="test-key"), "_client"),
+        (lambda: VoyageEmbeddingProvider(api_key="test-key"), "_client"),
+    ],
+)
+def test_hosted_embedding_providers_close_httpx_clients(provider_factory, client_attr):
+    provider = provider_factory()
+    client = httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, json={})))
+    setattr(provider, client_attr, client)
+
+    provider.close()
+
+    assert getattr(provider, client_attr) is None
+    assert client.is_closed is True

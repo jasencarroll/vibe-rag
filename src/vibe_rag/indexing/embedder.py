@@ -124,6 +124,12 @@ class EmbeddingProvider(Protocol):
         self, texts: list[str], *, progress_callback: ProgressCallback | None = None
     ) -> list[list[float]]: ...
 
+    def embed_code_query_sync(
+        self, texts: list[str], *, progress_callback: ProgressCallback | None = None
+    ) -> list[list[float]]: ...
+
+    def close(self) -> None: ...
+
 
 class MistralEmbeddingProvider:
     def __init__(self, api_key: str, model: str = DEFAULT_MODEL):
@@ -198,6 +204,16 @@ class MistralEmbeddingProvider:
         self, texts: list[str], *, progress_callback: ProgressCallback | None = None
     ) -> list[list[float]]:
         return self._embed_all(texts, input_kind="code", progress_callback=progress_callback)
+
+    def embed_code_query_sync(
+        self, texts: list[str], *, progress_callback: ProgressCallback | None = None
+    ) -> list[list[float]]:
+        return self._embed_all(texts, input_kind="code", progress_callback=progress_callback)
+
+    def close(self) -> None:
+        if self._client is not None:
+            self._client.close()
+            self._client = None
 
 
 class OllamaEmbeddingProvider:
@@ -280,6 +296,16 @@ class OllamaEmbeddingProvider:
     ) -> list[list[float]]:
         return self._embed_all(texts, input_kind="code", progress_callback=progress_callback)
 
+    def embed_code_query_sync(
+        self, texts: list[str], *, progress_callback: ProgressCallback | None = None
+    ) -> list[list[float]]:
+        return self._embed_all(texts, input_kind="code", progress_callback=progress_callback)
+
+    def close(self) -> None:
+        close = getattr(self._client, "close", None)
+        if callable(close):
+            close()
+
 
 class OpenAIEmbeddingProvider:
     def __init__(self, api_key: str, model: str = DEFAULT_OPENAI_MODEL, dimensions: int | None = None):
@@ -355,6 +381,16 @@ class OpenAIEmbeddingProvider:
         self, texts: list[str], *, progress_callback: ProgressCallback | None = None
     ) -> list[list[float]]:
         return self._embed_all(texts, input_kind="code", progress_callback=progress_callback)
+
+    def embed_code_query_sync(
+        self, texts: list[str], *, progress_callback: ProgressCallback | None = None
+    ) -> list[list[float]]:
+        return self._embed_all(texts, input_kind="code", progress_callback=progress_callback)
+
+    def close(self) -> None:
+        if self._client is not None:
+            self._client.close()
+            self._client = None
 
 
 class VoyageEmbeddingProvider:
@@ -497,10 +533,26 @@ class VoyageEmbeddingProvider:
         return self._embed_all(
             texts,
             model=self._code_model,
+            input_type="document",
+            input_kind="code",
+            progress_callback=progress_callback,
+        )
+
+    def embed_code_query_sync(
+        self, texts: list[str], *, progress_callback: ProgressCallback | None = None
+    ) -> list[list[float]]:
+        return self._embed_all(
+            texts,
+            model=self._code_model,
             input_type="query",
             input_kind="code",
             progress_callback=progress_callback,
         )
+
+    def close(self) -> None:
+        if self._client is not None:
+            self._client.close()
+            self._client = None
 
 
 def create_embedding_provider() -> EmbeddingProvider:

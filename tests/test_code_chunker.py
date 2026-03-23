@@ -6,8 +6,6 @@ from vibe_rag.indexing.code_chunker import (
     chunk_code,
     _subsplit_large_chunks,
     _try_tree_sitter_chunk,
-    SLIDING_WINDOW_SIZE,
-    SLIDING_WINDOW_OVERLAP,
     MAX_CHUNK_LINES,
 )
 
@@ -18,11 +16,14 @@ def test_sliding_window_basic():
     lines = [f"line {i}" for i in range(120)]
     content = "\n".join(lines)
     chunks = chunk_code_sliding_window(content, "test.py", window=60, overlap=10)
-    assert len(chunks) == 2
+    assert len(chunks) == 3
     assert chunks[0]["start_line"] == 1
     assert chunks[0]["end_line"] == 60
     assert chunks[1]["start_line"] == 51
-    assert chunks[1]["end_line"] == 120
+    assert chunks[1]["end_line"] == 110
+    assert chunks[2]["start_line"] == 101
+    assert chunks[2]["end_line"] == 120
+    assert max(chunk["end_line"] - chunk["start_line"] + 1 for chunk in chunks) <= 60
 
 
 def test_sliding_window_small_file():
@@ -73,7 +74,7 @@ class TestChunkCodeSlidingWindow:
         assert chunks[0]["symbol"] is None
 
     def test_chunk_indices_sequential(self):
-        lines = [f"a\n" for _ in range(150)]
+        lines = ["a\n" for _ in range(150)]
         content = "".join(lines)
         chunks = chunk_code_sliding_window(content, "f.py")
         indices = [c["chunk_index"] for c in chunks]
@@ -84,6 +85,11 @@ class TestChunkCodeSlidingWindow:
         content = "".join(lines)
         chunks = chunk_code_sliding_window(content, "f.py", window=10, overlap=2)
         assert len(chunks) >= 2
+
+    def test_last_chunk_does_not_absorb_past_window_size(self):
+        lines = [f"line {i}\n" for i in range(119)]
+        chunks = chunk_code_sliding_window("".join(lines), "f.py", window=60, overlap=10)
+        assert max(chunk["end_line"] - chunk["start_line"] + 1 for chunk in chunks) <= 60
 
 
 class TestTryTreeSitterChunk:

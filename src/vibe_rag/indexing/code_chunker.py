@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import logging
 
+from vibe_rag.types import CodeChunk
+
 logger = logging.getLogger(__name__)
 
 LANGUAGE_MAP: dict[str, str] = {
@@ -20,20 +22,21 @@ SYMBOL_NODE_TYPES: set[str] = {
 }
 
 
-def chunk_code_sliding_window(content: str, file_path: str, window: int = SLIDING_WINDOW_SIZE, overlap: int = SLIDING_WINDOW_OVERLAP) -> list[dict]:
+def chunk_code_sliding_window(
+    content: str,
+    file_path: str,
+    window: int = SLIDING_WINDOW_SIZE,
+    overlap: int = SLIDING_WINDOW_OVERLAP,
+) -> list[CodeChunk]:
     lines = content.splitlines(keepends=True)
     if not lines:
         return []
-    chunks = []
+    chunks: list[CodeChunk] = []
+    step = max(1, window - overlap)
     start = 0
     chunk_index = 0
     while start < len(lines):
-        next_start = start + window - overlap
-        # If the next chunk would be smaller than a full window, absorb into current chunk
-        if next_start >= len(lines) or len(lines) - next_start < window:
-            end = len(lines)
-        else:
-            end = min(start + window, len(lines))
+        end = min(start + window, len(lines))
         chunk_content = "".join(lines[start:end])
         chunks.append({
             "file_path": file_path, "chunk_index": chunk_index, "content": chunk_content,
@@ -42,11 +45,11 @@ def chunk_code_sliding_window(content: str, file_path: str, window: int = SLIDIN
         chunk_index += 1
         if end >= len(lines):
             break
-        start = next_start
+        start += step
     return chunks
 
 
-def _try_tree_sitter_chunk(content: str, file_path: str, language: str) -> list[dict] | None:
+def _try_tree_sitter_chunk(content: str, file_path: str, language: str) -> list[CodeChunk] | None:
     ts_lang = LANGUAGE_MAP.get(language)
     if not ts_lang:
         return None
@@ -62,7 +65,7 @@ def _try_tree_sitter_chunk(content: str, file_path: str, language: str) -> list[
     tree = parser.parse(content.encode())
     root = tree.root_node
     lines = content.splitlines(keepends=True)
-    chunks = []
+    chunks: list[CodeChunk] = []
     chunk_index = 0
 
     def walk(node):
@@ -91,9 +94,9 @@ def _try_tree_sitter_chunk(content: str, file_path: str, language: str) -> list[
     return chunks
 
 
-def _subsplit_large_chunks(chunks: list[dict]) -> list[dict]:
+def _subsplit_large_chunks(chunks: list[CodeChunk]) -> list[CodeChunk]:
     """If any chunk exceeds MAX_CHUNK_LINES, sub-split it with sliding window."""
-    result = []
+    result: list[CodeChunk] = []
     idx = 0
     for chunk in chunks:
         line_count = chunk["content"].count("\n") + 1
@@ -118,7 +121,7 @@ def _subsplit_large_chunks(chunks: list[dict]) -> list[dict]:
     return result
 
 
-def chunk_code(content: str, file_path: str, language: str | None = None) -> list[dict]:
+def chunk_code(content: str, file_path: str, language: str | None = None) -> list[CodeChunk]:
     if language:
         ts_chunks = _try_tree_sitter_chunk(content, file_path, language)
         if ts_chunks:

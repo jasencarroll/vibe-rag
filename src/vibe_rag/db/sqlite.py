@@ -6,6 +6,7 @@ import sqlite3
 from pathlib import Path
 
 import sqlite_vec
+from vibe_rag.types import CodeChunk, DocChunk, MemoryRow, RankedCodeResult, RankedDocResult
 
 
 class SqliteVecDB:
@@ -196,20 +197,29 @@ class SqliteVecDB:
             return {}
         return parsed if isinstance(parsed, dict) else {}
 
-    def _row_to_memory(self, row) -> dict:
-        result = dict(row)
+    def _int_or_none(self, value: object) -> int | None:
+        try:
+            return int(value) if value is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    def _row_to_memory(self, row) -> MemoryRow:
+        result: MemoryRow = dict(row)
         result["metadata"] = self._decode_metadata_json(result.pop("metadata_json", None))
+        result["id"] = int(result["id"])
+        result["supersedes"] = self._int_or_none(result.get("supersedes"))
+        result["superseded_by"] = self._int_or_none(result.get("superseded_by"))
         return result
 
     def _validate_embedding_count(
-        self, items: list[dict], embeddings: list[list[float]], *, kind: str
+        self, items: list[CodeChunk] | list[DocChunk], embeddings: list[list[float]], *, kind: str
     ) -> None:
         if len(items) != len(embeddings):
             raise RuntimeError(
                 f"Embedding count mismatch for {kind}: {len(items)} items but {len(embeddings)} embeddings"
             )
 
-    def upsert_chunks(self, chunks: list[dict], embeddings: list[list[float]]) -> None:
+    def upsert_chunks(self, chunks: list[CodeChunk], embeddings: list[list[float]]) -> None:
         self._validate_embedding_count(chunks, embeddings, kind="code chunks")
         conn = self._get_conn()
         for chunk, embedding in zip(chunks, embeddings):
@@ -234,7 +244,9 @@ class SqliteVecDB:
             )
         conn.commit()
 
-    def search_code(self, query_embedding: list[float], limit: int = 10, language: str | None = None) -> list[dict]:
+    def search_code(
+        self, query_embedding: list[float], limit: int = 10, language: str | None = None
+    ) -> list[RankedCodeResult]:
         conn = self._get_conn()
         serialized = sqlite_vec.serialize_float32(query_embedding)
 
@@ -272,7 +284,7 @@ class SqliteVecDB:
         conn = self._get_conn()
         return conn.execute("SELECT COUNT(*) FROM code_chunks").fetchone()[0]
 
-    def lexical_search_code(self, terms: list[str], limit: int = 10) -> list[dict]:
+    def lexical_search_code(self, terms: list[str], limit: int = 10) -> list[RankedCodeResult]:
         if not terms:
             return []
         conn = self._get_conn()
@@ -282,9 +294,9 @@ class SqliteVecDB:
             FROM code_chunks
             """
         ).fetchall()
-        results: list[dict] = []
+        results: list[RankedCodeResult] = []
         for row in rows:
-            item = dict(row)
+            item: RankedCodeResult = dict(row)
             haystack = f"{item['file_path']} {item['content']}".lower()
             matches = sum(1 for term in terms if term in haystack)
             if matches == 0:
@@ -324,6 +336,7 @@ class SqliteVecDB:
         source_session_id: str | None = None,
         source_message_id: str | None = None,
         supersedes: int | None = None,
+        update_superseded: bool = True,
     ) -> int:
         conn = self._get_conn()
         cursor = conn.execute(
@@ -351,7 +364,7 @@ class SqliteVecDB:
             "INSERT INTO memories_vec (id, embedding) VALUES (?, ?)",
             (row_id, sqlite_vec.serialize_float32(embedding)),
         )
-        if supersedes is not None:
+        if supersedes is not None and update_superseded:
             conn.execute(
                 "UPDATE memories SET superseded_by = ?, updated_at = datetime('now') WHERE id = ?",
                 (row_id, supersedes),
@@ -359,13 +372,22 @@ class SqliteVecDB:
         conn.commit()
         return row_id
 
+    def set_memory_superseded_by(self, memory_id: int, superseded_by: int) -> bool:
+        conn = self._get_conn()
+        cursor = conn.execute(
+            "UPDATE memories SET superseded_by = ?, updated_at = datetime('now') WHERE id = ?",
+            (superseded_by, memory_id),
+        )
+        conn.commit()
+        return cursor.rowcount > 0
+
     def search_memories(
         self,
         query_embedding: list[float],
         limit: int = 10,
         include_superseded: bool = False,
         project_id: str | None = None,
-    ) -> list[dict]:
+    ) -> list[MemoryRow]:
         conn = self._get_conn()
         serialized = sqlite_vec.serialize_float32(query_embedding)
         superseded_filter = "" if include_superseded else "AND m.superseded_by IS NULL"
@@ -388,7 +410,7 @@ class SqliteVecDB:
             results.append(self._row_to_memory(row))
         return results
 
-    def get_memory(self, memory_id: int) -> dict | None:
+    def get_memory(self, memory_id: int) -> MemoryRow | None:
         conn = self._get_conn()
         row = conn.execute("SELECT * FROM memories WHERE id = ?", (memory_id,)).fetchone()
         if not row:
@@ -397,7 +419,7 @@ class SqliteVecDB:
 
     def get_memory_by_source(
         self, source_session_id: str, source_message_id: str
-    ) -> dict | None:
+    ) -> MemoryRow | None:
         conn = self._get_conn()
         row = conn.execute(
             """
@@ -434,7 +456,7 @@ class SqliteVecDB:
         limit: int = 20,
         include_superseded: bool = False,
         project_id: str | None = None,
-    ) -> list[dict]:
+    ) -> list[MemoryRow]:
         conn = self._get_conn()
         superseded_filter = "" if include_superseded else "AND superseded_by IS NULL"
         project_filter = "" if project_id is None else "AND project_id = ?"
@@ -461,7 +483,7 @@ class SqliteVecDB:
 
     # --- Docs ---
 
-    def upsert_docs(self, chunks: list[dict], embeddings: list[list[float]]) -> None:
+    def upsert_docs(self, chunks: list[DocChunk], embeddings: list[list[float]]) -> None:
         self._validate_embedding_count(chunks, embeddings, kind="doc chunks")
         conn = self._get_conn()
         for chunk, embedding in zip(chunks, embeddings):
@@ -477,7 +499,7 @@ class SqliteVecDB:
             )
         conn.commit()
 
-    def search_docs(self, query_embedding: list[float], limit: int = 10) -> list[dict]:
+    def search_docs(self, query_embedding: list[float], limit: int = 10) -> list[RankedDocResult]:
         conn = self._get_conn()
         serialized = sqlite_vec.serialize_float32(query_embedding)
         rows = conn.execute(
@@ -499,7 +521,7 @@ class SqliteVecDB:
         conn = self._get_conn()
         return conn.execute("SELECT COUNT(*) FROM docs").fetchone()[0]
 
-    def lexical_search_docs(self, terms: list[str], limit: int = 10) -> list[dict]:
+    def lexical_search_docs(self, terms: list[str], limit: int = 10) -> list[RankedDocResult]:
         if not terms:
             return []
         conn = self._get_conn()
@@ -509,9 +531,9 @@ class SqliteVecDB:
             FROM docs
             """
         ).fetchall()
-        results: list[dict] = []
+        results: list[RankedDocResult] = []
         for row in rows:
-            item = dict(row)
+            item: RankedDocResult = dict(row)
             haystack = f"{item['file_path']} {item['content']}".lower()
             matches = sum(1 for term in terms if term in haystack)
             if matches == 0:
@@ -578,7 +600,9 @@ class SqliteVecDB:
 
     # --- Compat aliases ---
 
-    def search(self, query_embedding: list[float], limit: int = 10, language: str | None = None) -> list[dict]:
+    def search(
+        self, query_embedding: list[float], limit: int = 10, language: str | None = None
+    ) -> list[RankedCodeResult]:
         return self.search_code(query_embedding, limit, language)
 
     def clear(self) -> None:

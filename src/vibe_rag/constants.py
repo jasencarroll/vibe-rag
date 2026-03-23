@@ -39,9 +39,6 @@ EXT_TO_LANG = {
 # Maximum file size (in bytes) to consider for indexing
 MAX_FILE_SIZE = 100_000
 
-# Embedding dimension (codestral-embed default output)
-EMBEDDING_DIM = 1536
-
 # Doc chunking
 DOC_CHUNK_SIZE = 2000
 DOC_CHUNK_OVERLAP = 200

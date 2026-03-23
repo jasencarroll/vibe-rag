@@ -8,6 +8,7 @@ from vibe_rag.chunking import (
     chunk_plain_text,
     chunk_doc,
     collect_files,
+    collect_files_with_skips,
     _should_include_file,
 )
 
@@ -145,6 +146,31 @@ class TestCollectFiles:
         code, _ = collect_files([a, b])
         names = {f.name for f in code}
         assert names == {"one.py", "two.py"}
+
+    def test_collect_files_reports_permission_skips(self, tmp_path: Path, monkeypatch):
+        blocked = tmp_path / "blocked.py"
+        blocked.write_text("print(1)\n")
+
+        original_stat = Path.stat
+
+        def flaky_stat(self, *args, **kwargs):
+            if self == blocked and kwargs.get("follow_symlinks", True):
+                raise PermissionError("no access")
+            return original_stat(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "stat", flaky_stat)
+
+        code, docs, skipped = collect_files_with_skips([tmp_path])
+
+        assert code == []
+        assert docs == []
+        assert skipped == [
+            {
+                "path": str(blocked),
+                "kind": "code",
+                "reason": "permission denied during stat: no access",
+            }
+        ]
 
 
 class TestShouldIncludeFile:

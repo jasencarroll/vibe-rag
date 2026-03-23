@@ -90,6 +90,7 @@ def _ensure_project_id() -> str:
 
 
 def _cleanup() -> None:
+    global _embedder
     if _project_db is not None:
         try:
             _project_db.close()
@@ -100,6 +101,14 @@ def _cleanup() -> None:
             _user_db.close()
         except Exception as exc:
             logger.warning("user DB close failed: %s", exc)
+    if _embedder is not None:
+        close = getattr(_embedder, "close", None)
+        if callable(close):
+            try:
+                close()
+            except Exception as exc:
+                logger.warning("embedder close failed: %s", exc)
+        _embedder = None
 
 
 atexit.register(_cleanup)

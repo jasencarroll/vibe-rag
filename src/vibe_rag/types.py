@@ -4,6 +4,7 @@ from typing import Any, Literal, NotRequired, TypedDict
 
 
 MemoryKind = Literal["note", "decision", "constraint", "todo", "summary", "fact"]
+SourceDB = Literal["project", "user"]
 
 
 class ToolError(TypedDict):
@@ -17,6 +18,39 @@ class ToolFailure(TypedDict):
     error: ToolError
 
 
+class SearchProvenance(TypedDict):
+    source: Literal["project-index"]
+    indexed_at: str | None
+
+
+class MemoryProvenance(TypedDict):
+    capture_kind: str
+    source_type: str
+    is_current_project: bool
+
+
+class CodeChunk(TypedDict):
+    file_path: str
+    chunk_index: int
+    content: str
+    language: str | None
+    symbol: str | None
+    start_line: int
+    end_line: int
+
+
+class CodeChunkRow(CodeChunk, total=False):
+    indexed_at: str | None
+
+
+class RankedCodeResult(CodeChunkRow, total=False):
+    distance: float
+    score: float
+    rank_score: float
+    match_sources: list[str]
+    vector_distance: float
+
+
 class CodeSearchResult(TypedDict):
     file_path: str
     start_line: int
@@ -27,7 +61,25 @@ class CodeSearchResult(TypedDict):
     indexed_at: str | None
     rank_score: float
     match_sources: list[str]
-    provenance: dict[str, Any]
+    provenance: SearchProvenance
+
+
+class DocChunk(TypedDict):
+    file_path: str
+    chunk_index: int
+    content: str
+
+
+class DocChunkRow(DocChunk, total=False):
+    indexed_at: str | None
+
+
+class RankedDocResult(DocChunkRow, total=False):
+    distance: float
+    score: float
+    rank_score: float
+    match_sources: list[str]
+    vector_distance: float
 
 
 class DocSearchResult(TypedDict):
@@ -38,12 +90,36 @@ class DocSearchResult(TypedDict):
     indexed_at: str | None
     rank_score: float
     match_sources: list[str]
-    provenance: dict[str, Any]
+    provenance: SearchProvenance
+
+
+class MemoryRow(TypedDict, total=False):
+    id: int
+    content: str
+    tags: str | list[str]
+    project_id: str | None
+    memory_kind: MemoryKind
+    summary: str | None
+    metadata: dict[str, Any]
+    source_session_id: str | None
+    source_message_id: str | None
+    supersedes: int | None
+    superseded_by: int | None
+    created_at: str | None
+    updated_at: str | None
+    distance: float
+    source_db: SourceDB
+
+
+class CollectedFileSkip(TypedDict):
+    path: str
+    kind: Literal["code", "doc"]
+    reason: str
 
 
 class MemoryPayload(TypedDict):
     id: int
-    source_db: str | None
+    source_db: SourceDB | None
     summary: str
     content: str
     score: float
@@ -60,7 +136,7 @@ class MemoryPayload(TypedDict):
     is_stale: bool
     stale_reasons: list[str]
     metadata: dict[str, Any]
-    provenance: dict[str, Any]
+    provenance: MemoryProvenance
     cleanup_reasons: NotRequired[list[str]]
     cleanup_priority: NotRequired[int]
 
