@@ -2736,6 +2736,149 @@ def test_update_memory_invalid_kind(tmp_db, mock_embedder):
     result = update_memory(memory_id=str(mid), memory_kind="bogus")
     assert result["ok"] is False
     assert result["error"]["code"] == "invalid_memory_kind"
+
+
+def test_update_memory_empty_string_content_is_noop(tmp_db, mock_embedder):
+    """Passing content='' should NOT clear existing content (empty string = no change)."""
+    create = remember("original content here", tags="v1")
+    assert create["ok"] is True
+    mid = create["memory"]["id"]
+
+    result = update_memory(memory_id=str(mid), content="")
+    assert result["ok"] is True
+    assert result["memory"]["content"] == "original content here"
+
+
+def test_update_memory_whitespace_only_content_is_noop(tmp_db, mock_embedder):
+    """content='   ' should be treated as no change."""
+    create = remember("keep this content", tags="v1")
+    assert create["ok"] is True
+    mid = create["memory"]["id"]
+
+    result = update_memory(memory_id=str(mid), content="   ")
+    assert result["ok"] is True
+    assert result["memory"]["content"] == "keep this content"
+
+
+def test_update_memory_preserves_unmodified_fields(tmp_db, mock_embedder):
+    """Update only tags; verify content, summary, and kind are all unchanged."""
+    create = remember(
+        content="",
+        summary="immutable summary",
+        details="immutable details",
+        memory_kind="decision",
+        tags="old",
+    )
+    assert create["ok"] is True
+    mid = create["memory"]["id"]
+    original = create["memory"]
+
+    result = update_memory(memory_id=str(mid), tags="new,tags")
+    assert result["ok"] is True
+    mem = result["memory"]
+    assert mem["content"] == original["content"]
+    assert mem["summary"] == original["summary"]
+    assert mem["memory_kind"] == "decision"
+
+
+def test_update_memory_reembeds_on_content_change(tmp_db, mock_embedder):
+    """Updating content should trigger a re-embedding (embed_text_sync is called)."""
+    from unittest.mock import patch
+
+    create = remember("embed me once", tags="v1")
+    assert create["ok"] is True
+    mid = create["memory"]["id"]
+
+    with patch.object(mock_embedder, "embed_text_sync", wraps=mock_embedder.embed_text_sync) as spy:
+        result = update_memory(memory_id=str(mid), content="embed me again")
+        assert result["ok"] is True
+        assert spy.call_count >= 1
+
+
+def test_update_memory_no_reembed_on_tags_only_change(tmp_db, mock_embedder):
+    """Updating only tags should NOT trigger a re-embedding."""
+    from unittest.mock import patch
+
+    create = remember("stable content", tags="v1")
+    assert create["ok"] is True
+    mid = create["memory"]["id"]
+
+    with patch.object(mock_embedder, "embed_text_sync", wraps=mock_embedder.embed_text_sync) as spy:
+        result = update_memory(memory_id=str(mid), tags="v2,updated")
+        assert result["ok"] is True
+        assert spy.call_count == 0
+
+
+def test_update_memory_metadata_merge_does_not_overwrite(tmp_db, mock_embedder):
+    """Adding a new metadata key should preserve the original keys."""
+    create = remember(
+        content="",
+        summary="meta preserve test",
+        memory_kind="fact",
+        metadata={"original_key": "original_val", "keep_me": 42},
+    )
+    assert create["ok"] is True
+    mid = create["memory"]["id"]
+
+    result = update_memory(memory_id=str(mid), metadata={"new_key": "new_val"})
+    assert result["ok"] is True
+    meta = result["memory"]["metadata"]
+    assert meta["original_key"] == "original_val"
+    assert meta["keep_me"] == 42
+    assert meta["new_key"] == "new_val"
+
+
+def test_update_memory_metadata_can_overwrite_key(tmp_db, mock_embedder):
+    """Updating with an existing metadata key should overwrite its value."""
+    create = remember(
+        content="",
+        summary="meta overwrite test",
+        memory_kind="fact",
+        metadata={"status": "draft", "version": 1},
+    )
+    assert create["ok"] is True
+    mid = create["memory"]["id"]
+
+    result = update_memory(memory_id=str(mid), metadata={"status": "final"})
+    assert result["ok"] is True
+    meta = result["memory"]["metadata"]
+    assert meta["status"] == "final"
+    assert meta["version"] == 1
+
+
+def test_update_memory_returns_full_payload(tmp_db, mock_embedder):
+    """Verify the returned memory has all expected fields."""
+    create = remember(
+        content="",
+        summary="full payload test",
+        memory_kind="decision",
+        tags="test",
+        metadata={"origin": "test"},
+    )
+    assert create["ok"] is True
+    mid = create["memory"]["id"]
+
+    result = update_memory(memory_id=str(mid), tags="updated")
+    assert result["ok"] is True
+    mem = result["memory"]
+
+    expected_fields = {
+        "id", "source_db", "summary", "content", "score", "project_id",
+        "memory_kind", "tags", "created_at", "updated_at",
+        "source_session_id", "source_message_id",
+        "supersedes", "superseded_by", "is_superseded",
+        "is_stale", "stale_reasons", "metadata", "provenance",
+    }
+    missing = expected_fields - set(mem.keys())
+    assert not missing, f"Missing fields in memory payload: {missing}"
+    assert mem["id"] == mid
+    assert mem["summary"] == "full payload test"
+    assert mem["memory_kind"] == "decision"
+    assert isinstance(mem["tags"], list)
+    assert isinstance(mem["metadata"], dict)
+    assert isinstance(mem["provenance"], dict)
+
+
 def test_search_scope_code_empty_index(tmp_db, mock_embedder):
     result = search("anything", scope="code")
     assert result["ok"] is False
