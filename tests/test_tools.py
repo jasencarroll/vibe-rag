@@ -3040,3 +3040,140 @@ def test_search_all_results_have_result_type(tmp_db, mock_embedder, tmp_path: Pa
     assert result["ok"] is True
     for r in result["results"]:
         assert r["result_type"] in ("code", "doc")
+
+
+# --- Memory lifecycle integration tests ---
+
+
+def test_memory_lifecycle_integration(tmp_db, mock_embedder):
+    """Full lifecycle: remember -> search -> update -> search -> supersede -> search -> forget -> search."""
+
+    # 1. remember (default scope=project)
+    r1 = remember("initial decision: use PostgreSQL for persistence")
+    assert r1["ok"] is True
+    assert r1["backend"] == "project-sqlite"
+    memory_id = r1["memory"]["id"]
+    assert isinstance(memory_id, int)
+
+    # 2. search_memory -- verify the memory is found with match_reason
+    r2 = search_memory("database choice")
+    assert r2["ok"] is True
+    assert r2["result_total"] >= 1
+    found = [m for m in r2["results"] if m["id"] == memory_id and m.get("source_db") == "project"]
+    assert len(found) == 1
+    assert "match_reason" in found[0]
+    assert isinstance(found[0]["match_reason"], str)
+
+    # 3. update_memory -- change content (project-scoped by default)
+    r3 = update_memory(memory_id=f"project:{memory_id}", content="revised: use PostgreSQL with read replicas")
+    assert r3["ok"] is True
+    assert "read replicas" in r3["memory"]["content"]
+
+    # 4. search_memory -- verify updated content appears
+    r4 = search_memory("database choice")
+    assert r4["ok"] is True
+    updated = [m for m in r4["results"] if m["id"] == memory_id and m.get("source_db") == "project"]
+    assert len(updated) == 1
+    assert "read replicas" in updated[0]["content"]
+
+    # 5. supersede_memory -- replace with a new decision (new memory lands in user db)
+    r5 = supersede_memory(
+        old_memory_id=f"project:{memory_id}",
+        summary="use CockroachDB instead",
+        memory_kind="decision",
+    )
+    assert r5["ok"] is True
+    new_memory_id = r5["memory"]["id"]
+    assert r5["memory"]["summary"] == "use CockroachDB instead"
+    # supersede_memory always stores in user db
+    assert r5["backend"] == "user-sqlite"
+
+    # 6. search_memory -- verify new memory appears and old is marked superseded
+    r6 = search_memory("database choice")
+    assert r6["ok"] is True
+    new_hits = [m for m in r6["results"] if m["id"] == new_memory_id and m.get("source_db") == "user"]
+    assert len(new_hits) == 1
+    old_hits = [m for m in r6["results"] if m["id"] == memory_id and m.get("source_db") == "project"]
+    if old_hits:
+        assert old_hits[0]["is_superseded"] is True
+
+    # 7. forget -- delete the new memory (it lives in user db)
+    r7 = forget(f"user:{new_memory_id}")
+    assert r7["ok"] is True
+    assert r7["deleted"] is True
+
+    # 8. search_memory -- verify the new memory is gone
+    #    After superseding the project memory and deleting the user memory,
+    #    no active memories remain, so search may return ok=False (no_memories)
+    #    or ok=True with an empty result set -- both are acceptable.
+    r8 = search_memory("database choice")
+    if r8["ok"]:
+        gone = [m for m in r8["results"] if m["id"] == new_memory_id and m.get("source_db") == "user"]
+        assert len(gone) == 0
+    else:
+        assert r8["error"]["code"] == "no_memories"
+
+
+def test_remember_user_scope_lifecycle(tmp_db, mock_embedder):
+    """Same lifecycle as test_memory_lifecycle_integration but with scope='user'."""
+
+    # 1. remember with scope="user"
+    r1 = remember("initial decision: use PostgreSQL for persistence", scope="user")
+    assert r1["ok"] is True
+    assert r1["backend"] == "user-sqlite"
+    memory_id = r1["memory"]["id"]
+    assert isinstance(memory_id, int)
+
+    # 2. search_memory -- verify found with match_reason
+    r2 = search_memory("database choice")
+    assert r2["ok"] is True
+    assert r2["result_total"] >= 1
+    found = [m for m in r2["results"] if m["id"] == memory_id and m.get("source_db") == "user"]
+    assert len(found) == 1
+    assert "match_reason" in found[0]
+
+    # 3. update_memory on user-scoped memory
+    r3 = update_memory(memory_id=f"user:{memory_id}", content="revised: use PostgreSQL with read replicas")
+    assert r3["ok"] is True
+    assert "read replicas" in r3["memory"]["content"]
+
+    # 4. search_memory -- verify updated content
+    r4 = search_memory("database choice")
+    assert r4["ok"] is True
+    updated = [m for m in r4["results"] if m["id"] == memory_id and m.get("source_db") == "user"]
+    assert len(updated) == 1
+    assert "read replicas" in updated[0]["content"]
+
+    # 5. supersede_memory -- old_memory_id is user-scoped
+    r5 = supersede_memory(
+        old_memory_id=f"user:{memory_id}",
+        summary="use CockroachDB instead",
+        memory_kind="decision",
+    )
+    assert r5["ok"] is True
+    new_memory_id = r5["memory"]["id"]
+    assert r5["memory"]["summary"] == "use CockroachDB instead"
+
+    # 6. search_memory -- verify new memory found, old is superseded
+    r6 = search_memory("database choice")
+    assert r6["ok"] is True
+    new_hits = [m for m in r6["results"] if m["id"] == new_memory_id and m.get("source_db") == "user"]
+    assert len(new_hits) == 1
+    old_hits = [m for m in r6["results"] if m["id"] == memory_id and m.get("source_db") == "user"]
+    if old_hits:
+        assert old_hits[0]["is_superseded"] is True
+
+    # 7. forget -- delete the new memory
+    r7 = forget(f"user:{new_memory_id}")
+    assert r7["ok"] is True
+    assert r7["deleted"] is True
+
+    # 8. search_memory -- verify new memory is gone
+    #    Both user memories (old superseded + new deleted) are gone, so search
+    #    may return ok=False (no_memories) or ok=True with empty results.
+    r8 = search_memory("database choice")
+    if r8["ok"]:
+        gone = [m for m in r8["results"] if m["id"] == new_memory_id and m.get("source_db") == "user"]
+        assert len(gone) == 0
+    else:
+        assert r8["error"]["code"] == "no_memories"
