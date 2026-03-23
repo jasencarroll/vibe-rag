@@ -2149,7 +2149,7 @@ def _index_skip_summary(code_skipped: int, doc_skipped: int) -> str:
 
 @mcp.tool()
 def index_project(paths: list[str] | str | None = None) -> dict:
-    """Index project source files and docs for semantic search. Prefer this before grep when exploring a repo."""
+    """Index or re-index code and docs in the current project for semantic search. Run after major file changes or when search returns stale results."""
     return _index_project_impl(paths)
 
 
@@ -2161,7 +2161,7 @@ def search(
     language: str | None = None,
     min_score: float = 0.0,
 ) -> dict:
-    """Semantic search across code and docs. Use scope to narrow. Prefer this over grep when you know behavior but not exact symbols."""
+    """Semantic search across code and documentation. Use scope='code' for implementation details, scope='docs' for guides and specs, or scope='all' (default) for both. Prefer over grep when you know the behavior but not exact symbols or filenames. Results include match_reason explaining why each matched."""
     import math
 
     if scope not in ("all", "code", "docs"):
@@ -2250,7 +2250,7 @@ def remember(
     source_message_id: str = "",
     metadata: dict | None = None,
 ) -> dict:
-    """Store a durable memory. Pass just content for quick notes, or summary+details+memory_kind for structured memories. Use scope='user' for cross-project knowledge."""
+    """Store a durable memory. Pass just content for quick notes, or summary+details+memory_kind for structured memories. scope='user' for cross-project knowledge, scope='project' (default) for project-specific decisions. Memories are automatically retrieved in future sessions via load_session_context."""
     if scope not in ("project", "user"):
         return _failure("invalid_scope", "scope must be 'project' or 'user'")
 
@@ -2357,7 +2357,7 @@ def remember(
 
 @mcp.tool()
 def search_memory(query: str, limit: int = 10) -> dict:
-    """Semantic memory search across remembered project decisions and notes."""
+    """Search stored memories by semantic similarity. Returns memories from both project and user databases, ranked by relevance. Results include match_reason and staleness indicators."""
     error, results = _search_memory_results(query, limit=limit)
     if error:
         return _failure_from_error(error, query=query, limit=limit)
@@ -2383,7 +2383,7 @@ def load_session_context(
     code_limit: int = 5,
     docs_limit: int = 3,
 ) -> dict:
-    """Bootstrap likely context for a new task by retrieving related memories, code, and docs in one call."""
+    """Bootstrap context for a new task. Retrieves related memories, code, and docs in one call, plus project health, activity pulse, and live decisions. Call at session start or when switching tasks."""
     error = _validate_query(task)
     if error:
         return _failure_from_error(error, task=task)
@@ -2489,7 +2489,7 @@ def update_memory(
     tags: str = "",
     metadata: dict | None = None,
 ) -> dict:
-    """Update an existing memory in place. Only provided fields are changed."""
+    """Edit an existing memory in place. Only provided fields are changed. Use 'project:ID' or 'user:ID' prefix to target a specific database, or just the numeric ID (defaults to project)."""
     parsed = _parse_memory_locator(
         memory_id,
         error_code="invalid_memory_id",
@@ -2612,7 +2612,7 @@ def save_session_memory(
     memory_kind: MemoryKind = "summary",
     metadata: dict | None = None,
 ) -> dict:
-    """Persist a distilled durable memory from a completed chat turn."""
+    """Hook-driven: persist a distilled memory from a completed chat turn. Filters low-signal content and deduplicates automatically. Typically invoked by session hooks, not called directly."""
     if _should_skip_session_capture(response):
         return _success(skipped=True, reason="low-signal response")
     task_error = _validate_memory_content(task)
@@ -2752,7 +2752,7 @@ def save_session_summary(
     tags: str = "session,summary,auto",
     metadata: dict | None = None,
 ) -> dict:
-    """Maintain a rolling durable summary for the current session."""
+    """Hook-driven: maintain a rolling summary of the current session. Each call supersedes the previous summary. Typically invoked by session hooks, not called directly."""
     if turns:
         last_assistant = str(turns[-1].get("assistant", ""))
         if _should_skip_session_capture(last_assistant):
@@ -2879,7 +2879,7 @@ def supersede_memory(
     source_message_id: str = "",
     metadata: dict | None = None,
 ) -> dict:
-    """Create a new structured memory that supersedes an older one."""
+    """Replace an outdated memory with a corrected version. Creates a new memory linked to the old one, marking it as superseded. Use for changed decisions; use update_memory for minor edits."""
     if not old_memory_id:
         return _failure("missing_old_memory_id", "old_memory_id is required")
     parsed_memory = _parse_memory_locator(
@@ -2960,7 +2960,7 @@ def supersede_memory(
 
 @mcp.tool()
 def forget(memory_id: str) -> dict:
-    """Delete a remembered item by ID."""
+    """Permanently delete a memory by ID. Use 'project:ID' or 'user:ID' prefix to target a specific database."""
     parsed_memory = _parse_memory_locator(
         memory_id,
         error_code="invalid_memory_id",
@@ -3003,7 +3003,7 @@ def forget(memory_id: str) -> dict:
 
 @mcp.tool()
 def project_status(include_memory_health: bool = True) -> dict:
-    """Summarize the current project index and memory state, including memory quality and cleanup candidates."""
+    """Dashboard view: index counts, staleness, language breakdown, and memory health including quality metrics, cleanup candidates, and recommendations. Use include_memory_health=False for a lighter response."""
     db = _get_db()
     metadata_state = _index_metadata(db)
     stale = _stale_state(db, Path.cwd(), _ensure_project_id())
@@ -3086,7 +3086,7 @@ def _memory_health_summary() -> dict:
 
 @mcp.tool()
 def cleanup_duplicate_auto_memories(limit: int = 20, apply: bool = False) -> dict:
-    """Report or prune duplicate auto-captured memories, keeping the newest copy in each group."""
+    """Find and optionally prune duplicate auto-captured session memories. apply=False (default) to preview, apply=True to delete duplicates keeping newest."""
     if limit < 1:
         return _failure("invalid_limit", "limit must be at least 1", limit=limit)
 
