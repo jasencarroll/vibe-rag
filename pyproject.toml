@@ -1,6 +1,6 @@
 [project]
 name = "vibe-rag"
-version = "0.0.27"
+version = "0.0.28"
 description = "Semantic code search and persistent memory MCP server for Mistral Vibe"
 readme = "README.md"
 license = "MIT"
@@ -10,7 +10,7 @@ dependencies = [
     "sqlite-vec>=0.1",
     "httpx>=0.27",
     "ollama>=0.6.1",
-    "tree-sitter>=0.21,<0.22",
+    "tree-sitter>=0.22",
     "tree-sitter-languages>=1.10",
     "click>=8.1",
 ]

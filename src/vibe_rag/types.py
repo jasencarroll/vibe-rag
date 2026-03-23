@@ -139,6 +139,8 @@ class MemoryPayload(TypedDict):
     stale_reasons: list[str]
     metadata: dict[str, Any]
     provenance: MemoryProvenance
+    thread_id: NotRequired[str | None]
+    thread_title: NotRequired[str | None]
     match_reason: NotRequired[str]
     cleanup_reasons: NotRequired[list[str]]
     cleanup_priority: NotRequired[int]

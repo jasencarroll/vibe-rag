@@ -43,6 +43,7 @@ from vibe_rag.types import (
 MAX_QUERY_LENGTH = 10_000
 MAX_MEMORY_LENGTH = 10_000
 MAX_TAGS_LENGTH = 512
+MAX_THREAD_ID_LENGTH = 256
 BRIEFING_CHAR_BUDGET = 6000
 ALLOWED_MEMORY_KINDS = {"note", "decision", "constraint", "todo", "summary", "fact"}
 INDEX_METADATA_KEY = "project_index_metadata"
@@ -290,6 +291,116 @@ def _metadata_dict(value: object) -> dict:
             return {}
         return parsed if isinstance(parsed, dict) else {}
     return {}
+
+
+def _normalize_datetime(value: str) -> datetime:
+    normalized = value.strip().replace("Z", "+00:00")
+    dt = datetime.fromisoformat(normalized)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def _parse_datetime_filter(value: str, field_name: str) -> tuple[datetime | None, ToolError | None]:
+    if not value.strip():
+        return None, None
+    try:
+        return _normalize_datetime(value), None
+    except ValueError:
+        return None, _tool_error(
+            "invalid_datetime",
+            f"{field_name} must be an ISO 8601 date or datetime",
+            field=field_name,
+            value=value,
+        )
+
+
+def _validate_thread_id(thread_id: str) -> ToolError | None:
+    if not thread_id.strip():
+        return _tool_error("empty_thread_id", "thread_id is empty")
+    if len(thread_id) > MAX_THREAD_ID_LENGTH:
+        return _tool_error(
+            "thread_id_too_long",
+            "thread_id is too long",
+            max_length=MAX_THREAD_ID_LENGTH,
+        )
+    return None
+
+
+def _memory_thread_fields(result: dict) -> tuple[str | None, str | None]:
+    metadata = _metadata_dict(result.get("metadata"))
+    thread_meta = metadata.get("thread")
+    thread_id = ""
+    thread_title = ""
+    if isinstance(thread_meta, dict):
+        thread_id = str(thread_meta.get("id") or "").strip()
+        thread_title = str(thread_meta.get("title") or "").strip()
+    if not thread_id:
+        thread_id = str(metadata.get("thread_id") or "").strip()
+    if not thread_title:
+        thread_title = str(metadata.get("thread_title") or "").strip()
+    if not thread_id:
+        return None, None
+    return thread_id, thread_title or None
+
+
+def _memory_event_datetime(result: dict) -> datetime | None:
+    metadata = _metadata_dict(result.get("metadata"))
+    for raw_value in (
+        metadata.get("event_at"),
+        result.get("updated_at"),
+        result.get("created_at"),
+    ):
+        if not raw_value:
+            continue
+        try:
+            return _normalize_datetime(str(raw_value))
+        except ValueError:
+            continue
+    return None
+
+
+def _apply_memory_filters(
+    results: list[dict],
+    *,
+    thread_id: str = "",
+    since: str = "",
+    until: str = "",
+) -> tuple[ToolError | None, list[dict]]:
+    normalized_thread_id = thread_id.strip()
+    if normalized_thread_id:
+        thread_error = _validate_thread_id(normalized_thread_id)
+        if thread_error:
+            return thread_error, []
+
+    since_dt, since_error = _parse_datetime_filter(since, "since")
+    if since_error:
+        return since_error, []
+    until_dt, until_error = _parse_datetime_filter(until, "until")
+    if until_error:
+        return until_error, []
+    if since_dt and until_dt and since_dt > until_dt:
+        return _tool_error(
+            "invalid_time_range",
+            "since must be earlier than or equal to until",
+            since=since,
+            until=until,
+        ), []
+
+    filtered: list[dict] = []
+    for result in results:
+        result_thread_id, _thread_title = _memory_thread_fields(result)
+        if normalized_thread_id and result_thread_id != normalized_thread_id:
+            continue
+
+        event_dt = _memory_event_datetime(result)
+        if since_dt and (event_dt is None or event_dt < since_dt):
+            continue
+        if until_dt and (event_dt is None or event_dt > until_dt):
+            continue
+        filtered.append(result)
+
+    return None, filtered
 
 
 def _time_ago(dt_str: str | None) -> str:
@@ -1053,6 +1164,7 @@ def _memory_payload(result: MemoryRow, current_project_id: str | None = None, qu
     capture_kind = str(metadata.get("capture_kind") or "").strip() or "unknown"
     superseded_by = _int_or_none(result.get("superseded_by"))
     supersedes = _int_or_none(result.get("supersedes"))
+    thread_id, thread_title = _memory_thread_fields(cast(dict, result))
     state = _memory_state(result, current_project_id)
     provenance: MemoryProvenance = {
         "capture_kind": capture_kind,
@@ -1091,6 +1203,10 @@ def _memory_payload(result: MemoryRow, current_project_id: str | None = None, qu
         "metadata": metadata,
         "provenance": provenance,
     }
+    if thread_id:
+        payload["thread_id"] = thread_id
+    if thread_title:
+        payload["thread_title"] = thread_title
     if query:
         payload["match_reason"] = _match_reason(query, result.get("content", ""), payload["score"])
     if isinstance(payload["tags"], str):
@@ -1904,7 +2020,14 @@ def _search_docs_results(query: str, limit: int = 10) -> tuple[ToolError | None,
     return None, results
 
 
-def _search_memory_results(query: str, limit: int = 10, tags: str = "") -> tuple[ToolError | None, list[dict]]:
+def _search_memory_results(
+    query: str,
+    limit: int = 10,
+    tags: str = "",
+    thread_id: str = "",
+    since: str = "",
+    until: str = "",
+) -> tuple[ToolError | None, list[dict]]:
     error = _validate_query(query)
     if error:
         return error, []
@@ -1918,8 +2041,9 @@ def _search_memory_results(query: str, limit: int = 10, tags: str = "") -> tuple
     except RuntimeError as e:
         return _tool_error("embedding_failed", f"embedding failed: {e}", operation="search_memory"), []
 
-    # Fetch more results when tag-filtering so we have enough after the post-filter.
-    fetch_limit = limit * 3 if tags else limit
+    # Fetch more results when filtering so we have enough after the post-filter.
+    has_filters = bool(tags or thread_id.strip() or since.strip() or until.strip())
+    fetch_limit = limit * 5 if has_filters else limit
     current_project_id = _ensure_project_id()
     project_limit, user_limit = _memory_limit_split(fetch_limit)
     project_results = project_db.search_memories(
@@ -1948,7 +2072,78 @@ def _search_memory_results(query: str, limit: int = 10, tags: str = "") -> tuple
                     filtered.append(result)
             results = filtered[:limit]
 
+    filter_error, results = _apply_memory_filters(
+        results,
+        thread_id=thread_id,
+        since=since,
+        until=until,
+    )
+    if filter_error:
+        return filter_error, []
+
+    results = results[:limit]
     return None, results
+
+
+def _list_thread_memory_results(
+    thread_id: str,
+    *,
+    limit: int = 20,
+    scope: str = "all",
+    since: str = "",
+    until: str = "",
+    include_superseded: bool = False,
+) -> tuple[ToolError | None, list[dict]]:
+    thread_error = _validate_thread_id(thread_id)
+    if thread_error:
+        return thread_error, []
+    if scope not in ("all", "project", "user"):
+        return _tool_error(
+            "invalid_scope",
+            "scope must be 'all', 'project', or 'user'",
+            scope=scope,
+        ), []
+
+    current_project_id = _ensure_project_id()
+    project_db = _get_db()
+    user_db = _get_user_db()
+    candidates: list[dict] = []
+
+    if scope in ("all", "project"):
+        project_limit = max(project_db.memory_count(include_superseded=True) + 10, limit * 5, 20)
+        for memory in project_db.list_memories(
+            limit=project_limit,
+            include_superseded=include_superseded,
+            project_id=current_project_id,
+        ):
+            candidates.append(_with_source_db(memory, "project"))
+
+    if scope in ("all", "user"):
+        user_limit = max(user_db.memory_count(include_superseded=True) + 10, limit * 5, 20)
+        for memory in user_db.list_memories(
+            limit=user_limit,
+            include_superseded=include_superseded,
+        ):
+            candidates.append(_with_source_db(memory, "user"))
+
+    filter_error, filtered = _apply_memory_filters(
+        candidates,
+        thread_id=thread_id,
+        since=since,
+        until=until,
+    )
+    if filter_error:
+        return filter_error, []
+
+    min_dt = datetime.min.replace(tzinfo=timezone.utc)
+    filtered.sort(
+        key=lambda item: (
+            _memory_event_datetime(item) or min_dt,
+            int(item.get("id") or 0),
+        ),
+        reverse=True,
+    )
+    return None, filtered[:limit]
 
 
 def _index_skip_summary(code_skipped: int, doc_skipped: int) -> str:
@@ -1960,5 +2155,3 @@ def _index_skip_summary(code_skipped: int, doc_skipped: int) -> str:
     if doc_skipped:
         parts.append(f"{doc_skipped} docs skipped")
     return f" ({', '.join(parts)})"
-
-

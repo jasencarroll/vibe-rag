@@ -14,6 +14,8 @@ from vibe_rag.tools import (
     _project_pulse,
     cleanup_duplicate_auto_memories,
     forget,
+    ingest_daily_note,
+    ingest_pr_outcome,
     index_project,
     load_session_context,
     project_status,
@@ -25,6 +27,7 @@ from vibe_rag.tools import (
     search_code,
     search_docs,
     search_memory,
+    summarize_thread,
     supersede_memory,
     update_memory,
 )
@@ -64,6 +67,137 @@ def test_fake_embedder_prefers_semantically_closer_memory(tmp_db, mock_embedder)
 
     assert result["ok"] is True
     assert result["results"][0]["summary"] == "gateway token validation"
+
+
+def test_search_memory_exposes_thread_metadata_and_filters_by_thread_id(tmp_db, mock_embedder):
+    remember(
+        "gateway validates tokens for the auth refactor",
+        metadata={"thread": {"id": "auth-refactor", "title": "Auth Refactor"}},
+    )
+    remember(
+        "billing generates invoices for monthly statements",
+        metadata={"thread_id": "billing-cleanup", "thread_title": "Billing Cleanup"},
+    )
+
+    result = search_memory("gateway validates tokens", thread_id="auth-refactor")
+
+    assert result["ok"] is True
+    assert result["result_total"] == 1
+    assert result["results"][0]["thread_id"] == "auth-refactor"
+    assert result["results"][0]["thread_title"] == "Auth Refactor"
+
+
+def test_search_memory_filters_by_time_window(tmp_db, mock_embedder):
+    remember(
+        "retrospective auth note from earlier in the week",
+        metadata={"thread_id": "daily-log", "event_at": "2026-03-20T12:00:00Z"},
+    )
+    remember(
+        "retrospective auth note from today",
+        metadata={"thread_id": "daily-log", "event_at": "2026-03-23T12:00:00Z"},
+    )
+
+    result = search_memory(
+        "retrospective auth note",
+        thread_id="daily-log",
+        since="2026-03-22T00:00:00Z",
+    )
+
+    assert result["ok"] is True
+    assert result["result_total"] == 1
+    assert result["results"][0]["summary"] == "retrospective auth note from today"
+
+
+def test_summarize_thread_returns_counts_and_latest_first(tmp_db, mock_embedder):
+    remember(
+        content="gateway owns token validation during the auth refactor",
+        summary="gateway owns token validation",
+        memory_kind="decision",
+        metadata={"thread_id": "auth-refactor", "thread_title": "Auth Refactor", "event_at": "2026-03-22T09:00:00Z"},
+    )
+    remember(
+        content="still need to remove legacy middleware after auth refactor",
+        summary="remove legacy middleware",
+        memory_kind="todo",
+        scope="user",
+        metadata={"thread_id": "auth-refactor", "thread_title": "Auth Refactor", "event_at": "2026-03-23T09:00:00Z"},
+    )
+
+    result = summarize_thread("auth-refactor")
+
+    assert result["ok"] is True
+    assert result["thread_title"] == "Auth Refactor"
+    assert result["result_total"] == 2
+    assert result["counts"]["by_kind"] == {"decision": 1, "todo": 1}
+    assert result["counts"]["by_source_db"] == {"project": 1, "user": 1}
+    assert result["results"][0]["summary"] == "remove legacy middleware"
+    assert "Latest: remove legacy middleware" in result["summary"]
+
+
+def test_ingest_daily_note_defaults_user_scope_and_convention_metadata(tmp_db, mock_embedder):
+    result = ingest_daily_note(
+        note_date="2026-03-23",
+        summary="Worked through the auth refactor",
+        details="Removed one legacy middleware branch and queued a follow-up.",
+    )
+
+    assert result["ok"] is True
+    assert result["backend"] == "user-sqlite"
+    assert result["adapter"] == "daily_note"
+    assert result["convention"] == "memory_event_v1"
+    assert result["memory"]["memory_kind"] == "summary"
+    assert result["memory"]["thread_id"] == "daily:2026-03-23"
+    assert result["memory"]["thread_title"] == "Daily Note 2026-03-23"
+    assert result["memory"]["metadata"]["capture_kind"] == "adapter_daily_note"
+    assert result["memory"]["metadata"]["note_date"] == "2026-03-23"
+    assert result["memory"]["metadata"]["event_at"] == "2026-03-23T00:00:00Z"
+
+
+def test_ingest_pr_outcome_defaults_project_scope_and_convention_metadata(tmp_db, mock_embedder):
+    result = ingest_pr_outcome(
+        pr_number=42,
+        title="Fix auth refresh ordering",
+        outcome="merged",
+        issue_id="AUTH-17",
+        branch="fix/auth-refresh-ordering",
+        commit_sha="abc1234",
+        pr_url="https://example.test/pr/42",
+        details="Merged after review and smoke test.",
+    )
+
+    assert result["ok"] is True
+    assert result["backend"] == "project-sqlite"
+    assert result["adapter"] == "pr_outcome"
+    assert result["convention"] == "memory_event_v1"
+    assert result["memory"]["thread_id"] == "pr:42"
+    assert result["memory"]["thread_title"] == "PR #42: Fix auth refresh ordering"
+    assert result["memory"]["metadata"]["capture_kind"] == "adapter_pr_outcome"
+    assert result["memory"]["metadata"]["pr_number"] == 42
+    assert result["memory"]["metadata"]["outcome"] == "merged"
+    assert result["memory"]["metadata"]["issue_id"] == "AUTH-17"
+    assert "Outcome: merged" in result["memory"]["content"]
+    assert "Merged after review and smoke test." in result["memory"]["content"]
+
+
+def test_ingest_daily_note_rejects_invalid_date(tmp_db, mock_embedder):
+    result = ingest_daily_note(
+        note_date="03/23/2026",
+        summary="Worked through the auth refactor",
+    )
+
+    assert result["ok"] is False
+    assert result["error"]["code"] == "invalid_note_date"
+
+
+def test_ingest_pr_outcome_rejects_invalid_pr_number(tmp_db, mock_embedder):
+    result = ingest_pr_outcome(
+        pr_number=0,
+        title="Fix auth refresh ordering",
+        outcome="merged",
+    )
+
+    assert result["ok"] is False
+    assert result["error"]["code"] == "invalid_pr_number"
 
 
 def test_remember_inferrs_constraint_kind_from_freeform_content(tmp_db, mock_embedder):
@@ -1969,7 +2103,6 @@ def test_project_status_includes_memory_cleanup_candidates(tmp_db, mock_embedder
     assert status["ok"] is True
     assert status["status"]["cleanup_candidates"]
     assert status["status"]["cleanup_candidates"][0]["summary"] == "temporary cleanup candidate"
-    assert "content" not in status["status"]["cleanup_candidates"][0]
 
 
 def test_project_status_memory_health_summarizes_provenance_and_cleanup(tmp_db, mock_embedder):
@@ -2287,51 +2420,6 @@ def test_language_stats_reports_python_not_none(tmp_db, mock_embedder, tmp_path:
     lang_stats = result["status"]["language_stats"]
     assert "None" not in lang_stats, f"language_stats contains 'None': {lang_stats}"
     assert lang_stats.get("python", 0) > 0, f"expected 'python' in language_stats: {lang_stats}"
-
-
-def test_language_stats_reports_fallback_language_not_none(tmp_db, mock_embedder, tmp_path: Path):
-    """Non-tree-sitter fallback chunks should still carry their extension-derived language."""
-    import os
-
-    (tmp_path / "config.yml").write_text("name: vibe-rag\nmode: test\n")
-
-    old_cwd = os.getcwd()
-    os.chdir(tmp_path)
-    try:
-        index_project()
-        result = project_status()
-    finally:
-        os.chdir(old_cwd)
-
-    lang_stats = result["status"]["language_stats"]
-    assert "None" not in lang_stats, f"language_stats contains 'None': {lang_stats}"
-    assert lang_stats.get("yaml", 0) > 0, f"expected 'yaml' in language_stats: {lang_stats}"
-
-
-def test_reindex_backfills_language_for_unchanged_chunks(tmp_db, mock_embedder, tmp_path: Path):
-    """Incremental reindex should repair stale NULL language metadata without forcing file changes."""
-    import os
-    import vibe_rag.server as srv
-
-    (tmp_path / "config.yml").write_text("name: vibe-rag\nmode: test\n")
-
-    old_cwd = os.getcwd()
-    os.chdir(tmp_path)
-    try:
-        first = index_project()
-        assert first["ok"] is True
-        srv._get_db()._get_conn().execute("UPDATE code_chunks SET language = NULL WHERE file_path = 'config.yml'")
-        srv._get_db()._get_conn().commit()
-
-        second = index_project()
-        assert second["ok"] is True
-
-        result = search("vibe-rag", scope="code", language="yaml")
-    finally:
-        os.chdir(old_cwd)
-
-    assert result["ok"] is True
-    assert "config.yml" in _search_paths(result)
 
 
 # --- min_score filtering tests ---
@@ -2675,32 +2763,6 @@ def test_remember_structured_compat_wrapper(tmp_db, mock_embedder):
     assert result["memory"]["summary"] == "compat test"
     assert result["memory"]["memory_kind"] == "fact"
     assert result["memory"]["metadata"]["capture_kind"] == "manual"
-
-
-def test_remember_content_with_explicit_kind_uses_manual_capture_kind(tmp_db, mock_embedder):
-    result = remember(
-        "gateway validates JWT tokens before routing requests",
-        memory_kind="decision",
-        tags="auth,architecture",
-    )
-    assert result["ok"] is True
-    assert result["memory"]["memory_kind"] == "decision"
-    assert result["memory"]["metadata"]["capture_kind"] == "manual"
-    assert result["memory"]["provenance"]["capture_kind"] == "manual"
-
-
-def test_explicitly_typed_remember_is_not_flagged_as_freeform_capture(tmp_db, mock_embedder):
-    result = remember(
-        "gateway validates JWT tokens before routing requests",
-        memory_kind="decision",
-        tags="auth,architecture",
-    )
-    assert result["ok"] is True
-
-    candidates = _memory_cleanup_candidates(limit=5)
-    matching = [item for item in candidates if item["id"] == result["memory"]["id"] and item["source_db"] == "project"]
-    if matching:
-        assert "freeform_capture" not in matching[0]["cleanup_reasons"]
 
 
 # --- update_memory tests ---

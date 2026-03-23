@@ -45,6 +45,7 @@ If it only works from a source checkout, it is not ready.
 
 - [Setup Guide](docs/setup-guide.md)
 - [User Guide](docs/user-guide.md)
+- [Memory Event Convention](docs/memory-event-convention.md)
 - [Maintainer Guide](docs/maintainer-guide.md)
 
 ## Support Levels
@@ -90,7 +91,7 @@ vibe-rag --version
 Pinned release:
 
 ```bash
-uv tool install vibe-rag@0.0.27
+uv tool install vibe-rag@0.0.28
 ```
 
 CI runs `pytest` and `uv build` on pushes and pull requests, and the `Release` workflow can perform the version bump, changelog promotion, commit, push, and GitHub release creation from `main`.
@@ -192,6 +193,7 @@ index this project
 search the code for authentication handling
 search docs for deployment instructions
 remember that auth tokens are validated in the API gateway
+summarize thread auth-refactor
 ```
 
 Success looks like:
@@ -240,7 +242,7 @@ Generated repo messaging should match that table:
 | Layer | Purpose | Storage | Tools |
 | --- | --- | --- | --- |
 | Project index | semantic code and docs retrieval in the current repo | `.vibe/index.db` | `index_project`, `search_code`, `search_docs` |
-| User memory | durable cross-session memory | `~/.vibe/memory.db` | `remember`, `search_memory`, `forget`, `load_session_context` |
+| User memory | durable cross-session memory | `~/.vibe/memory.db` | `remember`, `search_memory`, `summarize_thread`, `forget`, `load_session_context` |
 
 ## MCP Tool Contract
 

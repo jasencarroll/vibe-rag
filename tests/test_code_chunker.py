@@ -115,6 +115,25 @@ class Greeter:
         assert len(result) >= 2
         assert {chunk["symbol"] for chunk in result} >= {"hello", "Greeter"}
 
+    def test_supported_language_falls_back_when_get_parser_breaks(self, monkeypatch):
+        import tree_sitter_languages
+
+        code = """
+def hello():
+    return 1
+"""
+
+        monkeypatch.setattr(
+            tree_sitter_languages,
+            "get_parser",
+            lambda _lang: (_ for _ in ()).throw(TypeError("broken wrapper")),
+        )
+
+        result = _try_tree_sitter_chunk(code, "f.py", "python")
+
+        assert result is not None
+        assert {chunk["symbol"] for chunk in result} >= {"hello"}
+
 
 class TestSubsplitLargeChunks:
     def test_small_chunks_unchanged(self):

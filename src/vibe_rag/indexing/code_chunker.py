@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import ctypes
+from functools import lru_cache
 import logging
+from pathlib import Path
 
 from vibe_rag.types import CodeChunk
 
@@ -55,8 +58,7 @@ def _try_tree_sitter_chunk(content: str, file_path: str, language: str) -> list[
     if not ts_lang:
         return None
     try:
-        import tree_sitter_languages
-        parser = tree_sitter_languages.get_parser(ts_lang)
+        parser = _tree_sitter_parser(ts_lang)
     except ImportError:
         return None
     except Exception as exc:
@@ -93,6 +95,44 @@ def _try_tree_sitter_chunk(content: str, file_path: str, language: str) -> list[
     if not chunks:
         return None
     return chunks
+
+
+@lru_cache(maxsize=1)
+def _tree_sitter_languages_lib() -> ctypes.CDLL:
+    import tree_sitter_languages
+
+    lib_path = Path(tree_sitter_languages.__file__).with_name("languages.so")
+    return ctypes.CDLL(str(lib_path))
+
+
+@lru_cache(maxsize=len(LANGUAGE_MAP))
+def _tree_sitter_language(ts_lang: str):
+    import tree_sitter_languages
+    from tree_sitter import Language
+
+    try:
+        return tree_sitter_languages.get_language(ts_lang)
+    except Exception:
+        lib = _tree_sitter_languages_lib()
+        language_fn = getattr(lib, f"tree_sitter_{ts_lang}")
+        language_fn.restype = ctypes.c_void_p
+        return Language(language_fn())
+
+
+def _tree_sitter_parser(ts_lang: str):
+    import tree_sitter_languages
+    from tree_sitter import Parser
+
+    try:
+        return tree_sitter_languages.get_parser(ts_lang)
+    except Exception:
+        parser = Parser()
+        language = _tree_sitter_language(ts_lang)
+        if hasattr(parser, "set_language"):
+            parser.set_language(language)
+        else:
+            parser.language = language
+        return parser
 
 
 def _subsplit_large_chunks(chunks: list[CodeChunk]) -> list[CodeChunk]:

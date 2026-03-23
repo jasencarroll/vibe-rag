@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import date as calendar_date
+from datetime import datetime, timezone
 from typing import cast
 
 from vibe_rag.server import _ensure_project_id, _get_db, _get_embedder, _get_user_db, mcp
@@ -15,9 +17,11 @@ from vibe_rag.tools._helpers import (
     _infer_session_metadata,
     _is_low_signal_auto_capture,
     _is_transient_status_auto_capture,
+    _list_thread_memory_results,
     _memory_payload,
     _merge_suggestion_payload,
     _metadata_dict,
+    _parse_datetime_filter,
     _parse_memory_locator,
     _resolve_superseded_memory,
     _should_skip_session_capture,
@@ -27,9 +31,55 @@ from vibe_rag.tools._helpers import (
     _validate_memory_content,
     _validate_memory_kind,
     _validate_tags,
+    _validate_thread_id,
     _with_source_db,
 )
 from vibe_rag.types import MemoryKind, SourceDB
+
+MEMORY_EVENT_CONVENTION = "memory_event_v1"
+DEFAULT_DAILY_NOTE_TAGS = "daily,note"
+DEFAULT_PR_OUTCOME_TAGS = "pr,outcome"
+
+
+def _utc_iso(dt: datetime) -> str:
+    return dt.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _normalize_event_at(event_at: str, field_name: str = "event_at") -> tuple[str | None, dict | None]:
+    dt, error = _parse_datetime_filter(event_at, field_name)
+    if error:
+        return None, _failure_from_error(error)
+    if dt is None:
+        return None, None
+    return _utc_iso(dt), None
+
+
+def _normalize_note_date(note_date: str) -> tuple[str | None, dict | None]:
+    normalized = note_date.strip()
+    if not normalized:
+        return None, _failure("missing_note_date", "note_date is required")
+    try:
+        return calendar_date.fromisoformat(normalized).isoformat(), None
+    except ValueError:
+        return None, _failure(
+            "invalid_note_date",
+            "note_date must be in YYYY-MM-DD format",
+            note_date=note_date,
+        )
+
+
+def _normalize_thread(
+    thread_id: str,
+    default_thread_id: str,
+    thread_title: str,
+    default_thread_title: str,
+) -> tuple[tuple[str, str] | None, dict | None]:
+    resolved_thread_id = thread_id.strip() or default_thread_id
+    error = _validate_thread_id(resolved_thread_id)
+    if error:
+        return None, _failure_from_error(error)
+    resolved_thread_title = thread_title.strip() or default_thread_title
+    return (resolved_thread_id, resolved_thread_title), None
 
 
 @mcp.tool()
@@ -110,13 +160,11 @@ def remember(
 
     inferred_kind = _infer_auto_memory_kind("", content, content)
     resolved_kind = inferred_kind if inferred_kind != "summary" else "note"
-    capture_kind = "freeform"
     if memory_kind:
         kind_error = _validate_memory_kind(memory_kind)
         if kind_error:
             return _failure_from_error(kind_error)
         resolved_kind = memory_kind
-        capture_kind = "manual"
 
     db = _get_db() if scope == "project" else _get_user_db()
     source_db_label = "project" if scope == "project" else "user"
@@ -127,7 +175,7 @@ def remember(
         tags=tags,
         project_id=_ensure_project_id(),
         memory_kind=resolved_kind,
-        metadata={"capture_kind": capture_kind, **(metadata or {})},
+        metadata={"capture_kind": "freeform", **(metadata or {})},
         source_session_id=source_session_id or None,
         source_message_id=source_message_id or None,
     )
@@ -142,7 +190,7 @@ def remember(
                     "summary": _truncate(_single_line(content), 200),
                     "content": content,
                     "memory_kind": resolved_kind,
-                    "metadata": {"capture_kind": capture_kind},
+                    "metadata": {"capture_kind": "freeform"},
                 },
                 source_db_label,
             ),
@@ -294,6 +342,257 @@ def update_memory(
             current_project_id=_ensure_project_id(),
         ),
     )
+
+
+@mcp.tool()
+def summarize_thread(
+    thread_id: str,
+    limit: int = 20,
+    scope: str = "all",
+    since: str = "",
+    until: str = "",
+    include_superseded: bool = False,
+) -> dict:
+    """List and summarize memories attached to a thread. Memories can carry `metadata.thread_id` / `metadata.thread_title` or `metadata.thread = {id, title}`."""
+    error, results = _list_thread_memory_results(
+        thread_id,
+        limit=limit,
+        scope=scope,
+        since=since,
+        until=until,
+        include_superseded=include_superseded,
+    )
+    if error:
+        return _failure_from_error(
+            error,
+            thread_id=thread_id,
+            limit=limit,
+            scope=scope,
+            since=since,
+            until=until,
+            include_superseded=include_superseded,
+        )
+
+    current_project_id = _ensure_project_id()
+    payloads = [
+        _memory_payload(result, current_project_id=current_project_id)
+        for result in results
+    ]
+    normalized_thread_id = thread_id.strip()
+
+    if not payloads:
+        return _success(
+            thread_id=normalized_thread_id,
+            scope=scope,
+            since=since,
+            until=until,
+            include_superseded=include_superseded,
+            result_total=0,
+            results=[],
+            counts={"by_kind": {}, "by_source_db": {}},
+            status={"started_at": None, "updated_at": None, "thread_title": None},
+            summary=f"No memories found for thread '{normalized_thread_id}'.",
+        )
+
+    by_kind: dict[str, int] = {}
+    by_source_db: dict[str, int] = {}
+    thread_title: str | None = None
+    for item in payloads:
+        kind = str(item.get("memory_kind") or "note")
+        by_kind[kind] = by_kind.get(kind, 0) + 1
+        source_db = str(item.get("source_db") or "unknown")
+        by_source_db[source_db] = by_source_db.get(source_db, 0) + 1
+        if not thread_title and item.get("thread_title"):
+            thread_title = str(item["thread_title"])
+
+    oldest = payloads[-1]
+    newest = payloads[0]
+
+    def _timeline_at(item: dict) -> str | None:
+        metadata = _metadata_dict(item.get("metadata"))
+        value = metadata.get("event_at") or item.get("updated_at") or item.get("created_at")
+        return str(value) if value else None
+
+    title = thread_title or normalized_thread_id
+    latest_summary = str(newest.get("summary") or newest.get("content") or "").strip()
+    dominant_kinds = ", ".join(
+        f"{count} {kind}"
+        for kind, count in sorted(by_kind.items(), key=lambda item: (-item[1], item[0]))[:3]
+    )
+    summary = f"Thread {title}: {len(payloads)} memories"
+    if dominant_kinds:
+        summary += f" ({dominant_kinds})"
+    if latest_summary:
+        summary += f". Latest: {latest_summary}"
+
+    return _success(
+        thread_id=normalized_thread_id,
+        thread_title=thread_title,
+        scope=scope,
+        since=since,
+        until=until,
+        include_superseded=include_superseded,
+        result_total=len(payloads),
+        results=payloads,
+        counts={"by_kind": by_kind, "by_source_db": by_source_db},
+        status={
+            "started_at": _timeline_at(oldest),
+            "updated_at": _timeline_at(newest),
+            "thread_title": thread_title,
+        },
+        summary=summary,
+    )
+
+
+@mcp.tool()
+def ingest_daily_note(
+    note_date: str,
+    summary: str,
+    details: str = "",
+    event_at: str = "",
+    tags: str = DEFAULT_DAILY_NOTE_TAGS,
+    scope: str = "user",
+    thread_id: str = "",
+    thread_title: str = "",
+    metadata: dict | None = None,
+) -> dict:
+    """Store a daily note using the memory_event_v1 convention. Defaults to user scope and a `daily:YYYY-MM-DD` thread."""
+    normalized_note_date, date_error = _normalize_note_date(note_date)
+    if date_error:
+        return date_error
+
+    resolved_thread, thread_error = _normalize_thread(
+        thread_id,
+        f"daily:{normalized_note_date}",
+        thread_title,
+        f"Daily Note {normalized_note_date}",
+    )
+    if thread_error:
+        return thread_error
+    resolved_thread_id, resolved_thread_title = resolved_thread
+
+    normalized_event_at, event_error = _normalize_event_at(event_at)
+    if event_error:
+        return event_error
+    if not normalized_event_at:
+        normalized_event_at = f"{normalized_note_date}T00:00:00Z"
+
+    result = remember(
+        content="",
+        summary=summary,
+        details=details,
+        memory_kind="summary",
+        tags=tags,
+        scope=scope,
+        metadata={
+            **(metadata or {}),
+            "capture_kind": "adapter_daily_note",
+            "convention": MEMORY_EVENT_CONVENTION,
+            "adapter": "daily_note",
+            "note_date": normalized_note_date,
+            "event_at": normalized_event_at,
+            "thread": {"id": resolved_thread_id, "title": resolved_thread_title},
+        },
+    )
+    if result.get("ok"):
+        result["adapter"] = "daily_note"
+        result["convention"] = MEMORY_EVENT_CONVENTION
+    return result
+
+
+@mcp.tool()
+def ingest_pr_outcome(
+    pr_number: int,
+    title: str,
+    outcome: str,
+    summary: str = "",
+    details: str = "",
+    event_at: str = "",
+    tags: str = DEFAULT_PR_OUTCOME_TAGS,
+    scope: str = "project",
+    thread_id: str = "",
+    thread_title: str = "",
+    issue_id: str = "",
+    branch: str = "",
+    commit_sha: str = "",
+    pr_url: str = "",
+    metadata: dict | None = None,
+) -> dict:
+    """Store a pull-request outcome using the memory_event_v1 convention. Defaults to project scope and a `pr:<number>` thread."""
+    try:
+        normalized_pr_number = int(pr_number)
+    except (TypeError, ValueError):
+        return _failure("invalid_pr_number", "pr_number must be a positive integer", pr_number=pr_number)
+    if normalized_pr_number <= 0:
+        return _failure("invalid_pr_number", "pr_number must be a positive integer", pr_number=pr_number)
+
+    title_error = _validate_memory_content(title)
+    if title_error:
+        return _failure_from_error(title_error, field="title")
+
+    normalized_outcome = " ".join(outcome.split()).lower()
+    if not normalized_outcome:
+        return _failure("missing_outcome", "outcome is required")
+
+    resolved_thread, thread_error = _normalize_thread(
+        thread_id,
+        f"pr:{normalized_pr_number}",
+        thread_title,
+        f"PR #{normalized_pr_number}: {title.strip()}",
+    )
+    if thread_error:
+        return thread_error
+    resolved_thread_id, resolved_thread_title = resolved_thread
+
+    normalized_event_at, event_error = _normalize_event_at(event_at)
+    if event_error:
+        return event_error
+    if not normalized_event_at:
+        normalized_event_at = _utc_iso(datetime.now(timezone.utc))
+
+    resolved_summary = summary.strip() or f"PR #{normalized_pr_number} {normalized_outcome}: {title.strip()}"
+    detail_lines = [
+        f"PR #{normalized_pr_number}: {title.strip()}",
+        f"Outcome: {normalized_outcome}",
+    ]
+    if issue_id.strip():
+        detail_lines.append(f"Issue: {issue_id.strip()}")
+    if branch.strip():
+        detail_lines.append(f"Branch: {branch.strip()}")
+    if commit_sha.strip():
+        detail_lines.append(f"Commit: {commit_sha.strip()}")
+    if pr_url.strip():
+        detail_lines.append(f"URL: {pr_url.strip()}")
+    if details.strip():
+        detail_lines.extend(("", details.strip()))
+
+    result = remember(
+        content="",
+        summary=resolved_summary,
+        details="\n".join(detail_lines),
+        memory_kind="summary",
+        tags=tags,
+        scope=scope,
+        metadata={
+            **(metadata or {}),
+            "capture_kind": "adapter_pr_outcome",
+            "convention": MEMORY_EVENT_CONVENTION,
+            "adapter": "pr_outcome",
+            "event_at": normalized_event_at,
+            "outcome": normalized_outcome,
+            "pr_number": normalized_pr_number,
+            "pr_title": title.strip(),
+            "thread": {"id": resolved_thread_id, "title": resolved_thread_title},
+            "issue_id": issue_id.strip() or None,
+            "branch": branch.strip() or None,
+            "commit_sha": commit_sha.strip() or None,
+            "pr_url": pr_url.strip() or None,
+        },
+    )
+    if result.get("ok"):
+        result["adapter"] = "pr_outcome"
+        result["convention"] = MEMORY_EVENT_CONVENTION
+    return result
 
 
 @mcp.tool()

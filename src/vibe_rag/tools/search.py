@@ -100,11 +100,33 @@ def search_docs(query: str, limit: int = 10) -> dict:
 
 
 @mcp.tool()
-def search_memory(query: str, limit: int = 10, tags: str = "") -> dict:
-    """Search stored memories by semantic similarity. Returns memories from both project and user databases, ranked by relevance. Results include match_reason and staleness indicators. Use tags to post-filter by comma-separated tag names."""
-    error, results = _search_memory_results(query, limit=limit, tags=tags)
+def search_memory(
+    query: str,
+    limit: int = 10,
+    tags: str = "",
+    thread_id: str = "",
+    since: str = "",
+    until: str = "",
+) -> dict:
+    """Search stored memories by semantic similarity. Optional filters: tags, thread_id, and ISO 8601 since/until timestamps. Results include match_reason and staleness indicators."""
+    error, results = _search_memory_results(
+        query,
+        limit=limit,
+        tags=tags,
+        thread_id=thread_id,
+        since=since,
+        until=until,
+    )
     if error:
-        return _failure_from_error(error, query=query, limit=limit, tags=tags)
+        return _failure_from_error(
+            error,
+            query=query,
+            limit=limit,
+            tags=tags,
+            thread_id=thread_id,
+            since=since,
+            until=until,
+        )
 
     payloads = [
         _memory_payload(result, current_project_id=_ensure_project_id(), query=query)
@@ -114,6 +136,9 @@ def search_memory(query: str, limit: int = 10, tags: str = "") -> dict:
         query=query,
         limit=limit,
         tags=tags,
+        thread_id=thread_id,
+        since=since,
+        until=until,
         result_total=len(payloads),
         results=payloads,
         warnings=[],

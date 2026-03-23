@@ -7,22 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.0.27] - 2026-03-23
+## [0.0.28] - 2026-03-23
 
 ### Added
-- `update_memory` for in-place edits so agents can revise an existing memory without creating a replacement record
+- Thread-aware memory workflows: memory payloads now expose `thread_id` / `thread_title`, `search_memory` can filter by `thread_id`, `since`, and `until`, and `summarize_thread` can continue a thread with latest-first context and counts
+- Write adapters for durable event capture: `ingest_daily_note` for personal daily notes and `ingest_pr_outcome` for pull-request outcomes
+- A small `memory_event_v1` convention doc defining stable `thread` and `event_at` metadata for write adapters
 
 ### Changed
-- The MCP surface is now streamlined to 12 tools around unified `search(...)`, scoped `remember(...)`, `project_status`, and the existing session/bootstrap tools
-- Search responses now expose clearer `match_reason` metadata, keep explicit `result_type` labels in mixed `scope="all"` results, and support tag-filtered memory search with recency-aware ranking
-- `project_status` now serves as the primary dashboard for index, stale-state, and memory-health inspection, and returns compact cleanup-candidate summaries instead of full memory payloads
-- CLI `doctor` and `status` now surface tool count, language coverage, memory health, and other release-bar checks more directly
-- Single-text embedding lookups now use a small in-process LRU cache to reduce repeated provider calls during interactive search and memory operations
-
-### Fixed
-- Packaged installs now pin `tree-sitter` to a version range that stays compatible with `tree-sitter-languages`, so syntax-aware chunking works from the built wheel instead of silently falling back during indexing
-- Incremental reindex now backfills missing code-chunk languages on unchanged files, and `language_stats` now falls back to extension-derived languages instead of surfacing `None` buckets
-- Explicitly typed freeform `remember(...)` calls now report `capture_kind=\"manual\"` and no longer show up as `freeform_capture` cleanup noise
+- User-facing docs now describe thread metadata and the new adapter-based write patterns for daily notes and PR outcomes
 
 ## [0.0.26] - 2026-03-23
 

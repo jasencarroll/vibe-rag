@@ -73,6 +73,8 @@ Use:
 
 - `remember_structured`
 - `supersede_memory`
+- `ingest_daily_note`
+- `ingest_pr_outcome`
 
 Good memory kinds:
 
@@ -81,6 +83,26 @@ Good memory kinds:
 - `todo`
 - `summary`
 - `fact`
+
+For longer-running work, attach thread metadata when you store or update memory:
+
+- `metadata.thread_id`
+- `metadata.thread_title`
+- or `metadata.thread = { id, title }`
+
+Then you can:
+
+- filter `search_memory` by `thread_id`, `since`, and `until`
+- call `summarize_thread` to continue a project, issue, or daily note stream
+
+The adapter metadata shape is defined in the [Memory Event Convention](memory-event-convention.md).
+
+Examples:
+
+```text
+ingest_daily_note note_date=2026-03-23 summary="Worked on auth" details="Removed one legacy middleware branch."
+ingest_pr_outcome pr_number=42 title="Fix auth refresh ordering" outcome="merged" issue_id="AUTH-17"
+```
 
 If the same numeric id exists in both project and user memory stores, qualify destructive operations explicitly:
 
