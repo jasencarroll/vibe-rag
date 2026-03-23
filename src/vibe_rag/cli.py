@@ -82,7 +82,8 @@ def init(name: str | None):
     if mcp_json_template.exists():
         shutil.copy2(mcp_json_template, target / ".mcp.json")
 
-    _replace_placeholder_in_tree(target, "__VIBE_RAG_BIN__", vibe_rag_bin)
+    _replace_placeholder_in_files(_generated_config_files(target), "__VIBE_RAG_BIN__", vibe_rag_bin)
+    _initialize_git_repo(target)
 
     # .gitignore
     gitignore = target / ".gitignore"
@@ -105,13 +106,43 @@ def init(name: str | None):
     click.echo(f"    vibe")
 
 
-def _replace_placeholder_in_tree(root: Path, placeholder: str, value: str) -> None:
-    for path in root.rglob("*"):
-        if not path.is_file():
+def _generated_config_files(root: Path) -> list[Path]:
+    files: list[Path] = []
+    for relative_dir in (".vibe", ".codex", ".claude", ".gemini"):
+        config_dir = root / relative_dir
+        if not config_dir.exists():
             continue
+        files.extend(path for path in config_dir.rglob("*") if path.is_file())
+
+    mcp_json = root / ".mcp.json"
+    if mcp_json.exists():
+        files.append(mcp_json)
+
+    return files
+
+
+def _replace_placeholder_in_files(paths: list[Path], placeholder: str, value: str) -> None:
+    for path in paths:
         text = path.read_text()
         if placeholder in text:
             path.write_text(text.replace(placeholder, value))
+
+
+def _initialize_git_repo(target: Path) -> None:
+    if (target / ".git").exists():
+        return
+
+    git_bin = shutil.which("git")
+    if not git_bin:
+        return
+
+    subprocess.run(
+        [git_bin, "init"],
+        cwd=target,
+        check=False,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
 
 @main.command()
 def status():

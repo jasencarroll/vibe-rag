@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.18] - 2026-03-22
+
+### Fixed
+- `vibe-rag init` now rewrites placeholders only inside generated scaffold files instead of walking the entire target tree
+- Generated repos now initialize `.git` automatically when scaffolding into a directory that is not already a git repo
+- Generated Codex config now suppresses the unstable-features warning and the scaffold flow was revalidated against fresh Codex startup
+
 ## [0.0.17] - 2026-03-22
 
 ### Added

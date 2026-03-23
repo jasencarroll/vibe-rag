@@ -56,7 +56,7 @@ vibe-rag --version
 Pinned release:
 
 ```bash
-uv tool install vibe-rag@0.0.17
+uv tool install vibe-rag@0.0.18
 ```
 
 If your machine defaults `uv` tools to Python 3.13:
@@ -157,10 +157,14 @@ Success looks like:
 - `.gemini/settings.json`
 - `.mcp.json`
 
+If the target directory is not already a git repo, `vibe-rag init` also runs `git init`.
+
 These files use:
 
 - `vibe-rag serve` for MCP tools
 - `vibe-rag hook-session-start --format <client>` for session-start context injection
+
+Generated Codex config also sets `suppress_unstable_features_warning = true`.
 
 Current support level:
 

@@ -57,6 +57,8 @@ This writes:
 - `.gemini/settings.json`
 - `.mcp.json`
 
+If the target directory is not already a git repo, `vibe-rag init` also runs `git init`.
+
 ## 3. Configure the MCP Server
 
 Use a project config like this:
@@ -130,6 +132,8 @@ Those files do two things:
 
 - register `vibe-rag serve` as an MCP server for the client
 - run `vibe-rag hook-session-start --format <client>` at session start
+
+Generated Codex config also sets `suppress_unstable_features_warning = true`.
 
 Current support level:
 

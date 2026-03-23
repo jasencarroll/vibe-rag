@@ -90,6 +90,8 @@ Those clients currently get:
 
 - MCP server registration for `vibe-rag serve`
 - session-start context injection through `vibe-rag hook-session-start`
+- automatic `git init` when the scaffold target is not already a repo
+- Codex config with `suppress_unstable_features_warning = true`
 
 Vibe remains the primary supported client.
 

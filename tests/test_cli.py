@@ -11,7 +11,7 @@ def test_cli_version():
     runner = CliRunner()
     result = runner.invoke(main, ["--version"])
     assert result.exit_code == 0
-    assert "0.0.17" in result.output
+    assert "0.0.18" in result.output
 
 
 def test_cli_status():
@@ -140,7 +140,7 @@ def test_cli_module_entrypoint():
     )
 
     assert result.returncode == 0
-    assert "0.0.17" in result.stdout
+    assert "0.0.18" in result.stdout
 
 
 def test_cli_init_does_not_persist_secrets():
@@ -223,6 +223,7 @@ def test_cli_init_installs_codex_and_claude_scaffolding():
         assert "__VIBE_RAG_BIN__" not in gemini_settings
         assert "__VIBE_RAG_BIN__" not in claude_mcp
 
+        assert "suppress_unstable_features_warning = true" in codex_config
         assert "codex_hooks = true" in codex_config
         assert 'args = ["serve"]' in codex_config
         assert "hook-session-start --format codex" in codex_hooks
@@ -231,6 +232,72 @@ def test_cli_init_installs_codex_and_claude_scaffolding():
         assert '"mcpServers"' in gemini_settings
         assert '"mcpServers"' in claude_mcp
         assert '"vibe-rag"' in claude_mcp
+
+
+def test_cli_init_only_rewrites_generated_files(monkeypatch):
+    runner = CliRunner()
+
+    def fake_which(name):
+        if name == "vibe-rag":
+            return "/tmp/fake-bin/vibe-rag"
+        if name == "git":
+            return "/usr/bin/git"
+        return None
+
+    monkeypatch.setattr("vibe_rag.cli.shutil.which", fake_which)
+    monkeypatch.setattr("vibe_rag.cli.subprocess.run", lambda *args, **kwargs: None)
+
+    with runner.isolated_filesystem():
+        Path("demo").mkdir()
+        Path("demo/.vibe").mkdir()
+        Path("demo/notes.txt").write_text("leave __VIBE_RAG_BIN__ untouched")
+
+        result = runner.invoke(main, ["init", "demo"], input="y\n")
+
+        assert result.exit_code == 0
+        assert Path("demo/notes.txt").read_text() == "leave __VIBE_RAG_BIN__ untouched"
+        assert "/tmp/fake-bin/vibe-rag" in Path("demo/.codex/config.toml").read_text()
+
+
+def test_cli_init_runs_git_init_when_missing(monkeypatch):
+    runner = CliRunner()
+    calls = []
+
+    def fake_which(name):
+        if name == "vibe-rag":
+            return "/tmp/fake-bin/vibe-rag"
+        if name == "git":
+            return "/usr/bin/git"
+        return None
+
+    def fake_run(args, cwd=None, check=False, stdout=None, stderr=None):
+        calls.append(
+            {
+                "args": args,
+                "cwd": cwd,
+                "check": check,
+                "stdout": stdout,
+                "stderr": stderr,
+            }
+        )
+        return None
+
+    monkeypatch.setattr("vibe_rag.cli.shutil.which", fake_which)
+    monkeypatch.setattr("vibe_rag.cli.subprocess.run", fake_run)
+
+    with runner.isolated_filesystem():
+        result = runner.invoke(main, ["init", "demo"])
+
+        assert result.exit_code == 0
+        assert calls == [
+            {
+                "args": ["/usr/bin/git", "init"],
+                "cwd": Path.cwd() / "demo",
+                "check": False,
+                "stdout": subprocess.DEVNULL,
+                "stderr": subprocess.DEVNULL,
+            }
+        ]
 
 
 def test_cli_hook_session_start_renders_codex_output(monkeypatch):
