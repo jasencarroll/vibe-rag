@@ -1,0 +1,67 @@
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+@import 'tailwindcss';
+
+@theme inline {
+  --color-background: oklch(0.985 0.002 75);
+  --color-foreground: oklch(0.216 0.006 56.043);
+  --color-card: oklch(0.997 0.001 90);
+  --color-card-foreground: oklch(0.216 0.006 56.043);
+  --color-popover: oklch(0.997 0.001 90);
+  --color-popover-foreground: oklch(0.216 0.006 56.043);
+  --color-primary: oklch(0.24 0.012 48);
+  --color-primary-foreground: oklch(0.98 0.001 95);
+  --color-secondary: oklch(0.95 0.004 75);
+  --color-secondary-foreground: oklch(0.216 0.006 56.043);
+  --color-muted: oklch(0.964 0.003 70);
+  --color-muted-foreground: oklch(0.49 0.012 67);
+  --color-accent: oklch(0.966 0.006 82);
+  --color-accent-foreground: oklch(0.216 0.006 56.043);
+  --color-destructive: oklch(0.577 0.245 27.325);
+  --color-border: oklch(0.905 0.004 56);
+  --color-input: oklch(0.905 0.004 56);
+  --color-ring: oklch(0.24 0.012 48);
+  --radius: 0.55rem;
+}
+
+:root {
+  color: var(--color-foreground);
+  background:
+    radial-gradient(circle at top, rgba(175, 157, 116, 0.12), transparent 28%),
+    linear-gradient(180deg, rgba(255, 252, 245, 1) 0%, rgba(248, 246, 240, 1) 100%);
+  font-family: 'IBM Plex Mono', monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background: transparent;
+  color: var(--color-foreground);
+  font-family: 'IBM Plex Mono', monospace;
+}
+
+a,
+button {
+  font: inherit;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+::selection {
+  background: rgba(48, 42, 31, 0.14);
+}
+
+.markdown-shell h1:first-child {
+  display: none;
+}
+
