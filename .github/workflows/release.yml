@@ -21,10 +21,10 @@ jobs:
       - uses: astral-sh/setup-uv@v7
         with:
           python-version: "3.12"
-      - run: uv sync --dev
+      - run: uv sync --extra dev
       - name: Prepare release files
         run: python scripts/prepare_release.py --version "${{ inputs.version }}" --notes-out release-notes.md
-      - run: uv run pytest
+      - run: uv run --extra dev pytest
       - run: uv build
       - name: Summarize release artifacts
         run: |

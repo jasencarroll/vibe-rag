@@ -12,8 +12,8 @@ jobs:
       - uses: astral-sh/setup-uv@v7
         with:
           python-version: "3.12"
-      - run: uv sync --dev
-      - run: uv run pytest
+      - run: uv sync --extra dev
+      - run: uv run --extra dev pytest
       - run: uv build
       - name: Summarize build artifacts
         run: |
