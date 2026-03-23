@@ -6,6 +6,8 @@ If you are doing packaging, release, scaffold, or docs work in this repository, 
 
 The internal agent-oriented maintainer contract still lives in `AGENTS.md`.
 
+If you are looking for the user-facing product docs, start with the [README](../README.md), the [Setup Guide](setup-guide.md), and the [User Guide](user-guide.md).
+
 ## Source Of Truth
 
 - `README.md` is the first-run and install path.

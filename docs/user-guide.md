@@ -1,5 +1,9 @@
 # vibe-rag User Guide
 
+Use this when setup is already done and you want the normal operating loop.
+
+If you still need to install the tool or wire a client, start with the [Setup Guide](setup-guide.md). If you are working on the repo itself, use the [Maintainer Guide](maintainer-guide.md).
+
 Use `vibe-rag` as two systems inside your coding client:
 
 | System | Purpose | Storage |

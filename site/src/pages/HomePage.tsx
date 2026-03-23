@@ -22,6 +22,29 @@ const highlights = [
   }
 ];
 
+const supportLevels = [
+  {
+    client: 'Vibe',
+    status: 'most complete',
+    body: 'Native SessionStart path, repo-memory workflow, and the best overall fit for the full briefing loop.'
+  },
+  {
+    client: 'Claude Code',
+    status: 'first-class enough',
+    body: 'Strong session-start path and practical day-to-day behavior with the current hook bridge.'
+  },
+  {
+    client: 'Codex',
+    status: 'good, with DX tax',
+    body: 'Works well enough, but the startup transcript still carries more product friction than it should.'
+  },
+  {
+    client: 'Gemini CLI',
+    status: 'experimental',
+    body: 'Scaffolded and usable, but not yet positioned as the primary reference path.'
+  }
+];
+
 const entryPoints = [
   {
     title: 'README',
@@ -125,6 +148,49 @@ Docs: docs/setup-guide.md`}
               <p className="leading-7 text-muted-foreground">{item.body}</p>
             </article>
           ))}
+        </div>
+      </section>
+
+      <section className="space-y-8">
+        <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+          <div className="max-w-2xl">
+            <div className="mb-3 text-xs uppercase tracking-[0.22em] text-muted-foreground">support posture</div>
+            <h2 className="text-3xl font-semibold tracking-tight md:text-4xl">
+              The clients are not equal, and the site should say that plainly.
+            </h2>
+          </div>
+          <div className="max-w-sm text-sm leading-7 text-muted-foreground">
+            Vibe is the fullest path. Claude Code is close. Codex works with a UX blemish. Gemini stays experimental until it earns more attention.
+          </div>
+        </div>
+        <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-4">
+          {supportLevels.map((item) => (
+            <article key={item.client} className="rounded-[24px] border border-border bg-card p-6">
+              <div className="mb-3 text-xs uppercase tracking-[0.18em] text-muted-foreground">{item.status}</div>
+              <h3 className="mb-4 text-xl font-semibold">{item.client}</h3>
+              <p className="leading-7 text-muted-foreground">{item.body}</p>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section className="grid gap-6 rounded-[32px] border border-border bg-accent p-8 lg:grid-cols-[0.9fr_1.1fr]">
+        <div className="space-y-4">
+          <div className="text-xs uppercase tracking-[0.22em] text-muted-foreground">wheel-first bar</div>
+          <h2 className="text-3xl font-semibold tracking-tight">If the packaged path fails, the product fails.</h2>
+          <p className="leading-7 text-muted-foreground">
+            `vibe-rag` is not a source-checkout trick. The generated scaffold, the session-start hook, and the MCP server all have to work from the installed artifact.
+          </p>
+        </div>
+        <div className="grid gap-4">
+          <div className="rounded-[20px] border border-border bg-card p-5">
+            <div className="mb-2 text-xs uppercase tracking-[0.18em] text-muted-foreground">acceptance</div>
+            <div className="font-medium text-foreground">Build the wheel, install the wheel, scaffold a repo, and make the client brief from that path.</div>
+          </div>
+          <div className="rounded-[20px] border border-border bg-card p-5">
+            <div className="mb-2 text-xs uppercase tracking-[0.18em] text-muted-foreground">why this matters</div>
+            <div className="font-medium text-foreground">A repo-memory tool that only works from source is still a demo.</div>
+          </div>
         </div>
       </section>
 

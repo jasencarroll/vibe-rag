@@ -1,5 +1,9 @@
 # vibe-rag Setup Guide
 
+Use this when you are wiring a fresh machine, validating a packaged install, or checking whether a client bootstrap path is actually healthy.
+
+If you already have the tool installed and want the day-to-day operating flow, jump to the [User Guide](user-guide.md). If you are changing packaging, scaffold, or release behavior in this repo, use the [Maintainer Guide](maintainer-guide.md).
+
 Target state:
 
 - packaged `vibe-rag`

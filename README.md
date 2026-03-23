@@ -1,8 +1,14 @@
 # vibe-rag
 
-`vibe-rag` is an MCP server for semantic repo search and durable coding memory.
+`vibe-rag` is the repo-awareness layer for coding agents.
 
-It is built for agentic coding workflows across clients.
+It is an MCP server for semantic repo search, durable coding memory, and session-start briefings.
+
+It is built for agentic coding workflows across clients, but the product bar is simple:
+
+- packaged install path works
+- repo docs stay canonical
+- session-start context improves the first turn instead of adding noise
 
 The most complete integration today is Vibe.
 
@@ -26,6 +32,12 @@ Storage is local and simple:
 - user memory: `~/.vibe/memory.db`
 
 No external database is required.
+
+## Read This First
+
+- [Setup Guide](docs/setup-guide.md)
+- [User Guide](docs/user-guide.md)
+- [Maintainer Guide](docs/maintainer-guide.md)
 
 ## Support Levels
 
