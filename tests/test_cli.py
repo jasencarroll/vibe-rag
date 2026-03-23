@@ -603,7 +603,6 @@ def test_cli_init_does_not_persist_secrets(monkeypatch):
         config_text = Path("demo/.vibe/config.toml").read_text()
         assert "top-secret-key" not in config_text
         assert "/tmp/vibe-user.db" not in config_text
-        assert 'skill_paths = [".vibe/skills"]' in config_text
         assert 'command = "/tmp/fake-bin/vibe-rag"' in config_text
         assert "source ~/.zprofile" not in config_text
         assert "source ~/.zshrc" not in config_text
@@ -638,22 +637,6 @@ def test_cli_init_writes_memory_first_agents_guide():
         assert "memory_search_memory" in agents_text
         assert "memory_project_status" in agents_text
         assert "Use the memory MCP tools first" in agents_text
-
-
-def test_cli_init_installs_semantic_repo_search_skill():
-    runner = CliRunner()
-    with runner.isolated_filesystem():
-        result = runner.invoke(main, ["init", "demo"])
-
-        assert result.exit_code == 0
-
-        skill_text = Path("demo/.vibe/skills/semantic-repo-search/SKILL.md").read_text()
-        assert "name: semantic-repo-search" in skill_text
-        assert "memory_load_session_context" in skill_text
-        assert "memory_search" in skill_text
-        assert 'scope: "code"' in skill_text
-        assert "memory_project_status" in skill_text
-        assert "Prefer memory tools over `grep`" in skill_text
 
 
 def test_cli_init_installs_codex_and_claude_scaffolding(monkeypatch):

@@ -1,7 +1,3 @@
-# Project-level Vibe configuration
-active_model = "devstral-2"
-skill_paths = [".vibe/skills"]
-
 [[mcp_servers]]
 name = "memory"
 transport = "stdio"
