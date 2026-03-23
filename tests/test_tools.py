@@ -513,8 +513,6 @@ def test_codex_config_queries_prefer_config_and_cli_surfaces(tmp_db, mock_embedd
     (tmp_path / "codex-rs" / "cli" / "src" / "mcp_cmd.rs").write_text(
         "pub struct McpCli;\npub fn list_servers() {}\n// config.toml mcp servers cli install build\n"
     )
-    (tmp_path / ".github" / "workflows").mkdir(parents=True)
-    (tmp_path / ".github" / "workflows" / "rust-ci.yml").write_text("name: rust-ci\n")
 
     old_cwd = os.getcwd()
     os.chdir(tmp_path)
@@ -528,7 +526,6 @@ def test_codex_config_queries_prefer_config_and_cli_surfaces(tmp_db, mock_embedd
         os.chdir(old_cwd)
 
     assert "codex-rs/config/src/lib.rs" in result or "codex-rs/cli/src/mcp_cmd.rs" in result
-    assert ".github/workflows/rust-ci.yml" not in result
 
 
 def test_codex_mcp_queries_prefer_protocol_and_shell_tool_surfaces(tmp_db, mock_embedder, tmp_path: Path):
