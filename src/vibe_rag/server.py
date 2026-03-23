@@ -19,7 +19,7 @@ _init_lock = threading.Lock()
 
 
 def _embedding_dimensions() -> int:
-    raw = os.environ.get("VIBE_RAG_EMBEDDING_DIMENSIONS", "1536").strip()
+    raw = os.environ.get("VIBE_RAG_EMBEDDING_DIMENSIONS", "1024").strip()
     try:
         value = int(raw)
     except ValueError as exc:

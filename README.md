@@ -48,7 +48,7 @@ vibe-rag --version
 Pinned release:
 
 ```bash
-uv tool install vibe-rag@0.0.15
+uv tool install vibe-rag@0.0.16
 ```
 
 If your machine defaults `uv` tools to Python 3.13:

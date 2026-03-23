@@ -5,13 +5,13 @@ from vibe_rag.db.sqlite import SqliteVecDB
 
 
 class FakeEmbedder:
-    """Returns deterministic 1536-dim vectors. No API calls."""
+    """Returns deterministic 1024-dim vectors. No API calls."""
 
     def embed_text_sync(self, texts: list[str]) -> list[list[float]]:
-        return [[float(i % 10) / 10.0] * 1536 for i, _ in enumerate(texts)]
+        return [[float(i % 10) / 10.0] * 1024 for i, _ in enumerate(texts)]
 
     def embed_code_sync(self, texts: list[str]) -> list[list[float]]:
-        return [[float(i % 10) / 10.0 + 0.01] * 1536 for i, _ in enumerate(texts)]
+        return [[float(i % 10) / 10.0 + 0.01] * 1024 for i, _ in enumerate(texts)]
 
 
 @pytest.fixture

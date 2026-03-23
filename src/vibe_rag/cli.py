@@ -16,6 +16,17 @@ def main():
     pass
 
 
+def _embedding_dimensions() -> int:
+    raw = os.environ.get("VIBE_RAG_EMBEDDING_DIMENSIONS", "1024").strip()
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise click.ClickException("VIBE_RAG_EMBEDDING_DIMENSIONS must be an integer") from exc
+    if value <= 0:
+        raise click.ClickException("VIBE_RAG_EMBEDDING_DIMENSIONS must be positive")
+    return value
+
+
 @main.command()
 @click.argument("name", required=False)
 def init(name: str | None):
@@ -88,13 +99,14 @@ def status():
     """Check memory status for current project."""
     from vibe_rag.db.sqlite import SqliteVecDB
 
-    db_path = Path.cwd() / ".vibe" / "index.db"
-    user_db_path = Path.home() / ".vibe" / "memory.db"
+    db_path = Path(os.environ.get("VIBE_RAG_DB", Path.cwd() / ".vibe" / "index.db")).expanduser()
+    user_db_path = Path(os.environ.get("VIBE_RAG_USER_DB", Path.home() / ".vibe" / "memory.db")).expanduser()
+    embedding_dimensions = _embedding_dimensions()
     click.echo(f"\n  vibe-rag {__version__}")
     click.echo(f"  DB: {db_path}\n")
 
     if db_path.exists():
-        db = SqliteVecDB(db_path)
+        db = SqliteVecDB(db_path, embedding_dimensions=embedding_dimensions)
         db.initialize()
         click.echo(f"  Code chunks: {db.code_chunk_count()}")
         click.echo(f"  Doc chunks:  {db.doc_count()}")
@@ -104,7 +116,7 @@ def status():
         click.echo("  No index yet. Run vibe and use index_project.")
 
     if user_db_path.exists():
-        user_db = SqliteVecDB(user_db_path)
+        user_db = SqliteVecDB(user_db_path, embedding_dimensions=embedding_dimensions)
         user_db.initialize()
         click.echo(f"  User:        {user_db.memory_count()} memories ({user_db_path})")
         user_db.close()

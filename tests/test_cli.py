@@ -11,7 +11,7 @@ def test_cli_version():
     runner = CliRunner()
     result = runner.invoke(main, ["--version"])
     assert result.exit_code == 0
-    assert "0.0.15" in result.output
+    assert "0.0.16" in result.output
 
 
 def test_cli_status():
@@ -19,6 +19,21 @@ def test_cli_status():
     result = runner.invoke(main, ["status"])
     assert result.exit_code == 0
     assert "vibe-rag" in result.output
+
+
+def test_cli_status_uses_env_db_paths_and_dimensions(monkeypatch, tmp_path):
+    runner = CliRunner()
+    project_db = tmp_path / "project.db"
+    user_db = tmp_path / "user.db"
+    monkeypatch.setenv("VIBE_RAG_DB", str(project_db))
+    monkeypatch.setenv("VIBE_RAG_USER_DB", str(user_db))
+    monkeypatch.setenv("VIBE_RAG_EMBEDDING_DIMENSIONS", "1024")
+
+    result = runner.invoke(main, ["status"])
+
+    assert result.exit_code == 0
+    assert str(project_db) in result.output
+    assert str(user_db) in result.output
 
 
 def test_cli_doctor_defaults_to_ollama(monkeypatch):
@@ -125,7 +140,7 @@ def test_cli_module_entrypoint():
     )
 
     assert result.returncode == 0
-    assert "0.0.15" in result.stdout
+    assert "0.0.16" in result.stdout
 
 
 def test_cli_init_does_not_persist_secrets():

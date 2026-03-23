@@ -355,7 +355,7 @@ def test_search_memory_falls_back_to_user_memory_results(tmp_db, mock_embedder):
         user_db.remember_structured(
             summary="The E2E repo marker for mistral-vibe is CERULEAN_PINEAPPLE_20260322.",
             content="The E2E repo marker for mistral-vibe is CERULEAN_PINEAPPLE_20260322.",
-            embedding=[0.0] * 1536,
+            embedding=[0.0] * 1024,
             project_id="mistral-vibe",
             memory_kind="fact",
         )
@@ -373,14 +373,14 @@ def test_search_memory_prefers_project_results_before_user_results(tmp_db, mock_
     srv._get_db().remember_structured(
         summary="The marker is QUARTZ_MERIDIAN_20260322_Z9.",
         content="The marker is QUARTZ_MERIDIAN_20260322_Z9.",
-        embedding=[0.0] * 1536,
+        embedding=[0.0] * 1024,
         project_id="sink-repo",
         memory_kind="summary",
     )
     srv._get_user_db().remember_structured(
         summary="The marker is QUARTZ_MERIDIAN_20260322_Z9 in source-repo.",
         content="The marker is QUARTZ_MERIDIAN_20260322_Z9 in source-repo.",
-        embedding=[0.0] * 1536,
+        embedding=[0.0] * 1024,
         project_id="source-repo",
         memory_kind="summary",
     )
@@ -409,7 +409,7 @@ def test_load_session_context_uses_user_memory_results(tmp_db, mock_embedder, tm
         srv._get_user_db().remember_structured(
             summary="gateway owns auth validation",
             content="gateway owns auth validation",
-            embedding=[0.0] * 1536,
+            embedding=[0.0] * 1024,
             project_id="shared",
             memory_kind="decision",
             metadata={"source": "session"},

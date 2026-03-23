@@ -9,7 +9,7 @@ import sqlite_vec
 
 
 class SqliteVecDB:
-    def __init__(self, path: Path, embedding_dimensions: int = 1536):
+    def __init__(self, path: Path, embedding_dimensions: int = 1024):
         self._path = path
         self._embedding_dimensions = embedding_dimensions
         self._conn: sqlite3.Connection | None = None
