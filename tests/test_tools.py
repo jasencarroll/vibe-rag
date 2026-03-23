@@ -507,11 +507,11 @@ def test_codex_config_queries_prefer_config_and_cli_surfaces(tmp_db, mock_embedd
     (tmp_path / "docs" / "config.md").write_text("Configure CODEX_HOME and connect MCP servers in config.toml.\n")
     (tmp_path / "codex-rs" / "config" / "src").mkdir(parents=True)
     (tmp_path / "codex-rs" / "config" / "src" / "lib.rs").write_text(
-        "pub const CODEX_HOME: &str = \"CODEX_HOME\";\npub fn sqlite_home() {}\n"
+        "pub const CODEX_HOME: &str = \"CODEX_HOME\";\npub fn sqlite_home() {}\n// config.toml MCP servers install build\n"
     )
     (tmp_path / "codex-rs" / "cli" / "src").mkdir(parents=True)
     (tmp_path / "codex-rs" / "cli" / "src" / "mcp_cmd.rs").write_text(
-        "pub struct McpCli;\npub fn list_servers() {}\n"
+        "pub struct McpCli;\npub fn list_servers() {}\n// config.toml mcp servers cli install build\n"
     )
     (tmp_path / ".github" / "workflows").mkdir(parents=True)
     (tmp_path / ".github" / "workflows" / "rust-ci.yml").write_text("name: rust-ci\n")

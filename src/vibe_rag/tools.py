@@ -655,15 +655,15 @@ def _path_intent_boost(query: str, file_path: str) -> float:
 
     if {"install", "build", "config"} & terms:
         if path == "codex-rs/config/src/lib.rs":
-            boost += 1.75
+            boost += 2.4
         elif path.startswith("codex-rs/config/src/"):
-            boost += 1.0
+            boost += 1.3
         if path == "codex-rs/cli/src/mcp_cmd.rs":
-            boost += 1.2
+            boost += 1.7
         elif path.startswith("codex-rs/cli/src/"):
-            boost += 0.45
+            boost += 0.8
         if path.startswith(".github/workflows/"):
-            boost -= 0.8
+            boost -= 1.8
         if "/tests/" in path or path.startswith("tests/"):
             boost -= 0.7
 
@@ -1283,7 +1283,14 @@ def _search_code_results(
     if {"install", "build", "config"} & terms:
         intent_results.extend(
             db.lexical_search_code(
-                ["config/src/lib.rs", "mcp_cmd", "config", "CODEX_HOME", "sqlite_home"],
+                [
+                    "config/src/lib.rs",
+                    "mcp_cmd",
+                    "config.toml",
+                    "mcp servers",
+                    "CODEX_HOME",
+                    "sqlite_home",
+                ],
                 limit=max(limit * 3, 8),
             )
         )
