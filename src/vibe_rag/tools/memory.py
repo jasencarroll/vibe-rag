@@ -98,6 +98,8 @@ def remember(
     if scope not in ("project", "user"):
         return _failure("invalid_scope", "scope must be 'project' or 'user'")
 
+    current_project_id = _ensure_project_id()
+
     # --- Structured path: summary is provided ---
     if summary.strip():
         error = _validate_memory_content(summary)
@@ -242,6 +244,7 @@ def update_memory(
     if isinstance(parsed, dict):
         return _failure_from_error(parsed)
     source_db, sqlite_id = parsed
+    current_project_id = _ensure_project_id()
 
     # Resolve DB
     if source_db == "user":
@@ -798,6 +801,7 @@ def save_session_summary(
     except RuntimeError as e:
         return _failure("embedding_failed", f"embedding failed: {e}")
 
+    current_project_id = _ensure_project_id()
     user_db = _get_user_db()
     existing = user_db.get_memory_by_source(
         source_session_id.strip(), summary_source_message_id
