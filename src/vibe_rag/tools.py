@@ -2777,60 +2777,47 @@ def forget(memory_id: str) -> dict:
 
 
 @mcp.tool()
-def project_status() -> dict:
-    """Summarize the current project index and memory state."""
+def project_status(include_memory_health: bool = True) -> dict:
+    """Summarize the current project index and memory state, including memory quality and cleanup candidates."""
     db = _get_db()
     metadata_state = _index_metadata(db)
     stale = _stale_state(db, Path.cwd(), _ensure_project_id())
     language_stats = db.language_stats()
     cleanup_candidates = _memory_cleanup_candidates(limit=3)
+
+    status: dict[str, Any] = {
+        "counts": {
+            "code_chunks": db.code_chunk_count(),
+            "doc_chunks": db.doc_count(),
+            "project_memories": db.memory_count(),
+            "user_memories": _get_user_db().memory_count(),
+        },
+        "metadata": metadata_state,
+        "stale": stale,
+        "language_stats": language_stats,
+        "cleanup_candidates": cleanup_candidates,
+    }
+
+    if include_memory_health:
+        status["memory_health"] = _memory_health_summary()
+
     return _success(
         project_id=_ensure_project_id(),
-        status={
-            "counts": {
-                "code_chunks": db.code_chunk_count(),
-                "doc_chunks": db.doc_count(),
-                "project_memories": db.memory_count(),
-                "user_memories": _get_user_db().memory_count(),
-            },
-            "metadata": metadata_state,
-            "stale": stale,
-            "language_stats": language_stats,
-            "cleanup_candidates": cleanup_candidates,
-        },
+        status=status,
     )
 
 
-@mcp.tool()
-def memory_cleanup_report(limit: int = 10) -> dict:
-    """List low-value or stale memories that are good cleanup candidates."""
-    if limit < 1:
-        return _failure("invalid_limit", "limit must be at least 1", limit=limit)
-    candidates = _memory_cleanup_candidates(limit=limit)
-    return {
-        "ok": True,
-        "project_id": _ensure_project_id(),
-        "candidate_total": len(candidates),
-        "candidates": candidates,
-    }
-
-
-@mcp.tool()
-def memory_quality_report(limit: int = 10) -> dict:
-    """Summarize memory quality, provenance mix, and cleanup pressure."""
-    if limit < 1:
-        return _failure("invalid_limit", "limit must be at least 1", limit=limit)
-
+def _memory_health_summary() -> dict:
+    """Build a concise memory-health dashboard section for project_status."""
     payloads = _all_memory_payloads()
     stale = [item for item in payloads if item.get("is_stale") is True]
     superseded = [item for item in payloads if item.get("is_superseded") is True]
-    current_project = [item for item in payloads if item.get("provenance", {}).get("is_current_project") is True]
-    cleanup_candidates = _memory_cleanup_candidates(limit=limit)
     duplicate_groups = _duplicate_auto_memory_groups(payloads)
+    # Use a wider pool for reason analysis, then trim for display.
+    cleanup_candidates = _memory_cleanup_candidates(limit=10)
 
     capture_kind_counts: dict[str, int] = {}
     source_type_counts: dict[str, int] = {}
-    stale_reason_counts: dict[str, int] = {}
     cleanup_reason_counts: dict[str, int] = {}
     for item in payloads:
         provenance = item.get("provenance", {})
@@ -2838,8 +2825,6 @@ def memory_quality_report(limit: int = 10) -> dict:
         source_type = str(provenance.get("source_type") or "unknown")
         capture_kind_counts[capture_kind] = capture_kind_counts.get(capture_kind, 0) + 1
         source_type_counts[source_type] = source_type_counts.get(source_type, 0) + 1
-        for reason in item.get("stale_reasons") or []:
-            stale_reason_counts[reason] = stale_reason_counts.get(reason, 0) + 1
     for candidate in cleanup_candidates:
         for reason in candidate.get("cleanup_reasons") or []:
             cleanup_reason_counts[reason] = cleanup_reason_counts.get(reason, 0) + 1
@@ -2861,25 +2846,16 @@ def memory_quality_report(limit: int = 10) -> dict:
         recommended_actions.append("Memory quality looks healthy; keep superseding stale decisions instead of appending duplicates.")
 
     return {
-        "ok": True,
-        "project_id": _ensure_project_id(),
         "summary": {
             "total_memories": len(payloads),
-            "current_project_memories": len(current_project),
             "stale_memories": len(stale),
             "superseded_memories": len(superseded),
-            "cleanup_candidate_total": len(cleanup_candidates),
             "duplicate_auto_memory_groups": len(duplicate_groups),
         },
-        "by_source_db": _count_by(payloads, "source_db"),
-        "by_memory_kind": _count_by(payloads, "memory_kind"),
+        "top_cleanup_candidates": cleanup_candidates[:3],
+        "recommended_actions": recommended_actions[:3],
         "by_capture_kind": capture_kind_counts,
         "by_source_type": source_type_counts,
-        "stale_reasons": stale_reason_counts,
-        "cleanup_reasons": cleanup_reason_counts,
-        "recommended_actions": recommended_actions,
-        "duplicate_auto_memory_groups": duplicate_groups[:limit],
-        "top_cleanup_candidates": cleanup_candidates[:limit],
     }
 
 
