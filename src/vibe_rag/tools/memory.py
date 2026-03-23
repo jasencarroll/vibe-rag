@@ -44,7 +44,7 @@ def remember(
     source_message_id: str = "",
     metadata: dict | None = None,
 ) -> dict:
-    """Store a durable memory. Pass just content for quick notes, or summary+details+memory_kind for structured memories. Use scope='user' for cross-project knowledge."""
+    """Store a durable memory. Pass just content for quick notes, or summary+details+memory_kind for structured memories. scope='user' for cross-project knowledge, scope='project' (default) for project-specific decisions. Memories are automatically retrieved in future sessions via load_session_context."""
     if scope not in ("project", "user"):
         return _failure("invalid_scope", "scope must be 'project' or 'user'")
 
@@ -182,7 +182,7 @@ def update_memory(
     tags: str = "",
     metadata: dict | None = None,
 ) -> dict:
-    """Update an existing memory in place. Only provided fields are changed."""
+    """Edit an existing memory in place. Only provided fields are changed. Use 'project:ID' or 'user:ID' prefix to target a specific database, or just the numeric ID (defaults to project)."""
     parsed = _parse_memory_locator(
         memory_id,
         error_code="invalid_memory_id",
@@ -305,7 +305,7 @@ def save_session_memory(
     memory_kind: MemoryKind = "summary",
     metadata: dict | None = None,
 ) -> dict:
-    """Persist a distilled durable memory from a completed chat turn."""
+    """Hook-driven: persist a distilled memory from a completed chat turn. Filters low-signal content and deduplicates automatically. Typically invoked by session hooks, not called directly."""
     if _should_skip_session_capture(response):
         return _success(skipped=True, reason="low-signal response")
     task_error = _validate_memory_content(task)
@@ -445,7 +445,7 @@ def save_session_summary(
     tags: str = "session,summary,auto",
     metadata: dict | None = None,
 ) -> dict:
-    """Maintain a rolling durable summary for the current session."""
+    """Hook-driven: maintain a rolling summary of the current session. Each call supersedes the previous summary. Typically invoked by session hooks, not called directly."""
     if turns:
         last_assistant = str(turns[-1].get("assistant", ""))
         if _should_skip_session_capture(last_assistant):
@@ -572,7 +572,7 @@ def supersede_memory(
     source_message_id: str = "",
     metadata: dict | None = None,
 ) -> dict:
-    """Create a new structured memory that supersedes an older one."""
+    """Replace an outdated memory with a corrected version. Creates a new memory linked to the old one, marking it as superseded. Use for changed decisions; use update_memory for minor edits."""
     if not old_memory_id:
         return _failure("missing_old_memory_id", "old_memory_id is required")
     parsed_memory = _parse_memory_locator(
@@ -653,7 +653,7 @@ def supersede_memory(
 
 @mcp.tool()
 def forget(memory_id: str) -> dict:
-    """Delete a remembered item by ID."""
+    """Permanently delete a memory by ID. Use 'project:ID' or 'user:ID' prefix to target a specific database."""
     parsed_memory = _parse_memory_locator(
         memory_id,
         error_code="invalid_memory_id",

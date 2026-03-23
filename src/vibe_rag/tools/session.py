@@ -26,7 +26,7 @@ def load_session_context(
     code_limit: int = 5,
     docs_limit: int = 3,
 ) -> dict:
-    """Bootstrap likely context for a new task by retrieving related memories, code, and docs in one call."""
+    """Bootstrap context for a new task. Retrieves related memories, code, and docs in one call, plus project health, activity pulse, and live decisions. Call at session start or when switching tasks."""
     error = _validate_query(task)
     if error:
         return _failure_from_error(error, task=task)

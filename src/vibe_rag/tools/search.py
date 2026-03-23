@@ -24,7 +24,7 @@ def search(
     language: str | None = None,
     min_score: float = 0.0,
 ) -> dict:
-    """Semantic search across code and docs. Use scope to narrow. Prefer this over grep when you know behavior but not exact symbols."""
+    """Semantic search across code and documentation. Use scope='code' for implementation details, scope='docs' for guides and specs, or scope='all' (default) for both. Prefer over grep when you know the behavior but not exact symbols or filenames. Results include match_reason explaining why each matched."""
     if scope not in ("all", "code", "docs"):
         return _failure("invalid_scope", f"scope must be 'all', 'code', or 'docs', got '{scope}'")
 
@@ -101,7 +101,7 @@ def search_docs(query: str, limit: int = 10) -> dict:
 
 @mcp.tool()
 def search_memory(query: str, limit: int = 10) -> dict:
-    """Semantic memory search across remembered project decisions and notes."""
+    """Search stored memories by semantic similarity. Returns memories from both project and user databases, ranked by relevance. Results include match_reason and staleness indicators."""
     error, results = _search_memory_results(query, limit=limit)
     if error:
         return _failure_from_error(error, query=query, limit=limit)

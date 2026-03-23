@@ -139,9 +139,9 @@ def test_embedding_provider_status_auto_reports_voyage_when_ollama_unreachable(m
 
 
 def test_create_embedding_provider_recovers_voyage_from_shell_env(monkeypatch):
-    monkeypatch.delenv("VIBE_RAG_EMBEDDING_PROVIDER", raising=False)
-    monkeypatch.delenv("VIBE_RAG_EMBEDDING_MODEL", raising=False)
-    monkeypatch.delenv("VOYAGE_API_KEY", raising=False)
+    from vibe_rag.indexing.embedder import EMBEDDING_ENV_KEYS
+    for key in EMBEDDING_ENV_KEYS:
+        monkeypatch.delenv(key, raising=False)
     monkeypatch.setenv("SHELL", "/bin/zsh")
     monkeypatch.setattr("vibe_rag.indexing.embedder._SHELL_ENV_ATTEMPTED", False)
     monkeypatch.setattr(
@@ -165,9 +165,9 @@ def test_create_embedding_provider_recovers_voyage_from_shell_env(monkeypatch):
 
 
 def test_embedding_provider_status_recovers_voyage_from_shell_env(monkeypatch):
-    monkeypatch.delenv("VIBE_RAG_EMBEDDING_PROVIDER", raising=False)
-    monkeypatch.delenv("VIBE_RAG_EMBEDDING_MODEL", raising=False)
-    monkeypatch.delenv("VOYAGE_API_KEY", raising=False)
+    from vibe_rag.indexing.embedder import EMBEDDING_ENV_KEYS
+    for key in EMBEDDING_ENV_KEYS:
+        monkeypatch.delenv(key, raising=False)
     monkeypatch.setenv("SHELL", "/bin/zsh")
     monkeypatch.setattr("vibe_rag.indexing.embedder._SHELL_ENV_ATTEMPTED", False)
     monkeypatch.setattr(

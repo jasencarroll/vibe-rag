@@ -86,7 +86,7 @@ def _memory_health_summary() -> dict:
 
 @mcp.tool()
 def project_status(include_memory_health: bool = True) -> dict:
-    """Summarize the current project index and memory state, including memory quality and cleanup candidates."""
+    """Dashboard view: index counts, staleness, language breakdown, and memory health including quality metrics, cleanup candidates, and recommendations. Use include_memory_health=False for a lighter response."""
     db = _get_db()
     metadata_state = _index_metadata(db)
     stale = _stale_state(db, Path.cwd(), _ensure_project_id())
@@ -117,7 +117,7 @@ def project_status(include_memory_health: bool = True) -> dict:
 
 @mcp.tool()
 def cleanup_duplicate_auto_memories(limit: int = 20, apply: bool = False) -> dict:
-    """Report or prune duplicate auto-captured memories, keeping the newest copy in each group."""
+    """Find and optionally prune duplicate auto-captured session memories. apply=False (default) to preview, apply=True to delete duplicates keeping newest."""
     if limit < 1:
         return _failure("invalid_limit", "limit must be at least 1", limit=limit)
 

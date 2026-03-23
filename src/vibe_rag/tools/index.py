@@ -267,5 +267,5 @@ def _index_project_impl(
 
 @mcp.tool()
 def index_project(paths: list[str] | str | None = None) -> dict:
-    """Index project source files and docs for semantic search. Prefer this before grep when exploring a repo."""
+    """Index or re-index code and docs in the current project for semantic search. Run after major file changes or when search returns stale results."""
     return _index_project_impl(paths)
