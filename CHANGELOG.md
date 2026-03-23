@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.26] - 2026-03-23
+
 ### Changed
 - Canonical docs, maintainer guidance, and generated scaffold messaging now describe the current client posture more explicitly: Vibe is first-class, Claude Code is strong, Codex works with DX tax, and Gemini CLI is experimental
 - Setup and maintainer docs now state the packaged-install acceptance bar more directly: the product is only proven after wheel install, scaffold, session-start, and retrieval all work from the installed binary
