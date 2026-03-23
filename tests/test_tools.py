@@ -2270,6 +2270,24 @@ def test_project_status_after_index(tmp_db, mock_embedder, tmp_path: Path):
     assert sum(result["status"]["language_stats"].values()) > 0
 
 
+def test_language_stats_reports_python_not_none(tmp_db, mock_embedder, tmp_path: Path):
+    """Indexing a .py file must produce language_stats with 'python', not 'None'."""
+    import os
+    (tmp_path / "app.py").write_text("x = 1\ny = 2\nz = 3\n")
+
+    old_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        index_project()
+        result = project_status()
+    finally:
+        os.chdir(old_cwd)
+
+    lang_stats = result["status"]["language_stats"]
+    assert "None" not in lang_stats, f"language_stats contains 'None': {lang_stats}"
+    assert lang_stats.get("python", 0) > 0, f"expected 'python' in language_stats: {lang_stats}"
+
+
 # --- min_score filtering tests ---
 
 
