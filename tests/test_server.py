@@ -33,16 +33,13 @@ def test_ensure_project_id_returns_path_derived_id():
 def test_get_embedder_without_key_raises(monkeypatch):
     old_embedder = srv._embedder
     srv._embedder = None
-    monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
-    monkeypatch.delenv("VOYAGE_API_KEY", raising=False)
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    monkeypatch.delenv("VIBE_RAG_EMBEDDING_PROVIDER", raising=False)
-    monkeypatch.setattr(
-        "vibe_rag.indexing.embedder._resolve_ollama_host",
-        lambda: (_ for _ in ()).throw(RuntimeError("Ollama not reachable")),
-    )
+    monkeypatch.delenv("RAG_OR_API_KEY", raising=False)
+    monkeypatch.delenv("RAG_OR_EMBED_MOD", raising=False)
+    monkeypatch.delenv("RAG_OR_EMBED_DIM", raising=False)
+    monkeypatch.delenv("RAG_DB", raising=False)
+    monkeypatch.delenv("RAG_USER_DB", raising=False)
     try:
-        with pytest.raises(RuntimeError, match="No explicit embedding provider configured"):
+        with pytest.raises(RuntimeError, match="RAG_OR_API_KEY not set"):
             srv._get_embedder()
     finally:
         srv._embedder = old_embedder
@@ -51,7 +48,7 @@ def test_get_embedder_without_key_raises(monkeypatch):
 def test_get_db_creates_and_returns_db(tmp_path: Path, monkeypatch):
     old_db = srv._project_db
     srv._project_db = None
-    monkeypatch.setenv("VIBE_RAG_DB", str(tmp_path / "test_srv.db"))
+    monkeypatch.setenv("RAG_DB", str(tmp_path / "test_srv.db"))
     try:
         db = srv._get_db()
         assert db is not None
@@ -77,20 +74,14 @@ def test_get_db_uses_provider_default_dimensions_when_env_unset(tmp_path: Path, 
         def initialize(self):
             return None
 
-    monkeypatch.setenv("VIBE_RAG_DB", str(tmp_path / "test_srv.db"))
-    monkeypatch.delenv("VIBE_RAG_EMBEDDING_DIMENSIONS", raising=False)
-    monkeypatch.delenv("VIBE_RAG_EMBEDDING_PROVIDER", raising=False)
-    monkeypatch.delenv("VOYAGE_API_KEY", raising=False)
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    monkeypatch.setenv("MISTRAL_API_KEY", "test-key")
-    monkeypatch.setattr(
-        "vibe_rag.indexing.embedder._resolve_ollama_host",
-        lambda: (_ for _ in ()).throw(RuntimeError("Ollama not reachable")),
-    )
+    monkeypatch.setenv("RAG_DB", str(tmp_path / "test_srv.db"))
+    monkeypatch.delenv("RAG_OR_EMBED_DIM", raising=False)
+    monkeypatch.delenv("RAG_OR_EMBED_MOD", raising=False)
+    monkeypatch.setenv("RAG_OR_API_KEY", "test-key")
     monkeypatch.setattr(srv, "SqliteVecDB", FakeDB)
     try:
         srv._get_db()
-        assert captured["embedding_dimensions"] == 1024
+        assert captured["embedding_dimensions"] == 2560
     finally:
         srv._project_db = old_db
 
@@ -98,7 +89,7 @@ def test_get_db_uses_provider_default_dimensions_when_env_unset(tmp_path: Path, 
 def test_get_user_db_creates_and_returns_db(tmp_path: Path, monkeypatch):
     old_db = srv._user_db
     srv._user_db = None
-    monkeypatch.setenv("VIBE_RAG_USER_DB", str(tmp_path / "user_srv.db"))
+    monkeypatch.setenv("RAG_USER_DB", str(tmp_path / "user_srv.db"))
     try:
         db = srv._get_user_db()
         assert db is not None

@@ -83,17 +83,11 @@ def test_populated_memory_forget(populated_memory):
 # ---------------------------------------------------------------------------
 
 _ALL_PROVIDER_VARS = (
-    "VIBE_RAG_EMBEDDING_PROVIDER",
-    "VIBE_RAG_EMBEDDING_MODEL",
-    "VIBE_RAG_EMBEDDING_DIMENSIONS",
-    "VIBE_RAG_OLLAMA_HOST",
-    "VIBE_RAG_CODE_EMBEDDING_MODEL",
-    "VIBE_RAG_DB",
-    "VIBE_RAG_USER_DB",
-    "MISTRAL_API_KEY",
-    "OPENAI_API_KEY",
-    "VOYAGE_API_KEY",
-    "OLLAMA_HOST",
+    "RAG_DB",
+    "RAG_USER_DB",
+    "RAG_OR_API_KEY",
+    "RAG_OR_EMBED_MOD",
+    "RAG_OR_EMBED_DIM",
 )
 
 
@@ -107,9 +101,9 @@ def test_clean_env_removes_all_provider_vars(clean_env):
 def test_clean_env_allows_setting_vars(clean_env, monkeypatch):
     import os
 
-    monkeypatch.setenv("MISTRAL_API_KEY", "test-key-123")
-    assert os.environ["MISTRAL_API_KEY"] == "test-key-123"
+    monkeypatch.setenv("RAG_OR_API_KEY", "test-key-123")
+    assert os.environ["RAG_OR_API_KEY"] == "test-key-123"
 
     # Other provider vars should still be absent
-    assert "OPENAI_API_KEY" not in os.environ
-    assert "VOYAGE_API_KEY" not in os.environ
+    assert "RAG_OR_EMBED_MOD" not in os.environ
+    assert "RAG_OR_EMBED_DIM" not in os.environ

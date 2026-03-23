@@ -6,14 +6,17 @@ from pathlib import Path
 from vibe_rag.chunking import chunk_doc, collect_files_with_skips
 from vibe_rag.constants import EXT_TO_LANG
 from vibe_rag.indexing.code_chunker import chunk_code
-from vibe_rag.indexing.embedder import ProgressCallback
+from vibe_rag.indexing.embedder import ProgressCallback, resolve_embedding_profile
 from vibe_rag.server import _ensure_project_id, _get_db, _get_embedder, mcp
 from vibe_rag.tools._helpers import (
     _content_hash,
     _current_git_head,
+    _embedding_profile_state,
     _embed_sync_with_progress,
     _emit_progress,
     _failure,
+    _format_embedding_profile,
+    _index_metadata,
     _index_skip_summary,
     _normalize_paths,
     _relative_to_project,
@@ -27,6 +30,8 @@ def _index_project_impl(
     paths: list[str] | str | None = None,
     *,
     progress_callback: ProgressCallback | None = None,
+    force_full_rebuild: bool = False,
+    rebuild_reason: str | None = None,
 ) -> dict:
     start = time.time()
 
@@ -54,8 +59,38 @@ def _index_project_impl(
     )
 
     db = _get_db()
+    warnings: list[dict] = []
+    current_profile = resolve_embedding_profile()
+    metadata_state = _index_metadata(db)
+    profile_state = _embedding_profile_state(db, metadata_state.get("metadata"))
+    profile_requires_rebuild = bool(profile_state.get("is_incompatible"))
+    force_full_rebuild = force_full_rebuild or profile_requires_rebuild
     code_hashes = db.get_file_hashes("code")
     doc_hashes = db.get_file_hashes("doc")
+    if force_full_rebuild:
+        if db.code_chunk_count() > 0:
+            db.clear_code()
+        if db.doc_count() > 0:
+            db.clear_docs()
+        if code_hashes:
+            db.delete_file_hashes(list(code_hashes), kind="code")
+        if doc_hashes:
+            db.delete_file_hashes(list(doc_hashes), kind="doc")
+        warnings.append(
+            {
+                "kind": "full_rebuild_required" if profile_requires_rebuild else "full_rebuild_requested",
+                "detail": (
+                    "full rebuild required due to embedding profile change "
+                    f"({_format_embedding_profile(profile_state.get('indexed_profile'))}"
+                    f" -> {_format_embedding_profile(profile_state.get('current_profile'))})"
+                )
+                if profile_requires_rebuild
+                else "full rebuild requested by operator",
+                "reason": rebuild_reason or ("embedding_profile_changed" if profile_requires_rebuild else "manual_request"),
+            }
+        )
+        code_hashes = {}
+        doc_hashes = {}
     if code_hashes and db.code_chunk_count() == 0:
         db.delete_file_hashes(list(code_hashes), kind="code")
         code_hashes = {}
@@ -70,7 +105,8 @@ def _index_project_impl(
     for stale in sorted(set(doc_hashes) - current_doc_paths):
         db.delete_file_chunks(stale, kind="doc")
 
-    warnings = [
+    warnings.extend(
+        [
         {
             "kind": "file_skipped",
             "path": _relative_to_project(Path(skip["path"]), project_root),
@@ -78,7 +114,8 @@ def _index_project_impl(
             "reason": skip["reason"],
         }
         for skip in discovered_skips
-    ]
+        ]
+    )
     code_chunks: list[dict] = []
     code_embeddings_input: list[str] = []
     code_updates: list[tuple[str, str, list[dict]]] = []
@@ -224,6 +261,7 @@ def _index_project_impl(
             "project_root": str(project_root),
             "indexed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "git_head": _current_git_head(project_root),
+            "embedding_profile": current_profile,
             "code_file_count": len(current_code_paths),
             "doc_file_count": len(current_doc_paths),
             "code_chunk_count": db.code_chunk_count(),
@@ -246,8 +284,11 @@ def _index_project_impl(
         f"{len(doc_files)} docs ({len(doc_chunks)} chunks, {doc_unchanged} unchanged) in {elapsed:.1f}s"
         f"{_index_skip_summary(code_skipped, doc_skipped)}"
     )
+    if force_full_rebuild:
+        summary = f"Rebuilt index with {_format_embedding_profile(current_profile)}. {summary}"
     return _success(
         summary=summary,
+        full_rebuild=force_full_rebuild,
         project_id=_ensure_project_id(),
         project_root=str(project_root),
         elapsed_seconds=round(elapsed, 1),

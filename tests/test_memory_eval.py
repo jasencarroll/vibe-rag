@@ -14,6 +14,8 @@ from vibe_rag.tools import (
 class MemoryEvalEmbedder:
     """Small keyword embedder to make memory usefulness scenarios deterministic."""
 
+    DIMENSIONS = 2560
+
     KEYWORDS = (
         "auth",
         "gateway",
@@ -38,7 +40,7 @@ class MemoryEvalEmbedder:
         counts = [float(lowered.count(keyword)) for keyword in self.KEYWORDS]
         total = sum(counts) or 1.0
         normalized = [count / total for count in counts]
-        return normalized + [0.0] * (1024 - len(normalized))
+        return normalized + [0.0] * (self.DIMENSIONS - len(normalized))
 
     def embed_text_sync(self, texts: list[str]) -> list[list[float]]:
         return [self._vector(text) for text in texts]

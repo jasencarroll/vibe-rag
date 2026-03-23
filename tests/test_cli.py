@@ -26,18 +26,26 @@ def test_cli_help_uses_broader_product_framing():
 
 def test_cli_status():
     runner = CliRunner()
-    result = runner.invoke(main, ["status"])
-    assert result.exit_code == 0
-    assert "vibe-rag" in result.output
+    with runner.isolated_filesystem():
+        result = runner.invoke(
+            main,
+            ["status"],
+            env={
+                "RAG_DB": str(Path.cwd() / "project.db"),
+                "RAG_USER_DB": str(Path.cwd() / "user.db"),
+            },
+        )
+        assert result.exit_code == 0
+        assert "vibe-rag" in result.output
 
 
 def test_cli_status_uses_env_db_paths_and_dimensions(monkeypatch, tmp_path):
     runner = CliRunner()
     project_db = tmp_path / "project.db"
     user_db = tmp_path / "user.db"
-    monkeypatch.setenv("VIBE_RAG_DB", str(project_db))
-    monkeypatch.setenv("VIBE_RAG_USER_DB", str(user_db))
-    monkeypatch.setenv("VIBE_RAG_EMBEDDING_DIMENSIONS", "1024")
+    monkeypatch.setenv("RAG_DB", str(project_db))
+    monkeypatch.setenv("RAG_USER_DB", str(user_db))
+    monkeypatch.setenv("RAG_OR_EMBED_DIM", "2560")
 
     result = runner.invoke(main, ["status"])
 
@@ -80,22 +88,91 @@ def test_cli_reindex_defaults_to_current_project(monkeypatch):
     assert "Indexed current project" in result.output
 
 
+def test_cli_reindex_full_uses_explicit_full_rebuild(monkeypatch):
+    runner = CliRunner()
+    calls = {}
+
+    def fake_index_project_impl(paths=None, *, progress_callback=None, force_full_rebuild=False, rebuild_reason=None):
+        calls["paths"] = paths
+        calls["force_full_rebuild"] = force_full_rebuild
+        calls["rebuild_reason"] = rebuild_reason
+        return {"ok": True, "summary": "Rebuilt index"}
+
+    monkeypatch.setattr("vibe_rag.tools.index._index_project_impl", fake_index_project_impl)
+
+    result = runner.invoke(main, ["reindex", "--full"])
+
+    assert result.exit_code == 0
+    assert calls == {
+        "paths": ".",
+        "force_full_rebuild": True,
+        "rebuild_reason": "explicit_cli_full_reindex",
+    }
+    assert "Full rebuild requested." in result.output
+    assert "Rebuilt index" in result.output
+
+
+def test_cli_reindex_full_rejects_partial_paths():
+    runner = CliRunner()
+
+    result = runner.invoke(main, ["reindex", "--full", "src"])
+
+    assert result.exit_code != 0
+    assert "--full rebuilds the entire project; omit paths." in result.output
+
+
+def test_cli_reset_index_alias_uses_full_rebuild(monkeypatch):
+    runner = CliRunner()
+    calls = {}
+
+    def fake_index_project_impl(paths=None, *, progress_callback=None, force_full_rebuild=False, rebuild_reason=None):
+        calls["paths"] = paths
+        calls["force_full_rebuild"] = force_full_rebuild
+        calls["rebuild_reason"] = rebuild_reason
+        return {"ok": True, "summary": "Rebuilt index"}
+
+    monkeypatch.setattr("vibe_rag.tools.index._index_project_impl", fake_index_project_impl)
+
+    result = runner.invoke(main, ["reset-index"])
+
+    assert result.exit_code == 0
+    assert calls == {
+        "paths": ".",
+        "force_full_rebuild": True,
+        "rebuild_reason": "explicit_cli_full_reindex",
+    }
+    assert "Full rebuild requested." in result.output
+
+
 def _patch_doctor_new_checks(monkeypatch):
     """Patch the new doctor checks (language coverage, memory health, tool count)."""
+    class FakeSqliteVecDB:
+        def __init__(self, path, embedding_dimensions=None):
+            self.path = path
+            self.embedding_dimensions = embedding_dimensions
+
+        def initialize(self):
+            return None
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr("vibe_rag.db.sqlite.SqliteVecDB", FakeSqliteVecDB)
     monkeypatch.setattr("vibe_rag.cli._check_language_coverage", lambda db: {"ok": True, "warning": False, "detail": "100 chunks across 3 languages"})
     monkeypatch.setattr("vibe_rag.cli._check_memory_health", lambda db, user_db: {"ok": True, "warning": False, "detail": "5 active"})
     monkeypatch.setattr("vibe_rag.cli._check_tool_count", lambda: {"ok": True, "warning": False, "detail": "15 tools registered"})
 
 
-def test_cli_doctor_defaults_to_ollama(monkeypatch):
+def test_cli_doctor_defaults_to_openrouter(monkeypatch):
     runner = CliRunner()
     monkeypatch.setattr(
         "vibe_rag.indexing.embedder.embedding_provider_status",
         lambda: {
-            "provider": "ollama",
+            "provider": "openrouter",
             "ok": True,
-            "detail": "ready (http://localhost:11434)",
-            "model": "qwen3-embedding:0.6b",
+            "detail": "ready",
+            "model": "perplexity/pplx-embed-v1-4b",
+            "dimensions": 2560,
         },
     )
     monkeypatch.setattr("vibe_rag.cli._project_mcp_command_status", lambda root: {"ok": True, "detail": "uv -> /usr/bin/uv"})
@@ -104,21 +181,16 @@ def test_cli_doctor_defaults_to_ollama(monkeypatch):
         "vibe_rag.cli._db_readable_status",
         lambda path, label: {"ok": True, "warning": False, "detail": f"{label} DB readable ({path})"},
     )
-    monkeypatch.setattr("vibe_rag.cli._vibe_cli_status", lambda: {"ok": True, "warning": False, "detail": "/usr/local/bin/vibe (mistral-vibe 0.1.0)"})
+    monkeypatch.setattr("vibe_rag.cli._vibe_cli_status", lambda: {"ok": True, "warning": False, "detail": "/usr/local/bin/vibe (vibe 0.1.0)"})
     monkeypatch.setattr("vibe_rag.cli._project_vibe_hook_status", lambda root: {"ok": True, "warning": False, "detail": "SessionStart hook returned context via /usr/local/bin/vibe-rag"})
     monkeypatch.setattr("vibe_rag.server._ensure_project_id", lambda: "demo-project")
-    monkeypatch.setattr("vibe_rag.server._get_embedder", lambda: type("Embedder", (), {"embed_text_sync": lambda self, texts: [[0.0] * 1024]})())
+    monkeypatch.setattr("vibe_rag.server._get_embedder", lambda: type("Embedder", (), {"embed_text_sync": lambda self, texts: [[0.0] * 2560]})())
     monkeypatch.setattr("vibe_rag.server._get_db", lambda: object())
     monkeypatch.setattr("vibe_rag.tools._vibe_trust_status", lambda root: {"status": "ok", "detail": "trusted in ~/.vibe/trusted_folders.toml"})
     monkeypatch.setattr("vibe_rag.tools._codex_trust_status", lambda root: {"status": "ok", "detail": "trusted in ~/.codex/config.toml"})
-    monkeypatch.setattr("vibe_rag.tools._stale_state", lambda db, root, project_id: {"is_stale": False, "warnings": []})
-    monkeypatch.setattr("vibe_rag.cli._recommended_provider", lambda: {"provider": "ollama", "reason": "local embeddings are available"})
     monkeypatch.setattr(
-        "vibe_rag.cli._provider_candidates",
-        lambda: [
-            {"provider": "ollama", "available": True, "detail": "local embeddings via Ollama"},
-            {"provider": "mistral", "available": False, "detail": "set MISTRAL_API_KEY"},
-        ],
+        "vibe_rag.tools._stale_state",
+        lambda db, root, project_id: {"is_stale": False, "is_incompatible": False, "warnings": []},
     )
     _patch_doctor_new_checks(monkeypatch)
     result = runner.invoke(main, ["doctor"])
@@ -132,19 +204,22 @@ def test_cli_doctor_defaults_to_ollama(monkeypatch):
     assert "[pass] Languages" in result.output
     assert "[pass] Memory health" in result.output
     assert "[pass] MCP tools" in result.output
-    assert "Recommended:  ollama (local embeddings are available)" in result.output
-    assert "ready (http://localhost:11434)" in result.output
+    assert "Model:        perplexity/pplx-embed-v1-4b" in result.output
+    assert "Dimensions:   2560" in result.output
+    assert "Golden path:  OpenRouter embeddings with one API key" in result.output
+    assert "openrouter" in result.output
 
 
-def test_cli_doctor_for_ollama_missing_host(monkeypatch):
+def test_cli_doctor_for_openrouter_without_api_key(monkeypatch):
     runner = CliRunner()
     monkeypatch.setattr(
         "vibe_rag.indexing.embedder.embedding_provider_status",
         lambda: {
-            "provider": "ollama",
+            "provider": "openrouter",
             "ok": False,
-            "detail": "Ollama not reachable. Set VIBE_RAG_OLLAMA_HOST or OLLAMA_HOST.",
-            "model": "qwen3-embedding:0.6b",
+            "detail": "RAG_OR_API_KEY not set",
+            "model": "perplexity/pplx-embed-v1-4b",
+            "dimensions": 2560,
         },
     )
     monkeypatch.setattr("vibe_rag.cli._project_mcp_command_status", lambda root: {"ok": False, "detail": "MCP command not found: vibe-rag"})
@@ -158,7 +233,7 @@ def test_cli_doctor_for_ollama_missing_host(monkeypatch):
         lambda: {
             "ok": False,
             "warning": True,
-            "detail": "Vibe CLI not found. Install the required mistral-vibe fork for first-class session bootstrap.",
+            "detail": "Vibe CLI not found. Vibe stays bootstrapped, but Claude Code and Codex are the strongest validated clients today.",
         },
     )
     monkeypatch.setattr(
@@ -168,14 +243,6 @@ def test_cli_doctor_for_ollama_missing_host(monkeypatch):
     monkeypatch.setattr("vibe_rag.server._ensure_project_id", lambda: "demo-project")
     monkeypatch.setattr("vibe_rag.tools._vibe_trust_status", lambda root: {"status": "warn", "detail": "repo not trusted"})
     monkeypatch.setattr("vibe_rag.tools._codex_trust_status", lambda root: {"status": "warn", "detail": "repo not trusted"})
-    monkeypatch.setattr("vibe_rag.cli._recommended_provider", lambda: {"provider": "mistral", "reason": "mistral credentials are already available"})
-    monkeypatch.setattr(
-        "vibe_rag.cli._provider_candidates",
-        lambda: [
-            {"provider": "ollama", "available": False, "detail": "install Ollama to use local embeddings"},
-            {"provider": "mistral", "available": True, "detail": "MISTRAL_API_KEY is set"},
-        ],
-    )
     _patch_doctor_new_checks(monkeypatch)
     result = runner.invoke(main, ["doctor"])
     assert result.exit_code == 0
@@ -184,68 +251,60 @@ def test_cli_doctor_for_ollama_missing_host(monkeypatch):
     assert "[warn] Vibe hooks" in result.output
     assert "[warn] Project DB" in result.output
     assert "Suggested next step:" in result.output
-    assert "Ollama fast path:" in result.output
-    assert "ollama pull qwen3-embedding:0.6b" in result.output
+    assert "export `RAG_OR_API_KEY=...`" in result.output
 
 
-def test_cli_doctor_fix_invokes_setup_ollama(monkeypatch):
+def test_cli_doctor_warns_for_embedding_provider_warning(monkeypatch):
     runner = CliRunner()
-    invoked = {}
 
     monkeypatch.setattr(
         "vibe_rag.indexing.embedder.embedding_provider_status",
         lambda: {
-            "provider": "ollama",
-            "ok": False,
-            "detail": "Ollama not reachable.",
-            "model": "qwen3-embedding:0.6b",
+            "provider": "openrouter",
+            "ok": True,
+            "warning": True,
+            "detail": "provider temporarily unavailable",
+            "model": "perplexity/pplx-embed-v1-4b",
+            "dimensions": 2560,
         },
     )
     monkeypatch.setattr("vibe_rag.cli._project_mcp_command_status", lambda root: {"ok": True, "detail": "uv -> /usr/bin/uv"})
     monkeypatch.setattr("vibe_rag.cli._codex_hook_status", lambda root: {"ok": True, "detail": "hook returned session context"})
     monkeypatch.setattr(
+        "vibe_rag.server._get_embedder",
+        lambda: type("Embedder", (), {"embed_text_sync": lambda self, texts: [[0.0] * 2560]})(),
+    )
+    monkeypatch.setattr(
         "vibe_rag.cli._db_readable_status",
         lambda path, label: {"ok": True, "warning": False, "detail": f"{label} DB readable ({path})"},
     )
-    monkeypatch.setattr("vibe_rag.cli._vibe_cli_status", lambda: {"ok": True, "warning": False, "detail": "/usr/local/bin/vibe (mistral-vibe 0.1.0)"})
+    monkeypatch.setattr("vibe_rag.cli._vibe_cli_status", lambda: {"ok": True, "warning": False, "detail": "/usr/local/bin/vibe (vibe 0.1.0)"})
     monkeypatch.setattr("vibe_rag.cli._project_vibe_hook_status", lambda root: {"ok": True, "warning": False, "detail": "SessionStart hook returned context via /usr/local/bin/vibe-rag"})
     monkeypatch.setattr("vibe_rag.server._ensure_project_id", lambda: "demo-project")
     monkeypatch.setattr("vibe_rag.tools._vibe_trust_status", lambda root: {"status": "ok", "detail": "trusted"})
     monkeypatch.setattr("vibe_rag.tools._codex_trust_status", lambda root: {"status": "ok", "detail": "trusted"})
-    monkeypatch.setattr("vibe_rag.tools._stale_state", lambda db, root, project_id: {"is_stale": False, "warnings": []})
-    monkeypatch.setattr("vibe_rag.cli._recommended_provider", lambda: {"provider": "ollama", "reason": "local embeddings are available"})
     monkeypatch.setattr(
-        "vibe_rag.cli._provider_candidates",
-        lambda: [{"provider": "ollama", "available": True, "detail": "local embeddings via Ollama"}],
+        "vibe_rag.tools._stale_state",
+        lambda db, root, project_id: {"is_stale": False, "is_incompatible": False, "warnings": []},
     )
     _patch_doctor_new_checks(monkeypatch)
-
-    def fake_invoke(command, *args, **kwargs):
-        invoked["command"] = command.name
-        invoked["kwargs"] = kwargs
-
-    class FakeCtx:
-        def invoke(self, command, *args, **kwargs):
-            return fake_invoke(command, *args, **kwargs)
-
-    monkeypatch.setattr("vibe_rag.cli.click.get_current_context", lambda *args, **kwargs: FakeCtx())
     result = runner.invoke(main, ["doctor", "--fix"])
-
     assert result.exit_code == 0
-    assert invoked["command"] == "setup-ollama"
-    assert invoked["kwargs"]["model"] == "qwen3-embedding:0.6b"
+    assert "[warn] Embedding" in result.output
+    assert "provider temporarily unavailable" in result.output
+    assert "Automatic provider setup was removed." in result.output
 
 
-def test_cli_doctor_warns_for_remote_ollama_host(monkeypatch):
+def test_cli_doctor_does_not_show_provider_fast_path(monkeypatch):
     runner = CliRunner()
     monkeypatch.setattr(
         "vibe_rag.indexing.embedder.embedding_provider_status",
         lambda: {
-            "provider": "ollama",
+            "provider": "openrouter",
             "ok": True,
-            "warning": True,
-            "detail": "ready (http://192.168.1.5:11434; remote host explicitly allowed)",
-            "model": "qwen3-embedding:0.6b",
+            "detail": "ready",
+            "model": "perplexity/pplx-embed-v1-4b",
+            "dimensions": 2560,
         },
     )
     monkeypatch.setattr("vibe_rag.cli._project_mcp_command_status", lambda root: {"ok": True, "detail": "uv -> /usr/bin/uv"})
@@ -254,29 +313,27 @@ def test_cli_doctor_warns_for_remote_ollama_host(monkeypatch):
         "vibe_rag.cli._db_readable_status",
         lambda path, label: {"ok": True, "warning": False, "detail": f"{label} DB readable ({path})"},
     )
-    monkeypatch.setattr("vibe_rag.cli._vibe_cli_status", lambda: {"ok": True, "warning": False, "detail": "/usr/local/bin/vibe (mistral-vibe 0.1.0)"})
+    monkeypatch.setattr("vibe_rag.cli._vibe_cli_status", lambda: {"ok": True, "warning": False, "detail": "/usr/local/bin/vibe (vibe 0.1.0)"})
     monkeypatch.setattr(
         "vibe_rag.cli._project_vibe_hook_status",
         lambda root: {"ok": False, "warning": True, "detail": "hooks.SessionStart.command is not configured in .vibe/config.toml"},
     )
     monkeypatch.setattr("vibe_rag.server._ensure_project_id", lambda: "demo-project")
-    monkeypatch.setattr("vibe_rag.server._get_embedder", lambda: type("Embedder", (), {"embed_text_sync": lambda self, texts: [[0.0] * 1024]})())
+    monkeypatch.setattr("vibe_rag.server._get_embedder", lambda: type("Embedder", (), {"embed_text_sync": lambda self, texts: [[0.0] * 2560]})())
     monkeypatch.setattr("vibe_rag.server._get_db", lambda: object())
     monkeypatch.setattr("vibe_rag.tools._vibe_trust_status", lambda root: {"status": "ok", "detail": "trusted"})
     monkeypatch.setattr("vibe_rag.tools._codex_trust_status", lambda root: {"status": "ok", "detail": "trusted"})
-    monkeypatch.setattr("vibe_rag.tools._stale_state", lambda db, root, project_id: {"is_stale": False, "warnings": []})
-    monkeypatch.setattr("vibe_rag.cli._recommended_provider", lambda: {"provider": "ollama", "reason": "local embeddings are available"})
     monkeypatch.setattr(
-        "vibe_rag.cli._provider_candidates",
-        lambda: [{"provider": "ollama", "available": True, "detail": "local embeddings via Ollama"}],
+        "vibe_rag.tools._stale_state",
+        lambda db, root, project_id: {"is_stale": False, "is_incompatible": False, "warnings": []},
     )
     _patch_doctor_new_checks(monkeypatch)
 
     result = runner.invoke(main, ["doctor"])
 
     assert result.exit_code == 0
-    assert "[warn] Embedding" in result.output
-    assert "remote host explicitly allowed" in result.output
+    assert "[warn] Embedding" not in result.output
+    assert "Ollama fast path:" not in result.output
 
 
 def test_project_mcp_command_status_reports_invalid_toml(tmp_path: Path):
@@ -360,10 +417,11 @@ def test_cli_doctor_warns_for_configured_hooks_in_untrusted_repo(monkeypatch):
     monkeypatch.setattr(
         "vibe_rag.indexing.embedder.embedding_provider_status",
         lambda: {
-            "provider": "ollama",
+            "provider": "openrouter",
             "ok": True,
-            "detail": "ready (http://localhost:11434)",
-            "model": "qwen3-embedding:0.6b",
+            "detail": "ready",
+            "model": "perplexity/pplx-embed-v1-4b",
+            "dimensions": 2560,
         },
     )
     monkeypatch.setattr("vibe_rag.cli._project_mcp_command_status", lambda root: {"ok": True, "detail": "uv -> /usr/bin/uv"})
@@ -375,21 +433,19 @@ def test_cli_doctor_warns_for_configured_hooks_in_untrusted_repo(monkeypatch):
         "vibe_rag.cli._db_readable_status",
         lambda path, label: {"ok": True, "warning": False, "detail": f"{label} DB readable ({path})"},
     )
-    monkeypatch.setattr("vibe_rag.cli._vibe_cli_status", lambda: {"ok": True, "warning": False, "detail": "/usr/local/bin/vibe (mistral-vibe 0.1.0)"})
+    monkeypatch.setattr("vibe_rag.cli._vibe_cli_status", lambda: {"ok": True, "warning": False, "detail": "/usr/local/bin/vibe (vibe 0.1.0)"})
     monkeypatch.setattr(
         "vibe_rag.cli._project_vibe_hook_status",
         lambda root: {"ok": True, "warning": False, "detail": "SessionStart hook configured (not executed): /usr/local/bin/vibe-rag"},
     )
     monkeypatch.setattr("vibe_rag.server._ensure_project_id", lambda: "demo-project")
-    monkeypatch.setattr("vibe_rag.server._get_embedder", lambda: type("Embedder", (), {"embed_text_sync": lambda self, texts: [[0.0] * 1024]})())
+    monkeypatch.setattr("vibe_rag.server._get_embedder", lambda: type("Embedder", (), {"embed_text_sync": lambda self, texts: [[0.0] * 2560]})())
     monkeypatch.setattr("vibe_rag.server._get_db", lambda: object())
     monkeypatch.setattr("vibe_rag.tools._vibe_trust_status", lambda root: {"status": "warn", "detail": "repo not trusted"})
     monkeypatch.setattr("vibe_rag.tools._codex_trust_status", lambda root: {"status": "warn", "detail": "repo not trusted"})
-    monkeypatch.setattr("vibe_rag.tools._stale_state", lambda db, root, project_id: {"is_stale": False, "warnings": []})
-    monkeypatch.setattr("vibe_rag.cli._recommended_provider", lambda: {"provider": "ollama", "reason": "local embeddings are available"})
     monkeypatch.setattr(
-        "vibe_rag.cli._provider_candidates",
-        lambda: [{"provider": "ollama", "available": True, "detail": "local embeddings via Ollama"}],
+        "vibe_rag.tools._stale_state",
+        lambda db, root, project_id: {"is_stale": False, "is_incompatible": False, "warnings": []},
     )
     _patch_doctor_new_checks(monkeypatch)
 
@@ -407,10 +463,11 @@ def test_cli_doctor_reports_stale_state(monkeypatch):
     monkeypatch.setattr(
         "vibe_rag.indexing.embedder.embedding_provider_status",
         lambda: {
-            "provider": "ollama",
+            "provider": "openrouter",
             "ok": True,
-            "detail": "ready (http://localhost:11434)",
-            "model": "qwen3-embedding:0.6b",
+            "detail": "ready",
+            "model": "perplexity/pplx-embed-v1-4b",
+            "dimensions": 2560,
         },
     )
     monkeypatch.setattr("vibe_rag.cli._project_mcp_command_status", lambda root: {"ok": True, "detail": "uv -> /usr/bin/uv"})
@@ -419,22 +476,18 @@ def test_cli_doctor_reports_stale_state(monkeypatch):
         "vibe_rag.cli._db_readable_status",
         lambda path, label: {"ok": True, "warning": False, "detail": f"{label} DB readable ({path})"},
     )
-    monkeypatch.setattr("vibe_rag.cli._vibe_cli_status", lambda: {"ok": True, "warning": False, "detail": "/usr/local/bin/vibe (mistral-vibe 0.1.0)"})
+    monkeypatch.setattr("vibe_rag.cli._vibe_cli_status", lambda: {"ok": True, "warning": False, "detail": "/usr/local/bin/vibe (vibe 0.1.0)"})
     monkeypatch.setattr("vibe_rag.cli._project_vibe_hook_status", lambda root: {"ok": True, "warning": False, "detail": "SessionStart hook returned context via /usr/local/bin/vibe-rag"})
     monkeypatch.setattr("vibe_rag.server._ensure_project_id", lambda: "demo-project")
-    monkeypatch.setattr("vibe_rag.server._get_embedder", lambda: type("Embedder", (), {"embed_text_sync": lambda self, texts: [[0.0] * 1024]})())
+    monkeypatch.setattr("vibe_rag.server._get_embedder", lambda: type("Embedder", (), {"embed_text_sync": lambda self, texts: [[0.0] * 2560]})())
     monkeypatch.setattr("vibe_rag.server._get_db", lambda: object())
     monkeypatch.setattr("vibe_rag.tools._vibe_trust_status", lambda root: {"status": "ok", "detail": "trusted"})
     monkeypatch.setattr("vibe_rag.tools._codex_trust_status", lambda root: {"status": "ok", "detail": "trusted"})
-    monkeypatch.setattr("vibe_rag.cli._recommended_provider", lambda: {"provider": "ollama", "reason": "local embeddings are available"})
-    monkeypatch.setattr(
-        "vibe_rag.cli._provider_candidates",
-        lambda: [{"provider": "ollama", "available": True, "detail": "local embeddings via Ollama"}],
-    )
     monkeypatch.setattr(
         "vibe_rag.tools._stale_state",
         lambda db, root, project_id: {
             "is_stale": True,
+            "is_incompatible": False,
             "warnings": [
                 {"kind": "git_head_changed", "detail": "git HEAD changed since index (abc -> def)"},
                 {"kind": "indexed_files_missing", "detail": "2 indexed files no longer exist"},
@@ -446,47 +499,72 @@ def test_cli_doctor_reports_stale_state(monkeypatch):
     result = runner.invoke(main, ["doctor"])
 
     assert result.exit_code == 0
-    assert "[warn] Stale state" in result.output
+    assert "[warn] Index state" in result.output
     assert "git HEAD changed since index" in result.output
-    assert "Suggested stale fix: vibe-rag reindex" in result.output
+    assert "Suggested fix: vibe-rag reindex" in result.output
 
 
-def test_cli_init_prints_provider_recommendation(monkeypatch):
+def test_cli_doctor_reports_incompatible_index_with_full_rebuild_fix(monkeypatch):
     runner = CliRunner()
-    monkeypatch.setattr("vibe_rag.cli._recommended_provider", lambda: {"provider": "mistral", "reason": "mistral credentials are already available"})
-    monkeypatch.setattr("vibe_rag.cli._provider_setup_hint", lambda provider: "export MISTRAL_API_KEY=...")
+    monkeypatch.setattr(
+        "vibe_rag.indexing.embedder.embedding_provider_status",
+        lambda: {
+            "provider": "openrouter",
+            "ok": True,
+            "detail": "ready",
+            "model": "perplexity/pplx-embed-v1-4b",
+            "dimensions": 2560,
+        },
+    )
+    monkeypatch.setattr("vibe_rag.cli._project_mcp_command_status", lambda root: {"ok": True, "detail": "uv -> /usr/bin/uv"})
+    monkeypatch.setattr("vibe_rag.cli._codex_hook_status", lambda root: {"ok": True, "detail": "hook returned session context"})
+    monkeypatch.setattr(
+        "vibe_rag.cli._db_readable_status",
+        lambda path, label: {"ok": True, "warning": False, "detail": f"{label} DB readable ({path})"},
+    )
+    monkeypatch.setattr("vibe_rag.cli._vibe_cli_status", lambda: {"ok": True, "warning": False, "detail": "/usr/local/bin/vibe (vibe 0.1.0)"})
+    monkeypatch.setattr("vibe_rag.cli._project_vibe_hook_status", lambda root: {"ok": True, "warning": False, "detail": "SessionStart hook returned context via /usr/local/bin/vibe-rag"})
+    monkeypatch.setattr("vibe_rag.server._ensure_project_id", lambda: "demo-project")
+    monkeypatch.setattr("vibe_rag.server._get_embedder", lambda: type("Embedder", (), {"embed_text_sync": lambda self, texts: [[0.0] * 2560]})())
+    monkeypatch.setattr("vibe_rag.server._get_db", lambda: object())
+    monkeypatch.setattr("vibe_rag.tools._vibe_trust_status", lambda root: {"status": "ok", "detail": "trusted"})
+    monkeypatch.setattr("vibe_rag.tools._codex_trust_status", lambda root: {"status": "ok", "detail": "trusted"})
+    monkeypatch.setattr(
+        "vibe_rag.tools._stale_state",
+        lambda db, root, project_id: {
+            "is_stale": True,
+            "is_incompatible": True,
+            "warnings": [
+                {"kind": "embedding_profile_changed", "detail": "embedding profile changed since last index (old -> new)"},
+            ],
+        },
+    )
+    _patch_doctor_new_checks(monkeypatch)
+
+    result = runner.invoke(main, ["doctor"])
+
+    assert result.exit_code == 0
+    assert "[FAIL] Index state" in result.output
+    assert "Suggested fix: vibe-rag reindex --full" in result.output
+    assert "Alias:         vibe-rag reset-index" in result.output
+
+
+def test_cli_init_prints_openrouter_golden_path(monkeypatch):
+    runner = CliRunner()
 
     with runner.isolated_filesystem():
         result = runner.invoke(main, ["init", "demo"])
 
     assert result.exit_code == 0
-    assert "Vibe is the first-class path and expects the mistral-vibe fork" in result.output
-    assert "Claude Code is strong, Codex works with DX tax" in result.output
-    assert "Recommended provider: mistral" in result.output
-    assert "Next step: export MISTRAL_API_KEY=..." in result.output
-
-
-def test_cli_setup_ollama(monkeypatch):
-    runner = CliRunner()
-    calls = []
-
-    monkeypatch.setattr("vibe_rag.cli.shutil.which", lambda name: "/usr/local/bin/ollama")
-    monkeypatch.setattr("vibe_rag.cli._start_ollama_if_needed", lambda: "http://localhost:11434")
-
-    class Result:
-        returncode = 0
-
-    def fake_run(args, check=False):
-        calls.append(args)
-        return Result()
-
-    monkeypatch.setattr("vibe_rag.cli.subprocess.run", fake_run)
-
-    result = runner.invoke(main, ["setup-ollama"])
-
-    assert result.exit_code == 0
-    assert calls == [["/usr/local/bin/ollama", "pull", "qwen3-embedding:0.6b"]]
-    assert "Pulled qwen3-embedding:0.6b" in result.output
+    assert "One obvious way: OpenRouter embeddings." in result.output
+    assert "Default profile: perplexity/pplx-embed-v1-4b @ 2560 dims" in result.output
+    assert "Next step: export `RAG_OR_API_KEY=...`" in result.output
+    assert "Golden path:" in result.output
+    assert "start Claude Code, Codex, or Vibe in this repo" in result.output
+    assert '"load session context for understanding this repo"' in result.output
+    assert '"index this project"' in result.output
+    assert "memory_load_session_context" in result.output
+    assert "memory_project_status" in result.output
 
 
 def test_cli_module_entrypoint():
@@ -515,8 +593,8 @@ def test_cli_init_does_not_persist_secrets(monkeypatch):
             main,
             ["init", "demo"],
             env={
-                "MISTRAL_API_KEY": "top-secret-key",
-                "VIBE_RAG_USER_DB": "/tmp/vibe-user.db",
+                "RAG_OR_API_KEY": "top-secret-key",
+                "RAG_USER_DB": "/tmp/vibe-user.db",
             },
         )
 
@@ -543,7 +621,7 @@ def test_cli_init_does_not_install_agent_profiles():
         assert result.exit_code == 0
         assert "Installed agents to ~/.vibe/agents/" not in result.output
         assert "vibe --agent builder" not in result.output
-        assert "    vibe\n" in result.output
+        assert "start Claude Code, Codex, or Vibe in this repo" in result.output
 
 
 def test_cli_init_writes_memory_first_agents_guide():
@@ -556,8 +634,9 @@ def test_cli_init_writes_memory_first_agents_guide():
         agents_text = Path("demo/AGENTS.md").read_text()
         assert "memory_load_session_context" in agents_text
         assert "memory_index_project" in agents_text
-        assert "memory_search_code" in agents_text
+        assert "memory_search" in agents_text
         assert "memory_search_memory" in agents_text
+        assert "memory_project_status" in agents_text
         assert "Use the memory MCP tools first" in agents_text
 
 
@@ -571,7 +650,9 @@ def test_cli_init_installs_semantic_repo_search_skill():
         skill_text = Path("demo/.vibe/skills/semantic-repo-search/SKILL.md").read_text()
         assert "name: semantic-repo-search" in skill_text
         assert "memory_load_session_context" in skill_text
-        assert "memory_search_code" in skill_text
+        assert "memory_search" in skill_text
+        assert 'scope: "code"' in skill_text
+        assert "memory_project_status" in skill_text
         assert "Prefer memory tools over `grep`" in skill_text
 
 
@@ -810,7 +891,7 @@ def test_cli_hook_session_start_categorizes_failures(monkeypatch):
         "vibe_rag.hook_bridge.load_session_context",
         lambda **kwargs: {
             "ok": False,
-            "error": "Embedding failed: Ollama not reachable",
+            "error": "Embedding failed: OpenRouter not reachable",
         },
     )
 

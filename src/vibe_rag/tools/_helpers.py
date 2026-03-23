@@ -1,16 +1,16 @@
 from __future__ import annotations
 
-import sqlite3
-from datetime import datetime, timedelta, timezone
 import hashlib
 import inspect
 import json
 import logging
 import re
+import sqlite3
 import subprocess
 import time
-from pathlib import Path
 import tomllib
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, cast
 
 from vibe_rag.chunking import chunk_doc, collect_files, collect_files_with_skips
@@ -23,7 +23,11 @@ from vibe_rag.server import (
     _get_user_db,
     mcp,
 )
-from vibe_rag.indexing.embedder import ProgressCallback, embedding_provider_status
+from vibe_rag.indexing.embedder import (
+    ProgressCallback,
+    embedding_provider_status,
+    resolve_embedding_profile,
+)
 from vibe_rag.types import (
     CodeChunk,
     CodeSearchResult,
@@ -1396,12 +1400,11 @@ def _merge_memory_results(
             seen_ids.add(dedupe_key)
             merged.append(result)
 
-    current_project_results = [
-        result
-        for result in merged
-        if _memory_state(result, current_project_id)["is_current_project"]
-        and not _memory_state(result, current_project_id)["is_stale"]
-    ]
+    current_project_results = []
+    for result in merged:
+        state = _memory_state(result, current_project_id)
+        if state["is_current_project"] and not state["is_stale"]:
+            current_project_results.append(result)
     current_project_manual_results = [
         result
         for result in current_project_results
@@ -1597,6 +1600,77 @@ def _index_metadata(db) -> dict:
     }
 
 
+def _normalize_embedding_profile(profile: object) -> dict[str, object] | None:
+    if not isinstance(profile, dict):
+        return None
+    provider = str(profile.get("provider") or "").strip().lower()
+    model = str(profile.get("model") or "").strip()
+    dimensions = _int_or_none(profile.get("dimensions"))
+    if not provider or not model or dimensions is None or dimensions <= 0:
+        return None
+    return {
+        "provider": provider,
+        "model": model,
+        "dimensions": dimensions,
+    }
+
+
+def _format_embedding_profile(profile: dict[str, object] | None) -> str:
+    normalized = _normalize_embedding_profile(profile)
+    if normalized is None:
+        return "unknown"
+    return (
+        f"{normalized['provider']}:{normalized['model']}"
+        f"@{normalized['dimensions']}"
+    )
+
+
+def _embedding_profile_state(db, metadata: dict | None = None) -> dict:
+    current_profile = _normalize_embedding_profile(resolve_embedding_profile())
+    indexed_profile = _normalize_embedding_profile((metadata or {}).get("embedding_profile"))
+    has_index = db.code_chunk_count() > 0 or db.doc_count() > 0
+
+    if not has_index:
+        return {
+            "current_profile": current_profile,
+            "indexed_profile": indexed_profile,
+            "is_incompatible": False,
+            "warning": None,
+        }
+
+    if indexed_profile is None:
+        return {
+            "current_profile": current_profile,
+            "indexed_profile": None,
+            "is_incompatible": True,
+            "warning": {
+                "kind": "embedding_profile_missing",
+                "detail": "index predates embedding profile tracking; run vibe-rag reindex",
+            },
+        }
+
+    if current_profile != indexed_profile:
+        return {
+            "current_profile": current_profile,
+            "indexed_profile": indexed_profile,
+            "is_incompatible": True,
+            "warning": {
+                "kind": "embedding_profile_changed",
+                "detail": (
+                    "embedding profile changed since last index "
+                    f"({_format_embedding_profile(indexed_profile)} -> {_format_embedding_profile(current_profile)})"
+                ),
+            },
+        }
+
+    return {
+        "current_profile": current_profile,
+        "indexed_profile": indexed_profile,
+        "is_incompatible": False,
+        "warning": None,
+    }
+
+
 def _project_index_paths(db, project_root: Path) -> list[str]:
     missing: list[str] = []
     for kind in ("code", "doc"):
@@ -1669,6 +1743,17 @@ def _hazard_scan(project_db, project_root: Path, project_id: str, pulse: dict) -
 
     if project_db.code_chunk_count() == 0:
         hazards.append({"level": "error", "category": "no_index", "message": "No code index — run index_project before searching"})
+
+    stale_state = _stale_state(project_db, project_root, project_id)
+    incompatible_error = _incompatible_index_error(stale_state)
+    if incompatible_error:
+        hazards.append(
+            {
+                "level": "error",
+                "category": "incompatible_index",
+                "message": f"Incompatible index — {incompatible_error['message']}",
+            }
+        )
 
     if pulse.get("recent_commits"):
         current_head = pulse["recent_commits"][0].get("sha")
@@ -1791,14 +1876,13 @@ def _briefing_task_context(task_results: dict, char_budget: int) -> str:
 
     memories = task_results.get("memories") or []
     if memories:
-        visible_memories: list[dict] = []
         has_manual_current_project_memory = any(
             not _is_auto_capture_memory(item)
             and not bool(item.get("is_stale"))
             and bool((item.get("provenance") or {}).get("is_current_project"))
             for item in memories
         )
-        mem_parts = []
+        visible_memories: list[dict] = []
         for item in memories:
             if item.get("is_stale"):
                 continue
@@ -1807,10 +1891,10 @@ def _briefing_task_context(task_results: dict, char_budget: int) -> str:
             if has_manual_current_project_memory and _is_auto_capture_memory(item):
                 continue
             visible_memories.append(item)
-        for item in visible_memories[:3]:
-            kind = item.get("memory_kind", "note")
-            summary = _truncate(item.get("summary", ""), 80)
-            mem_parts.append(f"[{kind}] {summary}")
+        mem_parts = [
+            f"[{item.get('memory_kind', 'note')}] {_truncate(item.get('summary', ''), 80)}"
+            for item in visible_memories[:3]
+        ]
         if mem_parts:
             lines.append("Memory: " + " | ".join(mem_parts))
 
@@ -1877,11 +1961,18 @@ def _stale_state(db, project_root: Path, project_id: str) -> dict:
             }
         )
 
+    profile_state = _embedding_profile_state(db, metadata)
+    if profile_state["warning"] is not None:
+        warnings.append(profile_state["warning"])
+
     if not metadata:
         return {
             "is_stale": bool(warnings),
+            "is_incompatible": bool(profile_state["is_incompatible"]),
             "warnings": warnings,
             "metadata": None,
+            "current_profile": profile_state["current_profile"],
+            "indexed_profile": profile_state["indexed_profile"],
         }
     current_head, git_head_error = _current_git_head_state(project_root)
     if git_head_error:
@@ -1938,9 +2029,31 @@ def _stale_state(db, project_root: Path, project_id: str) -> dict:
 
     return {
         "is_stale": bool(warnings),
+        "is_incompatible": bool(profile_state["is_incompatible"]),
         "warnings": warnings,
         "metadata": metadata,
+        "current_profile": profile_state["current_profile"],
+        "indexed_profile": profile_state["indexed_profile"],
     }
+
+
+def _incompatible_index_error(state: dict) -> ToolError | None:
+    if not state.get("is_incompatible"):
+        return None
+    detail = next(
+        (
+            str(warning.get("detail") or "")
+            for warning in state.get("warnings", [])
+            if str(warning.get("kind", "")).startswith("embedding_profile_")
+        ),
+        "embedding profile changed since last index; rebuild the full project index",
+    )
+    return _tool_error(
+        "incompatible_index",
+        detail,
+        current_profile=state.get("current_profile"),
+        indexed_profile=state.get("indexed_profile"),
+    )
 
 
 def _memory_limit_split(limit: int) -> tuple[int, int]:
@@ -2004,6 +2117,10 @@ def _search_code_results(
     db = _get_db()
     if db.code_chunk_count() == 0:
         return _tool_error("no_code_index", "no code index; run index_project first"), []
+    state = _stale_state(db, Path.cwd(), _ensure_project_id())
+    incompatible_error = _incompatible_index_error(state)
+    if incompatible_error:
+        return incompatible_error, []
 
     try:
         embeddings = _get_embedder().embed_code_query_sync([query])
@@ -2047,6 +2164,10 @@ def _search_docs_results(query: str, limit: int = 10) -> tuple[ToolError | None,
     db = _get_db()
     if db.doc_count() == 0:
         return _tool_error("no_docs_index", "no docs indexed; run index_project first"), []
+    state = _stale_state(db, Path.cwd(), _ensure_project_id())
+    incompatible_error = _incompatible_index_error(state)
+    if incompatible_error:
+        return incompatible_error, []
 
     try:
         embeddings = _get_embedder().embed_text_sync([query])

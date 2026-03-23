@@ -11,7 +11,7 @@ from vibe_rag.types import CodeChunk, DocChunk, MemoryRow, RankedCodeResult, Ran
 
 
 class SqliteVecDB:
-    def __init__(self, path: Path, embedding_dimensions: int = 1024):
+    def __init__(self, path: Path, embedding_dimensions: int = 2560):
         self._path = path
         self._embedding_dimensions = embedding_dimensions
         self._conn: sqlite3.Connection | None = None

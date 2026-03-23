@@ -31,7 +31,7 @@
           {
             "type": "command",
             "command": "python3 scripts/claude_posttool_pytest.py",
-            "timeout": 300
+            "timeout": 120
           }
         ]
       }

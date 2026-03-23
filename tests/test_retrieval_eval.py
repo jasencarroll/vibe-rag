@@ -41,7 +41,7 @@ class KeywordEmbedder:
         counts = [float(lowered.count(keyword)) for keyword in self.KEYWORDS]
         total = sum(counts) or 1.0
         normalized = [count / total for count in counts]
-        padded = normalized + [0.0] * (1024 - len(normalized))
+        padded = normalized + [0.0] * (2560 - len(normalized))
         return padded
 
     def embed_text_sync(self, texts: list[str]) -> list[list[float]]:
@@ -220,8 +220,8 @@ def test_write_artifact_persists_eval_report(tmp_path: Path, monkeypatch):
     eval_runner = _load_eval_runner()
     manifest_path = tmp_path / "demo.toml"
     manifest_path.write_text("[[repo]]\nname='demo'\npath='~/dev/demo'\n")
-    monkeypatch.setenv("VIBE_RAG_EMBEDDING_PROVIDER", "voyage")
-    monkeypatch.setenv("VIBE_RAG_EMBEDDING_MODEL", "voyage-4")
+    monkeypatch.setenv("RAG_OR_API_KEY", "test-key")
+    monkeypatch.setenv("RAG_OR_EMBED_MOD", "perplexity/pplx-embed-v1-4b")
 
     output_path = eval_runner._write_artifact(
         {"ok": True, "repos": [{"name": "demo", "ok": True}]},
@@ -233,7 +233,7 @@ def test_write_artifact_persists_eval_report(tmp_path: Path, monkeypatch):
     assert output_path.parent == tmp_path / "artifacts"
     assert payload["ok"] is True
     assert payload["manifest"] == str(manifest_path.resolve())
-    assert payload["embedding_provider"] == "voyage"
+    assert payload["embedding_provider"] == "openrouter"
     assert payload["summary"]["repo_total"] == 1
     assert payload["summary"]["passed_repo_total"] == 1
     assert payload["summary"]["passed_task_total"] == 0
@@ -337,7 +337,7 @@ def test_format_artifact_summary_includes_repo_and_change_counts(tmp_path: Path)
     artifact = {
         "generated_at": "2026-03-23T03:00:00Z",
         "manifest": str((tmp_path / "demo.toml").resolve()),
-        "embedding_provider": "voyage",
+        "embedding_provider": "openrouter",
         "summary": {
             "repo_total": 1,
             "passed_repo_total": 1,
@@ -396,7 +396,7 @@ def test_main_summary_reads_latest_artifact_for_manifest(tmp_path: Path, monkeyp
             {
                 "generated_at": "2026-03-23T03:00:00Z",
                 "manifest": str(manifest_path.resolve()),
-                "embedding_provider": "voyage",
+                "embedding_provider": "openrouter",
                 "summary": {
                     "repo_total": 1,
                     "passed_repo_total": 1,
@@ -441,7 +441,7 @@ def test_format_trend_summary_backfills_old_and_new_artifacts(tmp_path: Path):
     new_path = tmp_path / "demo.20260323T010000Z.json"
     old_artifact = {
         "generated_at": "2026-03-23T00:00:00Z",
-        "embedding_provider": "ollama",
+        "embedding_provider": "openrouter",
         "repos": [
             {
                 "name": "demo",
@@ -456,7 +456,7 @@ def test_format_trend_summary_backfills_old_and_new_artifacts(tmp_path: Path):
     }
     new_artifact = {
         "generated_at": "2026-03-23T01:00:00Z",
-        "embedding_provider": "voyage",
+        "embedding_provider": "openrouter",
         "summary": {
             "repo_total": 1,
             "passed_repo_total": 1,
@@ -511,7 +511,7 @@ def test_main_trends_reads_recent_matching_artifacts(tmp_path: Path, monkeypatch
             __import__("json").dumps(
                 {
                     "generated_at": f"2026-03-23T00:00:0{index}Z",
-                    "embedding_provider": "voyage",
+                    "embedding_provider": "openrouter",
                     "summary": {
                         "repo_total": 1,
                         "passed_repo_total": 1,
@@ -566,7 +566,7 @@ def test_format_release_evidence_combines_eval_and_persistent_memory(tmp_path: P
             {
                 "generated_at": "2026-03-23T00:00:00Z",
                 "manifest": str(manifest_path.resolve()),
-                "embedding_provider": "voyage",
+                "embedding_provider": "openrouter",
                 "summary": {
                     "repo_total": 1,
                     "passed_repo_total": 1,
@@ -694,7 +694,7 @@ def test_format_artifact_summary_reports_stale_git_heads(tmp_path: Path, monkeyp
     artifact = {
         "generated_at": "2026-03-23T03:00:00Z",
         "manifest": str((tmp_path / "demo.toml").resolve()),
-        "embedding_provider": "voyage",
+        "embedding_provider": "openrouter",
         "summary": {
             "repo_total": 1,
             "passed_repo_total": 1,
@@ -746,7 +746,7 @@ def test_format_artifact_summary_reports_current_when_git_heads_match(tmp_path: 
     artifact = {
         "generated_at": "2026-03-23T03:00:00Z",
         "manifest": str((tmp_path / "demo.toml").resolve()),
-        "embedding_provider": "voyage",
+        "embedding_provider": "openrouter",
         "summary": {
             "repo_total": 1,
             "passed_repo_total": 1,

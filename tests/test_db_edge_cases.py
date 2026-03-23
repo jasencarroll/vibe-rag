@@ -16,7 +16,7 @@ def db(tmp_path: Path):
 
 
 def _fake_embedding(val: float = 0.1) -> list[float]:
-    return [val] * 1024
+    return [val] * 2560
 
 
 class TestUpsertChunks:

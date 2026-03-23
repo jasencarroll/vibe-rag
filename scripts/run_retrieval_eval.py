@@ -28,8 +28,8 @@ def _read_manifest(path: Path) -> dict:
 def _repo_eval_context(repo_path: Path):
     old_cwd = Path.cwd()
     old_env = {
-        "VIBE_RAG_DB": os.environ.get("VIBE_RAG_DB"),
-        "VIBE_RAG_USER_DB": os.environ.get("VIBE_RAG_USER_DB"),
+        "RAG_DB": os.environ.get("RAG_DB"),
+        "RAG_USER_DB": os.environ.get("RAG_USER_DB"),
     }
     old_project_db = srv._project_db
     old_user_db = srv._user_db
@@ -37,8 +37,8 @@ def _repo_eval_context(repo_path: Path):
 
     with tempfile.TemporaryDirectory(prefix="vibe-rag-eval.") as tmp_dir:
         tmp_root = Path(tmp_dir)
-        os.environ["VIBE_RAG_DB"] = str(tmp_root / "project.db")
-        os.environ["VIBE_RAG_USER_DB"] = str(tmp_root / "user.db")
+        os.environ["RAG_DB"] = str(tmp_root / "project.db")
+        os.environ["RAG_USER_DB"] = str(tmp_root / "user.db")
         srv._project_db = None
         srv._user_db = None
         srv._project_id = None
@@ -804,9 +804,9 @@ def _artifact_result(
     artifact = dict(result)
     artifact["generated_at"] = datetime.now(UTC).isoformat()
     artifact["manifest"] = str(manifest_path.resolve())
-    artifact["embedding_provider"] = os.environ.get("VIBE_RAG_EMBEDDING_PROVIDER", "ollama")
-    artifact["embedding_model"] = os.environ.get("VIBE_RAG_EMBEDDING_MODEL", "")
-    artifact["code_embedding_model"] = os.environ.get("VIBE_RAG_CODE_EMBEDDING_MODEL", "")
+    artifact["embedding_provider"] = "openrouter"
+    artifact["embedding_model"] = os.environ.get("RAG_OR_EMBED_MOD", "perplexity/pplx-embed-v1-4b")
+    artifact["embedding_dimensions"] = int(os.environ.get("RAG_OR_EMBED_DIM", "2560"))
     artifact["summary"] = _result_summary(result)
 
     previous_path = previous_artifact_path or _latest_previous_artifact(manifest_path, artifact_dir)

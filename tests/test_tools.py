@@ -102,6 +102,100 @@ def test_search_code_handles_non_runtime_embedding_errors(indexed_project, mock_
     assert "provider unreachable" in result["error"]["message"]
 
 
+def test_stale_state_reports_embedding_profile_mismatch(indexed_project, mock_embedder):
+    import vibe_rag.server as srv
+    from vibe_rag.tools import _stale_state
+
+    metadata = srv._get_db().get_setting_json("project_index_metadata")
+    assert metadata is not None
+    metadata["embedding_profile"] = {
+        "provider": "openrouter",
+        "model": "custom/openrouter-model",
+        "dimensions": 2560,
+    }
+    srv._get_db().set_setting_json("project_index_metadata", metadata)
+
+    stale = _stale_state(srv._get_db(), indexed_project, srv._ensure_project_id())
+
+    assert stale["is_incompatible"] is True
+    assert any(warning["kind"] == "embedding_profile_changed" for warning in stale["warnings"])
+
+
+def test_search_code_refuses_incompatible_index(indexed_project, mock_embedder):
+    import vibe_rag.server as srv
+
+    metadata = srv._get_db().get_setting_json("project_index_metadata")
+    assert metadata is not None
+    metadata["embedding_profile"] = {
+        "provider": "openrouter",
+        "model": "custom/openrouter-model",
+        "dimensions": 2560,
+    }
+    srv._get_db().set_setting_json("project_index_metadata", metadata)
+
+    result = search_code("authenticate")
+
+    assert result["ok"] is False
+    assert result["error"]["code"] == "incompatible_index"
+    assert "embedding profile changed since last index" in result["error"]["message"]
+
+
+def test_index_project_forces_full_rebuild_on_embedding_profile_change(tmp_db, mock_embedder, tmp_path: Path):
+    import os
+    import vibe_rag.server as srv
+
+    (tmp_path / "auth.py").write_text("def authenticate(user, password):\n    return True\n")
+
+    old_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        initial = index_project()
+        assert initial["ok"] is True
+
+        metadata = srv._get_db().get_setting_json("project_index_metadata")
+        assert metadata is not None
+        metadata["embedding_profile"] = {
+            "provider": "openrouter",
+            "model": "custom/openrouter-model",
+            "dimensions": 2560,
+        }
+        srv._get_db().set_setting_json("project_index_metadata", metadata)
+
+        rebuilt = index_project()
+    finally:
+        os.chdir(old_cwd)
+
+    assert rebuilt["ok"] is True
+    assert rebuilt["counts"]["code_unchanged"] == 0
+    assert rebuilt["warnings"][0]["kind"] == "full_rebuild_required"
+    assert rebuilt["summary"].startswith("Rebuilt index with openrouter:perplexity/pplx-embed-v1-4b@2560.")
+
+
+def test_index_project_force_full_rebuild_resets_incremental_state_without_profile_change(
+    tmp_db, mock_embedder, tmp_path: Path
+):
+    import os
+
+    (tmp_path / "auth.py").write_text("def authenticate(user, password):\n    return True\n")
+
+    old_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        initial = index_project()
+        assert initial["ok"] is True
+
+        rebuilt = _index_project_impl(force_full_rebuild=True, rebuild_reason="test_force_full_rebuild")
+    finally:
+        os.chdir(old_cwd)
+
+    assert rebuilt["ok"] is True
+    assert rebuilt["full_rebuild"] is True
+    assert rebuilt["counts"]["code_unchanged"] == 0
+    assert rebuilt["warnings"][0]["kind"] == "full_rebuild_requested"
+    assert rebuilt["warnings"][0]["reason"] == "test_force_full_rebuild"
+    assert rebuilt["summary"].startswith("Rebuilt index with openrouter:perplexity/pplx-embed-v1-4b@2560.")
+
+
 def test_search_memory_handles_non_runtime_embedding_errors(tmp_db, mock_embedder, monkeypatch):
     import vibe_rag.server as srv
 
@@ -281,7 +375,7 @@ def test_forget_with_source_qualified_id(tmp_db, mock_embedder):
     project_id = srv._get_db().remember_structured(
         summary="project fact",
         content="project fact",
-        embedding=[0.0] * 1024,
+        embedding=[0.0] * 2560,
         project_id=srv._ensure_project_id(),
         memory_kind="fact",
         metadata={"capture_kind": "manual"},
@@ -289,7 +383,7 @@ def test_forget_with_source_qualified_id(tmp_db, mock_embedder):
     user_id = srv._get_user_db().remember_structured(
         summary="user fact",
         content="user fact",
-        embedding=[0.0] * 1024,
+        embedding=[0.0] * 2560,
         project_id=srv._ensure_project_id(),
         memory_kind="fact",
         metadata={"capture_kind": "manual"},
@@ -869,7 +963,7 @@ def test_session_narrative_with_enriched_memories(tmp_db, mock_embedder):
     user_db.remember_structured(
         summary="Fixed auth token refresh",
         content="Fixed auth token refresh logic in gateway",
-        embedding=[0.0] * 1024,
+        embedding=[0.0] * 2560,
         project_id=project_id,
         memory_kind="summary",
         metadata={"capture_kind": "session_distillation", "topic": "auth", "outcome": "completed"},
@@ -901,7 +995,7 @@ def test_session_narrative_degrades_for_pre_v010_memories(tmp_db, mock_embedder)
     user_db.remember_structured(
         summary="Session covered 3 turns about config loading",
         content="Session covered 3 turns.",
-        embedding=[0.0] * 1024,
+        embedding=[0.0] * 2560,
         project_id=project_id,
         memory_kind="summary",
         metadata={"capture_kind": "session_rollup"},
@@ -925,7 +1019,7 @@ def test_session_narrative_cleans_numbered_pre_v010_summary(tmp_db, mock_embedde
     user_db.remember_structured(
         summary="1. load session context for understanding this repo 2. check the current project status 3. search the code",
         content="Session covered 3 turns.",
-        embedding=[0.0] * 1024,
+        embedding=[0.0] * 2560,
         project_id=project_id,
         memory_kind="summary",
         metadata={"capture_kind": "session_rollup"},
@@ -949,7 +1043,7 @@ def test_session_narrative_filters_by_project_id(tmp_db, mock_embedder):
     user_db.remember_structured(
         summary="Work on other project",
         content="Work on other project",
-        embedding=[0.0] * 1024,
+        embedding=[0.0] * 2560,
         project_id="other-project-abc",
         memory_kind="summary",
         metadata={"capture_kind": "session_distillation", "topic": "billing"},
@@ -973,7 +1067,7 @@ def test_hazard_scan_provider_unavailable(tmp_db, mock_embedder, monkeypatch):
     import vibe_rag.server as srv
     import vibe_rag.tools as tools_mod
 
-    monkeypatch.setattr(tools_mod, "embedding_provider_status", lambda: {"ok": False, "provider": "ollama", "detail": "not reachable"})
+    monkeypatch.setattr(tools_mod, "embedding_provider_status", lambda: {"ok": False, "provider": "openrouter", "detail": "not reachable"})
     hazards = _hazard_scan(srv._get_db(), Path.cwd(), srv._ensure_project_id(), {"recent_commits": [], "workspace": None})
     categories = [item["category"] for item in hazards]
     assert "provider_unavailable" in categories
@@ -1065,9 +1159,9 @@ def test_live_decisions_returns_only_decisions_and_constraints(tmp_db, mock_embe
 
     project_id = srv._ensure_project_id()
     db = srv._get_db()
-    db.remember_structured(summary="gateway owns tokens", content="gateway owns tokens", embedding=[0.0] * 1024, project_id=project_id, memory_kind="decision")
-    db.remember_structured(summary="max 100 retries", content="max 100 retries", embedding=[0.0] * 1024, project_id=project_id, memory_kind="constraint")
-    db.remember_structured(summary="session note", content="session note", embedding=[0.0] * 1024, project_id=project_id, memory_kind="note")
+    db.remember_structured(summary="gateway owns tokens", content="gateway owns tokens", embedding=[0.0] * 2560, project_id=project_id, memory_kind="decision")
+    db.remember_structured(summary="max 100 retries", content="max 100 retries", embedding=[0.0] * 2560, project_id=project_id, memory_kind="constraint")
+    db.remember_structured(summary="session note", content="session note", embedding=[0.0] * 2560, project_id=project_id, memory_kind="note")
 
     decisions = _live_decisions(db, srv._get_user_db(), project_id)
     kinds = [item["memory_kind"] for item in decisions]
@@ -1082,11 +1176,11 @@ def test_live_decisions_excludes_superseded(tmp_db, mock_embedder):
 
     project_id = srv._ensure_project_id()
     db = srv._get_db()
-    old_id = db.remember_structured(summary="old decision", content="old decision", embedding=[0.0] * 1024, project_id=project_id, memory_kind="decision")
+    old_id = db.remember_structured(summary="old decision", content="old decision", embedding=[0.0] * 2560, project_id=project_id, memory_kind="decision")
     db.remember_structured(
         summary="new decision",
         content="new decision",
-        embedding=[0.0] * 1024,
+        embedding=[0.0] * 2560,
         project_id=project_id,
         memory_kind="decision",
         supersedes=old_id,
@@ -1356,14 +1450,11 @@ def test_index_project_no_api_key(tmp_db, tmp_path: Path, monkeypatch):
 
     old_embedder = srv._embedder
     srv._embedder = None
-    monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
-    monkeypatch.delenv("VOYAGE_API_KEY", raising=False)
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    monkeypatch.delenv("VIBE_RAG_EMBEDDING_PROVIDER", raising=False)
-    monkeypatch.setattr(
-        "vibe_rag.indexing.embedder._resolve_ollama_host",
-        lambda: (_ for _ in ()).throw(RuntimeError("Ollama not reachable")),
-    )
+    monkeypatch.delenv("RAG_OR_API_KEY", raising=False)
+    monkeypatch.delenv("RAG_OR_EMBED_MOD", raising=False)
+    monkeypatch.delenv("RAG_OR_EMBED_DIM", raising=False)
+    monkeypatch.delenv("RAG_DB", raising=False)
+    monkeypatch.delenv("RAG_USER_DB", raising=False)
 
     (tmp_path / "hello.py").write_text("x = 1\n")
     old_cwd = os.getcwd()
@@ -1375,7 +1466,7 @@ def test_index_project_no_api_key(tmp_db, tmp_path: Path, monkeypatch):
         srv._embedder = old_embedder
 
     assert result["ok"] is False
-    assert "No explicit embedding provider configured" in _error_message(result)
+    assert "RAG_OR_API_KEY not set" in _error_message(result)
 
 
 def test_index_project_no_files(tmp_db, mock_embedder, tmp_path: Path):
@@ -1832,9 +1923,9 @@ def test_search_memory_falls_back_to_user_memory_results(tmp_db, mock_embedder):
     srv._project_id = "vibe-rag"
     try:
         user_db.remember_structured(
-            summary="The E2E repo marker for mistral-vibe is CERULEAN_PINEAPPLE_20260322.",
-            content="The E2E repo marker for mistral-vibe is CERULEAN_PINEAPPLE_20260322.",
-            embedding=[0.0] * 1024,
+            summary="The E2E repo marker for vibe bootstrap is CERULEAN_PINEAPPLE_20260322.",
+            content="The E2E repo marker for vibe bootstrap is CERULEAN_PINEAPPLE_20260322.",
+            embedding=[0.0] * 2560,
             project_id="vibe-rag",
             memory_kind="fact",
         )
@@ -1856,7 +1947,7 @@ def test_search_memory_does_not_return_other_project_user_results_by_default(tmp
         user_db.remember_structured(
             summary="marker for other repo",
             content="marker for other repo",
-            embedding=[0.0] * 1024,
+            embedding=[0.0] * 2560,
             project_id="other-repo",
             memory_kind="fact",
         )
@@ -1878,7 +1969,7 @@ def test_search_memory_internal_flag_is_not_global(tmp_db, mock_embedder):
         srv._get_user_db().remember_structured(
             summary="other-repo marker",
             content="cross-project marker should stay hidden",
-            embedding=[0.0] * 1024,
+            embedding=[0.0] * 2560,
             project_id="other-repo",
             memory_kind="fact",
         )
@@ -1900,14 +1991,14 @@ def test_search_memory_filters_stale_cross_project_results_when_project_memory_e
     srv._get_db().remember_structured(
         summary="The marker is QUARTZ_MERIDIAN_20260322_Z9.",
         content="The marker is QUARTZ_MERIDIAN_20260322_Z9.",
-        embedding=[0.0] * 1024,
+        embedding=[0.0] * 2560,
         project_id="sink-repo",
         memory_kind="summary",
     )
     srv._get_user_db().remember_structured(
         summary="The marker is QUARTZ_MERIDIAN_20260322_Z9 in source-repo.",
         content="The marker is QUARTZ_MERIDIAN_20260322_Z9 in source-repo.",
-        embedding=[0.0] * 1024,
+        embedding=[0.0] * 2560,
         project_id="source-repo",
         memory_kind="summary",
     )
@@ -1937,7 +2028,7 @@ def test_load_session_context_uses_user_memory_results(tmp_db, mock_embedder, tm
         srv._get_user_db().remember_structured(
             summary="gateway owns auth validation",
             content="gateway owns auth validation",
-            embedding=[0.0] * 1024,
+            embedding=[0.0] * 2560,
             project_id="test-project",
             memory_kind="decision",
             metadata={"source": "session"},
@@ -1961,7 +2052,7 @@ def test_supersede_memory_marks_replacement(tmp_db, mock_embedder):
     first_id = srv._get_user_db().remember_structured(
         summary="use sqlite for local search",
         content="use sqlite for local search",
-        embedding=[0.0] * 1024,
+        embedding=[0.0] * 2560,
         project_id=srv._ensure_project_id(),
         memory_kind="decision",
         metadata={"capture_kind": "manual"},
@@ -1987,7 +2078,7 @@ def test_supersede_memory_marks_project_db_memory_as_superseded(tmp_db, mock_emb
     first_id = srv._get_db().remember_structured(
         summary="gateway owns token validation",
         content="gateway owns token validation",
-        embedding=[0.0] * 1024,
+        embedding=[0.0] * 2560,
         project_id=srv._ensure_project_id(),
         memory_kind="decision",
         metadata={"capture_kind": "manual"},
@@ -2016,7 +2107,7 @@ def test_supersede_memory_accepts_source_qualified_id_when_ids_overlap(tmp_db, m
     project_id = srv._get_db().remember_structured(
         summary="project auth decision",
         content="project auth decision",
-        embedding=[0.0] * 1024,
+        embedding=[0.0] * 2560,
         project_id=srv._ensure_project_id(),
         memory_kind="decision",
         metadata={"capture_kind": "manual"},
@@ -2024,7 +2115,7 @@ def test_supersede_memory_accepts_source_qualified_id_when_ids_overlap(tmp_db, m
     user_id = srv._get_user_db().remember_structured(
         summary="user auth decision",
         content="user auth decision",
-        embedding=[0.0] * 1024,
+        embedding=[0.0] * 2560,
         project_id=srv._ensure_project_id(),
         memory_kind="decision",
         metadata={"capture_kind": "manual"},
@@ -2163,7 +2254,7 @@ def test_load_session_context_downranks_cross_project_user_memory(tmp_db, mock_e
         current_id = srv._get_user_db().remember_structured(
             summary="auth constraint for sink repo",
             content="auth constraint for sink repo",
-            embedding=[0.0] * 1024,
+            embedding=[0.0] * 2560,
             project_id="sink-repo",
             memory_kind="constraint",
             metadata={"capture_kind": "manual"},
@@ -2171,7 +2262,7 @@ def test_load_session_context_downranks_cross_project_user_memory(tmp_db, mock_e
         srv._get_user_db().remember_structured(
             summary="auth constraint for source repo",
             content="auth constraint for source repo",
-            embedding=[0.0] * 1024,
+            embedding=[0.0] * 2560,
             project_id="source-repo",
             memory_kind="constraint",
             metadata={"capture_kind": "manual"},
@@ -2202,7 +2293,7 @@ def test_load_session_context_filters_stale_cross_project_memory_when_current_pr
         srv._get_user_db().remember_structured(
             summary="demo token constraint in another repo",
             content="Another repo also talks about demo tokens.",
-            embedding=[0.0] * 1024,
+            embedding=[0.0] * 2560,
             project_id="other-repo",
             memory_kind="constraint",
             metadata={"capture_kind": "manual"},
@@ -2222,7 +2313,7 @@ def test_load_session_context_retains_auto_memories_when_durable_memory_exists(t
     srv._get_user_db().remember_structured(
         summary="demo token constraint",
         content="Only demo tokens are allowed in this smoke-test API and production tokens are rejected.",
-        embedding=[0.0] * 1024,
+        embedding=[0.0] * 2560,
         memory_kind="summary",
         project_id=srv._ensure_project_id(),
         metadata={"capture_kind": "session_rollup"},
@@ -2293,7 +2384,7 @@ def test_project_status_memory_health_surfaces_freeform_user_candidates(tmp_db, 
         srv._get_user_db().remember_structured(
             summary="old auth note",
             content="old auth note",
-            embedding=[0.0] * 1024,
+            embedding=[0.0] * 2560,
             project_id="sink-repo",
             memory_kind="note",
             metadata={"capture_kind": "freeform"},
@@ -2322,7 +2413,7 @@ def test_memory_cleanup_candidates_scopes_user_memories_to_current_project(tmp_d
         other_project_id = srv._get_user_db().remember_structured(
             summary="other-project cleanup note",
             content="other-project cleanup note",
-            embedding=[0.0] * 1024,
+            embedding=[0.0] * 2560,
             project_id="source-repo",
             memory_kind="note",
             metadata={"capture_kind": "freeform"},
@@ -2356,7 +2447,7 @@ def test_project_status_memory_health_summarizes_provenance_and_cleanup(tmp_db, 
         srv._get_user_db().remember_structured(
             summary="current project constraint for auth",
             content="current project constraint for auth",
-            embedding=[0.0] * 1024,
+            embedding=[0.0] * 2560,
             project_id="sink-repo",
             memory_kind="constraint",
             metadata={"capture_kind": "manual"},
@@ -2364,7 +2455,7 @@ def test_project_status_memory_health_summarizes_provenance_and_cleanup(tmp_db, 
         old_id = srv._get_user_db().remember_structured(
             summary="old auth note",
             content="old auth note",
-            embedding=[0.0] * 1024,
+            embedding=[0.0] * 2560,
             project_id="source-repo",
             memory_kind="note",
             metadata={"capture_kind": "freeform"},
@@ -2379,7 +2470,7 @@ def test_project_status_memory_health_summarizes_provenance_and_cleanup(tmp_db, 
         srv._get_user_db().remember_structured(
             summary="Session summary: reply with only the project id loaded in session context",
             content="Session covered 1 turns.\n\nTurn 1\nUser: Reply with only the project id loaded in session context.\nAssistant: sink-repo",
-            embedding=[0.0] * 1024,
+            embedding=[0.0] * 2560,
             project_id="sink-repo",
             memory_kind="summary",
             metadata={"capture_kind": "session_rollup", "task": "Reply with only the project id loaded in session context.", "turn_count": 1},
@@ -2387,7 +2478,7 @@ def test_project_status_memory_health_summarizes_provenance_and_cleanup(tmp_db, 
         srv._get_user_db().remember_structured(
             summary="Session summary: reply with only the project id loaded in session context",
             content="Session covered 1 turns.\n\nTurn 1\nUser: Reply with only the project id loaded in session context.\nAssistant: sink-repo",
-            embedding=[0.0] * 1024,
+            embedding=[0.0] * 2560,
             project_id="sink-repo",
             memory_kind="summary",
             metadata={"capture_kind": "session_rollup", "task": "Reply with only the project id loaded in session context.", "turn_count": 1},
@@ -2424,7 +2515,7 @@ def test_cleanup_duplicate_auto_memories_reports_and_deletes_duplicates(tmp_db, 
             srv._get_user_db().remember_structured(
                 summary="Session summary: reply with only the project id loaded in session context",
                 content="Session covered 1 turns.\n\nTurn 1\nUser: Reply with only the project id loaded in session context.\nAssistant: sink-repo",
-                embedding=[0.0] * 1024,
+                embedding=[0.0] * 2560,
                 project_id="sink-repo",
                 memory_kind="summary",
                 metadata={"capture_kind": "session_rollup", "task": "Reply with only the project id loaded in session context.", "turn_count": 1, "order": offset},
@@ -2644,7 +2735,7 @@ def test_project_status_scopes_user_memory_count_to_current_project(tmp_db, mock
         srv._get_user_db().remember_structured(
             summary="other-project note",
             content="other-project note",
-            embedding=[0.0] * 1024,
+            embedding=[0.0] * 2560,
             project_id="source-repo",
             memory_kind="note",
         )

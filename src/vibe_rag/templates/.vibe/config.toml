@@ -1,9 +1,0 @@
-# Project-level Vibe configuration
-active_model = "devstral-2"
-skill_paths = [".vibe/skills"]
-
-[[mcp_servers]]
-name = "memory"
-transport = "stdio"
-command = "__VIBE_RAG_BIN__"
-args = ["serve"]

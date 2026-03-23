@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 import json
 import logging
 import os
@@ -7,8 +8,8 @@ import shutil
 import subprocess
 import sys
 import time
-from pathlib import Path
 import tomllib
+from pathlib import Path
 
 import click
 from vibe_rag import __version__
@@ -23,7 +24,6 @@ def main():
     """vibe-rag — Semantic repo search and coding memory over MCP."""
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
-    pass
 
 
 def _embedding_dimensions() -> int:
@@ -152,7 +152,7 @@ def _vibe_cli_status() -> dict:
         return {
             "ok": False,
             "warning": True,
-            "detail": "Vibe CLI not found. Install the required mistral-vibe fork for first-class session bootstrap.",
+            "detail": "Vibe CLI not found. Vibe stays bootstrapped, but Claude Code and Codex are the strongest validated clients today.",
         }
 
     try:
@@ -197,10 +197,7 @@ def _project_vibe_hook_status(project_root: Path) -> dict:
                 command = str(item.get("command") or "").strip()
                 if not command:
                     continue
-                if " " in command:
-                    command_token = command.split(None, 1)[0]
-                else:
-                    command_token = command
+                command_token = command.split()[0]
                 ok, resolved = _resolve_command(command_token)
                 if not ok:
                     return {"ok": False, "warning": True, "detail": f"hook command not found: {command_token}"}
@@ -290,68 +287,11 @@ def _db_readable_status(db_path: Path, *, label: str) -> dict:
         return {"ok": False, "warning": False, "detail": f"{label} DB unreadable: {exc}"}
 
 
-def _provider_candidates() -> list[dict[str, str | bool]]:
-    ollama_installed = bool(shutil.which("ollama"))
-    mistral_key = bool(os.environ.get("MISTRAL_API_KEY", "").strip())
-    openai_key = bool(os.environ.get("OPENAI_API_KEY", "").strip())
-    voyage_key = bool(os.environ.get("VOYAGE_API_KEY", "").strip())
-    return [
-        {
-            "provider": "ollama",
-            "available": ollama_installed,
-            "detail": "local embeddings via Ollama" if ollama_installed else "install Ollama to use local embeddings",
-        },
-        {
-            "provider": "mistral",
-            "available": mistral_key,
-            "detail": "MISTRAL_API_KEY is set" if mistral_key else "set MISTRAL_API_KEY",
-        },
-        {
-            "provider": "openai",
-            "available": openai_key,
-            "detail": "OPENAI_API_KEY is set" if openai_key else "set OPENAI_API_KEY",
-        },
-        {
-            "provider": "voyage",
-            "available": voyage_key,
-            "detail": "VOYAGE_API_KEY is set" if voyage_key else "set VOYAGE_API_KEY",
-        },
-    ]
-
-
-def _recommended_provider() -> dict[str, str]:
-    explicit = os.environ.get("VIBE_RAG_EMBEDDING_PROVIDER", "").strip().lower()
-    if explicit:
-        return {
-            "provider": explicit,
-            "reason": "explicitly configured by VIBE_RAG_EMBEDDING_PROVIDER",
-        }
-
-    for candidate in _provider_candidates():
-        if candidate["provider"] == "ollama" and candidate["available"]:
-            return {"provider": "ollama", "reason": "local embeddings are available"}
-    for candidate in _provider_candidates():
-        if candidate["available"]:
-            return {
-                "provider": str(candidate["provider"]),
-                "reason": f"{candidate['provider']} credentials are already available",
-            }
-    return {
-        "provider": "ollama",
-        "reason": "default local-first provider; install Ollama or configure a hosted provider",
-    }
-
-
-def _provider_setup_hint(provider: str) -> str:
-    if provider == "ollama":
-        return 'run `vibe-rag setup-ollama` or set `VIBE_RAG_EMBEDDING_PROVIDER` to a hosted provider'
-    if provider == "mistral":
-        return 'export `MISTRAL_API_KEY=...` and optionally `VIBE_RAG_EMBEDDING_PROVIDER=mistral`'
-    if provider == "openai":
-        return 'export `OPENAI_API_KEY=...` and optionally `VIBE_RAG_EMBEDDING_PROVIDER=openai`'
-    if provider == "voyage":
-        return 'export `VOYAGE_API_KEY=...` and optionally `VIBE_RAG_EMBEDDING_PROVIDER=voyage`'
-    return "configure a supported embedding provider"
+def _openrouter_setup_hint() -> str:
+    return (
+        "export `RAG_OR_API_KEY=...` "
+        "(optional: `RAG_OR_EMBED_MOD=perplexity/pplx-embed-v1-4b`, `RAG_OR_EMBED_DIM=2560`)"
+    )
 
 
 @main.command()
@@ -433,16 +373,28 @@ def init(name: str | None):
     click.echo("    .claude/           — Claude Code session-start hook")
     click.echo("    .gemini/           — Gemini CLI MCP + session-start hook")
     click.echo("    .mcp.json          — Claude Code MCP server config")
-    click.echo("\n  Client support:")
-    click.echo("    Vibe is the first-class path and expects the mistral-vibe fork for native SessionStart.")
-    click.echo("    Claude Code is strong, Codex works with DX tax, and Gemini CLI remains experimental.")
-    recommended = _recommended_provider()
+    click.echo("\n  Client posture:")
+    click.echo("    vibe-rag is client-agnostic.")
+    click.echo("    Claude Code and Codex are the strongest validated integrations today.")
+    click.echo("    Vibe remains bootstrapped and maintained.")
+    click.echo("    Gemini CLI is scaffolded but untested.")
+    profile = {
+        "model": os.environ.get("RAG_OR_EMBED_MOD", "perplexity/pplx-embed-v1-4b"),
+        "dimensions": os.environ.get("RAG_OR_EMBED_DIM", "2560"),
+    }
     click.echo("\n  Embeddings:")
-    click.echo(f"    Recommended provider: {recommended['provider']} ({recommended['reason']})")
-    click.echo(f"    Next step: {_provider_setup_hint(recommended['provider'])}")
-    click.echo("\n  Next:")
+    click.echo("    One obvious way: OpenRouter embeddings.")
+    click.echo(f"    Default profile: {profile['model']} @ {profile['dimensions']} dims")
+    click.echo(f"    Next step: {_openrouter_setup_hint()}")
+    click.echo("\n  Golden path:")
     click.echo(f"    cd {target}")
-    click.echo("    vibe")
+    click.echo("    export RAG_OR_API_KEY=...")
+    click.echo("    start Claude Code, Codex, or Vibe in this repo")
+    click.echo('    "load session context for understanding this repo"')
+    click.echo('    "index this project"')
+    click.echo("\n  Tool naming:")
+    click.echo("    The MCP server exposes bare tools like load_session_context, index_project, search, remember, and project_status.")
+    click.echo("    In the generated Vibe config the server is named memory, so some clients show memory_load_session_context, memory_index_project, memory_search, and memory_project_status.")
 
 def _initialize_git_repo(target: Path) -> None:
     if (target / ".git").exists():
@@ -514,9 +466,11 @@ def _format_language_stats(lang_stats: dict[str, int], top_n: int = 5) -> str:
 def status():
     """Show index, memory, and health summary for the current project."""
     from vibe_rag.db.sqlite import SqliteVecDB
+    from vibe_rag.server import _ensure_project_id
+    from vibe_rag.tools import _stale_state
 
-    db_path = Path(os.environ.get("VIBE_RAG_DB", Path.cwd() / ".vibe" / "index.db")).expanduser()
-    user_db_path = Path(os.environ.get("VIBE_RAG_USER_DB", Path.home() / ".vibe" / "memory.db")).expanduser()
+    db_path = Path(os.environ.get("RAG_DB", Path.cwd() / ".vibe" / "index.db")).expanduser()
+    user_db_path = Path(os.environ.get("RAG_USER_DB", Path.home() / ".vibe" / "memory.db")).expanduser()
     embedding_dimensions = _embedding_dimensions()
     click.echo(f"\n  vibe-rag {__version__}")
     click.echo(f"  DB: {db_path}\n")
@@ -530,6 +484,7 @@ def status():
         project_memories = db.memory_count()
         lang_stats = db.language_stats()
         freshness = _index_freshness(db)
+        stale_state = _stale_state(db, Path.cwd(), _ensure_project_id())
         db.close()
 
         click.echo(f"  Index:     {code_chunks} code chunks, {doc_chunks} doc chunks ({file_count} files)")
@@ -541,7 +496,17 @@ def status():
             user_memories = user_db.memory_count()
             user_db.close()
         click.echo(f"  Memory:    {project_memories} project, {user_memories} user")
-        click.echo(f"  Health:    {freshness}")
+        if stale_state.get("is_incompatible"):
+            click.echo("  Health:    incompatible index")
+            first_warning = (stale_state.get("warnings") or [{}])[0]
+            if first_warning.get("detail"):
+                click.echo(f"  Detail:    {first_warning['detail']}")
+            click.echo("  Action:    vibe-rag reindex --full")
+        elif stale_state.get("warnings"):
+            click.echo(f"  Health:    {freshness}")
+            click.echo(f"  Detail:    {stale_state['warnings'][0]['detail']}")
+        else:
+            click.echo(f"  Health:    {freshness}")
         if lang_stats:
             click.echo(f"  Languages: {_format_language_stats(lang_stats)}")
     else:
@@ -557,20 +522,44 @@ def status():
 
 
 @main.command("reindex")
+@click.option(
+    "--full",
+    is_flag=True,
+    help="Clear incremental index state and rebuild the entire project. Use after embedding profile changes.",
+)
 @click.argument("paths", nargs=-1)
-def reindex(paths: tuple[str, ...]):
+def reindex(paths: tuple[str, ...], full: bool):
     """Re-index code and docs for the current project."""
     from vibe_rag.tools import index_project
+    from vibe_rag.tools.index import _index_project_impl
+
+    if full and paths and tuple(paths) != (".",):
+        raise click.ClickException("--full rebuilds the entire project; omit paths.")
 
     target_paths: list[str] | str = list(paths) if paths else "."
     click.echo()
-    result = index_project(target_paths)
+    if full:
+        click.echo("Full rebuild requested. Clearing incremental index state and rebuilding the full project.")
+        result = _index_project_impl(
+            ".",
+            force_full_rebuild=True,
+            rebuild_reason="explicit_cli_full_reindex",
+        )
+    else:
+        result = index_project(target_paths)
     if result.get("ok"):
         click.echo(result.get("summary") or "Index complete")
     else:
         error = result.get("error") or {}
         click.echo(f"Error: {error.get('message') or 'indexing failed'}")
     click.echo()
+
+
+@main.command("reset-index")
+def reset_index():
+    """Clear incremental index state and rebuild the full project index."""
+    ctx = click.get_current_context()
+    ctx.invoke(reindex, paths=(), full=True)
 
 
 def _check_language_coverage(db) -> dict:
@@ -621,17 +610,17 @@ def _check_tool_count() -> dict:
 
 
 @main.command()
-@click.option("--fix", is_flag=True, help="Run provider-specific setup helpers when possible.")
+@click.option("--fix", is_flag=True, help="Retained for compatibility; doctor no longer performs provider setup.")
 def doctor(fix: bool):
-    """Run diagnostic checks on setup, provider, index, and memory health."""
+    """Run diagnostic checks on setup, OpenRouter configuration, index, and memory health."""
     from vibe_rag.db.sqlite import SqliteVecDB
     from vibe_rag.indexing.embedder import embedding_provider_status
     from vibe_rag.server import _ensure_project_id, _get_db, _get_embedder
     from vibe_rag.tools import _codex_trust_status, _stale_state, _vibe_trust_status
 
     project_root = Path.cwd().resolve()
-    project_db_path = Path(os.environ.get("VIBE_RAG_DB", project_root / ".vibe" / "index.db")).expanduser()
-    user_db_path = Path(os.environ.get("VIBE_RAG_USER_DB", Path.home() / ".vibe" / "memory.db")).expanduser()
+    project_db_path = Path(os.environ.get("RAG_DB", project_root / ".vibe" / "index.db")).expanduser()
+    user_db_path = Path(os.environ.get("RAG_USER_DB", Path.home() / ".vibe" / "memory.db")).expanduser()
     provider = embedding_provider_status()
     project_id = _ensure_project_id()
     mcp_status = _project_mcp_command_status(project_root)
@@ -642,8 +631,6 @@ def doctor(fix: bool):
     user_db_status = _db_readable_status(user_db_path, label="User")
     vibe_trust = _vibe_trust_status(project_root)
     codex_trust = _codex_trust_status(project_root)
-    recommended = _recommended_provider()
-    candidates = _provider_candidates()
 
     provider_detail = str(provider["detail"])
     provider_ok = bool(provider["ok"])
@@ -652,19 +639,19 @@ def doctor(fix: bool):
             _get_embedder().embed_text_sync(["doctor healthcheck"])
         except Exception as exc:
             provider_ok = False
-            provider_detail = f"Embedding failed: {exc}"
+            provider_detail = f"embedding failed: {exc}"
 
-    stale_state = {"is_stale": False, "warnings": []}
+    stale_state = {"is_stale": False, "is_incompatible": False, "warnings": []}
     if project_db_status["ok"]:
         try:
             stale_state = _stale_state(_get_db(), project_root, project_id)
         except Exception as exc:
             stale_state = {
                 "is_stale": True,
+                "is_incompatible": True,
                 "warnings": [{"kind": "stale_check_failed", "detail": f"stale-state check failed: {exc}"}],
             }
 
-    # Language coverage check
     lang_coverage = {"ok": True, "warning": True, "detail": "no project DB"}
     if project_db_status["ok"]:
         try:
@@ -676,7 +663,6 @@ def doctor(fix: bool):
         except Exception as exc:
             lang_coverage = {"ok": False, "warning": True, "detail": f"language check failed: {exc}"}
 
-    # Memory health check
     memory_health = {"ok": True, "warning": True, "detail": "no project DB"}
     if project_db_status["ok"]:
         try:
@@ -694,7 +680,6 @@ def doctor(fix: bool):
         except Exception as exc:
             memory_health = {"ok": False, "warning": True, "detail": f"memory health check failed: {exc}"}
 
-    # Tool count check
     tool_status = _check_tool_count()
 
     click.echo(f"\n  vibe-rag {__version__}")
@@ -704,7 +689,8 @@ def doctor(fix: bool):
     click.echo(f"  User DB:      {user_db_path}")
     click.echo(f"  Provider:     {provider['provider']}")
     click.echo(f"  Model:        {provider['model'] or 'unset'}")
-    click.echo(f"  Recommended:  {recommended['provider']} ({recommended['reason']})")
+    click.echo(f"  Dimensions:   {provider.get('dimensions') or 'unset'}")
+    click.echo("  Golden path:  OpenRouter embeddings with one API key")
     click.echo()
 
     vibe_hook_ok = vibe_hook_status["ok"]
@@ -738,97 +724,25 @@ def doctor(fix: bool):
     _emit("MCP tools", tool_status["ok"], tool_status.get("warning", False), tool_status["detail"])
 
     if stale_state.get("warnings"):
-        click.echo(f"  [{_status_label(False, True)}] {'Stale state':<16s} " + stale_state["warnings"][0]["detail"])
+        stale_ok = False
+        stale_warning = not stale_state.get("is_incompatible", False)
+        label = "Index state"
+        first_warning = stale_state["warnings"][0]
+        _emit(label, stale_ok, stale_warning, first_warning["detail"])
         for warning in stale_state["warnings"][1:]:
             click.echo(f"                         {warning['detail']}")
-        click.echo("  Suggested stale fix: vibe-rag reindex")
+        if stale_state.get("is_incompatible", False):
+            click.echo("  Suggested fix: vibe-rag reindex --full")
+            click.echo("  Alias:         vibe-rag reset-index")
+        else:
+            click.echo("  Suggested fix: vibe-rag reindex")
     else:
-        click.echo(f"  [{_status_label(True)}] {'Stale state':<16s} no stale index warnings")
+        _emit("Index state", True, False, "no stale or incompatible index warnings")
 
-    click.echo("  Provider options:")
-    for candidate in candidates:
-        available = bool(candidate["available"])
-        click.echo(f"    [{_status_label(available, not available)}] {candidate['provider']:<15} {candidate['detail']}")
-
-    if not provider_ok or provider["provider"] != recommended["provider"]:
-        click.echo(f"  Suggested next step: {_provider_setup_hint(recommended['provider'])}")
-    if not vibe_cli_status["ok"]:
-        click.echo(
-            "  Vibe first-class path: install the required fork with `uv tool install git+https://github.com/jasencarroll/mistral-vibe.git`"
-        )
-
-    if provider["provider"] == "ollama" and not provider_ok:
-        click.echo("\n  Ollama fast path:")
-        click.echo("    ollama serve")
-        if provider["model"]:
-            click.echo(f"    ollama pull {provider['model']}")
-        if fix:
-            ctx = click.get_current_context()
-            ctx.invoke(setup_ollama, model=provider["model"] or "")
-    click.echo()
-
-
-def _wait_for_ollama(host: str, timeout_seconds: float = 10.0) -> bool:
-    import httpx
-
-    deadline = time.time() + timeout_seconds
-    url = f"{host.rstrip('/')}/api/version"
-    while time.time() < deadline:
-        try:
-            response = httpx.get(url, timeout=1.0)
-            if response.status_code == 200:
-                return True
-        except httpx.HTTPError:
-            pass
-        time.sleep(0.5)
-    return False
-
-
-def _start_ollama_if_needed() -> str:
-    ollama_bin = shutil.which("ollama")
-    if not ollama_bin:
-        raise click.ClickException("Ollama is not installed or not on PATH.")
-
-    host = (
-        os.environ.get("VIBE_RAG_OLLAMA_HOST", "").strip()
-        or os.environ.get("OLLAMA_HOST", "").strip()
-        or "http://localhost:11434"
-    )
-    if _wait_for_ollama(host, timeout_seconds=1.0):
-        return host
-
-    subprocess.Popen(
-        [ollama_bin, "serve"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        start_new_session=True,
-    )
-    if _wait_for_ollama(host):
-        return host
-    raise click.ClickException(f"Ollama did not become ready at {host}.")
-
-
-@main.command("setup-ollama")
-@click.option("--model", default="qwen3-embedding:0.6b", show_default=True, help="Embedding model to pull.")
-def setup_ollama(model: str):
-    """Start Ollama and pull the embedding model for local use."""
-    ollama_bin = shutil.which("ollama")
-    if not ollama_bin:
-        raise click.ClickException("Ollama is not installed or not on PATH.")
-
-    host = _start_ollama_if_needed()
-    click.echo(f"\n  Ollama ready at {host}")
-    click.echo(f"  Pulling {model} ...")
-
-    result = subprocess.run([ollama_bin, "pull", model], check=False)
-    if result.returncode != 0:
-        raise click.ClickException(f"ollama pull {model} failed with exit code {result.returncode}")
-
-    click.echo(f"  Pulled {model}")
-    click.echo("\n  MCP env:")
-    click.echo('    VIBE_RAG_EMBEDDING_PROVIDER = "ollama"')
-    click.echo(f'    VIBE_RAG_EMBEDDING_MODEL = "{model}"')
-    click.echo('    VIBE_RAG_EMBEDDING_DIMENSIONS = "1024"')
+    if not provider_ok:
+        click.echo(f"  Suggested next step: {_openrouter_setup_hint()}")
+    if fix:
+        click.echo("  Automatic provider setup was removed. Configure OpenRouter credentials explicitly.")
     click.echo()
 
 

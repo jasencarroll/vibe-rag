@@ -245,6 +245,7 @@ def update_memory(
         return _failure_from_error(parsed)
     source_db, sqlite_id = parsed
     current_project_id = _ensure_project_id()
+
     # Resolve DB
     if source_db == "user":
         db = _get_user_db()

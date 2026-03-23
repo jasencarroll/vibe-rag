@@ -9,11 +9,11 @@ from vibe_rag.db.sqlite import SqliteVecDB
 
 
 class FakeEmbedder:
-    """Returns deterministic 1024-dim vectors. No API calls."""
+    """Returns deterministic fixed-width vectors. No API calls."""
 
     _TOKEN_RE = re.compile(r"[a-z0-9_]+")
     _ACTIVE_DIMENSIONS = 64
-    _TOTAL_DIMENSIONS = 1024
+    _TOTAL_DIMENSIONS = 2560
 
     def _vector(self, text: str) -> list[float]:
         active = [0.0] * self._ACTIVE_DIMENSIONS
@@ -44,8 +44,8 @@ class FakeEmbedder:
 def tmp_db(tmp_path: Path):
     """Provides an initialized SqliteVecDB and patches the server global."""
     import vibe_rag.server as srv
-    project_db = SqliteVecDB(tmp_path / "project.db")
-    user_db = SqliteVecDB(tmp_path / "user.db")
+    project_db = SqliteVecDB(tmp_path / "project.db", embedding_dimensions=2560)
+    user_db = SqliteVecDB(tmp_path / "user.db", embedding_dimensions=2560)
     project_db.initialize()
     user_db.initialize()
     old_project_db = srv._project_db
@@ -144,23 +144,19 @@ def populated_memory(tmp_db, mock_embedder):
 
 
 _PROVIDER_ENV_VARS = (
-    "VIBE_RAG_EMBEDDING_PROVIDER",
-    "VIBE_RAG_EMBEDDING_MODEL",
-    "VIBE_RAG_EMBEDDING_DIMENSIONS",
-    "VIBE_RAG_OLLAMA_HOST",
-    "VIBE_RAG_CODE_EMBEDDING_MODEL",
-    "VIBE_RAG_DB",
-    "VIBE_RAG_USER_DB",
-    "MISTRAL_API_KEY",
-    "OPENAI_API_KEY",
-    "VOYAGE_API_KEY",
-    "OLLAMA_HOST",
+    "RAG_DB",
+    "RAG_USER_DB",
+    "RAG_OR_API_KEY",
+    "RAG_OR_EMBED_MOD",
+    "RAG_OR_EMBED_DIM",
+    "RAG_OR_API_BASE_URL",
+    "RAG_OR_TIMEOUT_SECONDS",
 )
 
 
 @pytest.fixture
 def clean_env(monkeypatch):
-    """Remove all VIBE_RAG_* and provider env vars for a pristine environment.
+    """Remove embedding and persistence env vars for a pristine environment.
 
     Useful for embedder / provider-selection tests that need deterministic
     environment state.  Each variable is deleted via ``monkeypatch.delenv``

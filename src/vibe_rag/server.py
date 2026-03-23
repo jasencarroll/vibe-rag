@@ -5,13 +5,14 @@ import logging
 import os
 import threading
 from pathlib import Path
+
 from mcp.server.fastmcp import FastMCP
+
 from vibe_rag.db.sqlite import SqliteVecDB
 from vibe_rag.indexing.embedder import EmbeddingProvider, create_embedding_provider, resolve_embedding_dimensions
 
 mcp = FastMCP(name="vibe-rag")
 
-_api_key = os.environ.get("MISTRAL_API_KEY", "")
 _project_db: SqliteVecDB | None = None
 _user_db: SqliteVecDB | None = None
 _embedder: EmbeddingProvider | None = None
@@ -25,14 +26,14 @@ def _embedding_dimensions() -> int:
 
 
 def _project_db_path() -> Path:
-    db_path_raw = os.environ.get("VIBE_RAG_DB", "")
+    db_path_raw = os.environ.get("RAG_DB", "")
     if db_path_raw:
         return Path(db_path_raw).resolve()
     return (Path.cwd() / ".vibe" / "index.db").resolve()
 
 
 def _user_db_path() -> Path:
-    db_path_raw = os.environ.get("VIBE_RAG_USER_DB", "")
+    db_path_raw = os.environ.get("RAG_USER_DB", "")
     if db_path_raw:
         return Path(db_path_raw).resolve()
     return (Path.home() / ".vibe" / "memory.db").resolve()

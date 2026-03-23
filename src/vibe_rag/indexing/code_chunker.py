@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import ctypes
 import logging
-from functools import lru_cache
-from pathlib import Path
 import site
 import sysconfig
+from functools import lru_cache
+from pathlib import Path
 
 from vibe_rag.types import CodeChunk
 
@@ -28,17 +28,14 @@ SYMBOL_NODE_TYPES: set[str] = {
 
 
 def _is_tree_sitter_languages_path_trusted(tree_sitter_module_path: Path) -> bool:
-    search_paths = set()
-    for cfg_path in sysconfig.get_paths().values():
-        search_paths.add(Path(cfg_path).resolve())
-    for site_path in site.getsitepackages():
-        search_paths.add(Path(site_path).resolve())
+    search_paths = {Path(p).resolve() for p in sysconfig.get_paths().values()}
+    search_paths.update(Path(p).resolve() for p in site.getsitepackages())
     usersite = site.getusersitepackages()
     if usersite:
         search_paths.add(Path(usersite).resolve())
 
     resolved = tree_sitter_module_path.resolve()
-    return any(resolved.is_relative_to(site_path) for site_path in search_paths if site_path)
+    return any(resolved.is_relative_to(sp) for sp in search_paths if sp)
 
 
 def chunk_code_sliding_window(
