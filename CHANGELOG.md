@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.19] - 2026-03-22
+
+### Added
+- Real retrieval eval harness for local repos, including query variants, progress output, and timestamped JSON result artifacts
+- Cross-repo eval coverage for fixture repos plus validated real-repo baselines on `vibe-rag`, `mistral-vibe`, and `fda-platform`
+- Indexing and embedding progress events across Ollama, Mistral, OpenAI, and Voyage providers
+
+### Changed
+- Retrieval reranking now uses bounded similarity scoring with stronger intent-aware path weighting for procedural, setup, API, pipeline, and MCP queries
+- Doc retrieval now favors canonical operator docs such as `README.md`, `docs/API.md`, `docs/PIPELINE.md`, and `docs/MCP-TOOLS.md` over planning noise when the query intent matches
+- Session bootstrap and release/process queries were tuned against real repo artifacts instead of micro-repo assumptions
+
+### Fixed
+- Voyage embeddings now batch by both item count and token budget instead of failing on large repo runs
+- Ollama embeddings now batch large indexing requests instead of sending a single oversized request
+- Real repo eval output no longer creates circular JSON references when recording query attempts
+
 ## [0.0.18] - 2026-03-22
 
 ### Fixed

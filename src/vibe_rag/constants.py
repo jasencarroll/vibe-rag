@@ -16,7 +16,7 @@ DOC_EXTENSIONS = {".md", ".txt", ".rst"}
 # Directories to skip during file collection
 SKIP_DIRS = {
     ".git", ".vibe", "node_modules", "__pycache__", ".venv", "venv",
-    "dist", "build", ".next", ".nuxt", "target", ".tox",
+    "dist", "build", ".next", ".nuxt", "target", ".tox", "evals",
 }
 
 # Mapping from file extensions to language identifiers for syntax-aware chunking

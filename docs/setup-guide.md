@@ -2,23 +2,17 @@
 
 Target state:
 
-- packaged `vibe`
 - packaged `vibe-rag`
-- project-local config
+- project-local config for your chosen client
 - local durable memory in `~/.vibe/memory.db`
-- background session bootstrap
+- session bootstrap where supported
 - Ollama embeddings with `qwen3-embedding:0.6b`
-- optional Codex and Claude Code scaffolding
+- client scaffolding for Vibe, Codex, Claude Code, or Gemini CLI
+
+`vibe-rag` itself is the MCP server and memory/search layer.
+Client integrations sit on top of that core.
 
 ## 1. Install the Tools
-
-Install the Vibe fork:
-
-```bash
-uv tool uninstall mistral-vibe || true
-uv tool install git+https://github.com/jasencarroll/mistral-vibe.git
-vibe --version
-```
 
 Install `vibe-rag`:
 
@@ -37,6 +31,14 @@ Start Ollama and pull the default embedding model:
 
 ```bash
 vibe-rag setup-ollama
+```
+
+If you want the most complete Vibe integration, install the Vibe fork:
+
+```bash
+uv tool uninstall mistral-vibe || true
+uv tool install git+https://github.com/jasencarroll/mistral-vibe.git
+vibe --version
 ```
 
 ## 2. Scaffold a Repo
@@ -118,6 +120,16 @@ vibe-rag setup-ollama
 vibe-rag hook-session-start --format codex
 ```
 
+`vibe-rag doctor` verifies the startup path, not just the provider:
+
+- effective project id
+- MCP command resolution from project config
+- Codex `SessionStart` hook execution
+- project and user sqlite readability
+- embedding provider reachability
+- Vibe and Codex trust state
+- stale index warnings
+
 ## 3A. Optional Codex And Claude Code Scaffolding
 
 `vibe-rag init` also writes:
@@ -137,7 +149,8 @@ Generated Codex config also sets `suppress_unstable_features_warning = true`.
 
 Current support level:
 
-- Vibe: first-class
+- `vibe-rag serve`: core identity
+- Vibe: most complete integration
 - Codex: experimental
 - Claude Code: experimental
 - Gemini CLI: experimental
@@ -194,6 +207,12 @@ If code or docs search is empty:
 - run `vibe-rag doctor`
 - make sure Ollama is running and `qwen3-embedding:0.6b` is pulled
 
+If `vibe-rag doctor` reports stale state:
+
+- re-run `index this project`
+- make sure you are in the intended repo root
+- check whether git `HEAD` changed since the last index
+
 If memory search is empty:
 
 - store one memory explicitly with `remember ...`
@@ -210,3 +229,17 @@ If packaged behavior looks stale:
 ```bash
 uv tool install --upgrade --python 3.12 vibe-rag
 ```
+
+## 8. Local Retrieval Evals
+
+To evaluate real repos in `~/dev` without mutating their normal index state:
+
+1. Copy `evals/local_repos.toml.example` to `evals/local_repos.toml`
+2. Point each `path` at a real local repo such as `~/dev/vibe-rag`, `~/dev/mistral-vibe`, or `~/dev/codex`
+3. Run:
+
+```bash
+uv run python scripts/run_retrieval_eval.py evals/local_repos.toml
+```
+
+The script creates temporary project/user sqlite DBs for each repo under test.

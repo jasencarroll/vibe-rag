@@ -2,8 +2,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import re
+import subprocess
 import time
 from pathlib import Path
+import tomllib
 
 from vibe_rag.chunking import chunk_doc, collect_files
 from vibe_rag.constants import EXT_TO_LANG
@@ -15,11 +19,88 @@ from vibe_rag.server import (
     _get_user_db,
     mcp,
 )
+from vibe_rag.indexing.embedder import ProgressCallback
 
 MAX_QUERY_LENGTH = 10_000
 MAX_MEMORY_LENGTH = 10_000
 MAX_TAGS_LENGTH = 512
 ALLOWED_MEMORY_KINDS = {"note", "decision", "constraint", "todo", "summary", "fact"}
+INDEX_METADATA_KEY = "project_index_metadata"
+STRUCTURED_MEMORY_PRIORITY = {
+    "decision": 0,
+    "constraint": 1,
+    "summary": 2,
+    "todo": 3,
+    "fact": 4,
+    "note": 5,
+}
+PROCEDURAL_QUERY_TERMS = {
+    "release",
+    "publish",
+    "tag",
+    "workflow",
+    "notes",
+    "bootstrap",
+    "hook",
+    "session",
+    "trust",
+    "mcp",
+    "config",
+}
+DOC_FOCUSED_QUERY_TERMS = {
+    "setup",
+    "guide",
+    "docs",
+    "documentation",
+    "resume",
+    "continue",
+    "readme",
+    "editor",
+    "ide",
+    "integration",
+    "install",
+    "configure",
+    "configuration",
+    "zed",
+    "jetbrains",
+    "neovim",
+}
+API_QUERY_TERMS = {
+    "api",
+    "auth",
+    "route",
+    "routes",
+    "endpoint",
+    "endpoints",
+    "letters",
+    "observations",
+    "decrees",
+    "analytics",
+    "billing",
+    "checkout",
+    "keys",
+    "health",
+    "fastapi",
+    "backend",
+}
+PIPELINE_QUERY_TERMS = {
+    "pipeline",
+    "discover",
+    "scrape",
+    "parser",
+    "parse",
+    "classify",
+    "classifier",
+    "enrich",
+    "ingestion",
+    "ingest",
+    "observation",
+    "observations",
+    "483",
+    "warning",
+    "letter",
+    "letters",
+}
 
 
 def _normalize_paths(paths: list[str] | str | None) -> tuple[list[Path], Path] | str:
@@ -156,6 +237,239 @@ def _score(result: dict) -> float:
     return 1.0 - float(distance)
 
 
+def _rank_score(result: dict) -> float:
+    if result.get("score") is not None:
+        return float(result["score"])
+    distance = result.get("distance")
+    if distance is None:
+        return 1.0
+    return 1.0 / (1.0 + max(0.0, float(distance)))
+
+
+def _memory_priority(memory_kind: str | None) -> int:
+    if not memory_kind:
+        return len(STRUCTURED_MEMORY_PRIORITY)
+    return STRUCTURED_MEMORY_PRIORITY.get(memory_kind, len(STRUCTURED_MEMORY_PRIORITY))
+
+
+def _sort_memory_results(results: list[dict]) -> list[dict]:
+    return sorted(
+        results,
+        key=lambda item: (
+            _memory_priority(item.get("memory_kind")),
+            -_score(item),
+            str(item.get("updated_at") or ""),
+        ),
+    )
+
+
+def _query_terms(query: str) -> set[str]:
+    return {term for term in re.findall(r"[a-z0-9]+", query.lower()) if len(term) >= 3}
+
+
+def _text_term_overlap(query: str, *parts: str | None) -> float:
+    terms = _query_terms(query)
+    if not terms:
+        return 0.0
+    haystack = " ".join(part or "" for part in parts).lower()
+    matches = sum(1 for term in terms if term in haystack)
+    return matches / len(terms)
+
+
+def _query_intents(query: str) -> set[str]:
+    terms = _query_terms(query)
+    intents: set[str] = set()
+    if {"release", "publish", "tag", "workflow", "notes"} & terms:
+        intents.add("release")
+    if {"bootstrap", "hook", "session", "mcp", "trust", "config"} & terms:
+        intents.add("bootstrap")
+    if PROCEDURAL_QUERY_TERMS & terms:
+        intents.add("procedural")
+    if DOC_FOCUSED_QUERY_TERMS & terms:
+        intents.add("docs")
+    if API_QUERY_TERMS & terms:
+        intents.add("api")
+    if PIPELINE_QUERY_TERMS & terms:
+        intents.add("pipeline")
+    return intents
+
+
+def _path_intent_boost(query: str, file_path: str) -> float:
+    path = file_path.lower()
+    terms = _query_terms(query)
+    intents = _query_intents(query)
+    boost = 0.0
+    is_template_path = "/templates/" in path or "/template_bundle/" in path
+
+    if "procedural" in intents:
+        if path.endswith("agents.md"):
+            boost += 0.7
+            if path == "agents.md":
+                boost += 0.25
+        if path.endswith("changelog.md"):
+            boost += 0.55
+            if path == "changelog.md":
+                boost += 0.15
+        if "/docs/" in path or path.startswith("docs/") or path.endswith("readme.md"):
+            boost += 0.35
+        if ".github/workflows/" in path:
+            boost += 0.65
+            if path.startswith(".github/workflows/"):
+                boost += 0.2
+        if "/scripts/" in path or path.startswith("scripts/"):
+            boost += 0.2
+        if path.startswith("tests/"):
+            boost -= 0.25
+        if is_template_path:
+            boost -= 0.4
+
+    if "release" in intents:
+        if ".github/workflows/" in path:
+            boost += 0.45
+        if path.endswith("changelog.md"):
+            boost += 0.35
+        if path.endswith("agents.md"):
+            boost += 0.25
+        if is_template_path:
+            boost -= 0.2
+
+    if "bootstrap" in intents:
+        if "hook" in path or "mcp" in path:
+            boost += 0.4
+        if "config" in path:
+            boost += 0.25
+        if "trust" in path:
+            boost += 0.25
+        if path.endswith("agents.md"):
+            boost += 0.15
+
+    if "docs" in intents:
+        if path == "readme.md":
+            boost += 0.85
+        elif path.endswith("readme.md"):
+            boost += 0.45
+        if path.startswith("docs/"):
+            boost += 0.75
+        elif "/docs/" in path:
+            boost += 0.35
+        if "setup" in path:
+            boost += 0.55
+        if "guide" in path:
+            boost += 0.4
+        if "install" in path or "integration" in path:
+            boost += 0.3
+        if path.endswith("agents.md") or path.endswith("changelog.md"):
+            boost -= 0.2
+        if {"resume", "continue"} & terms:
+            if path == "readme.md":
+                boost += 0.6
+            if path.endswith("changelog.md"):
+                boost -= 0.15
+
+    if "api" in intents:
+        if path == "backend/app/main.py":
+            boost += 1.0
+        if path.startswith("backend/app/routes/"):
+            boost += 0.75
+        if path.startswith("backend/app/analytics/") or path.startswith("backend/app/billing/"):
+            boost += 0.35
+        if path == "docs/api.md":
+            boost += 0.95
+        if path == "docs/architecture.md":
+            boost += 0.55
+        if path.startswith("spec/") or path == "claude.md":
+            boost -= 0.45
+        if "changelog" in path or path.endswith("changelog.tsx"):
+            boost -= 0.55
+        if path.startswith("frontend/"):
+            boost -= 0.2
+
+    if "pipeline" in intents:
+        if path.startswith("backend/app/pipeline/"):
+            boost += 0.95
+        if path.startswith("backend/scripts/"):
+            boost += 0.65
+        if path == "docs/pipeline.md":
+            boost += 1.0
+        if path == "readme.md":
+            boost += 0.25
+        if path.startswith("spec/") or path == "claude.md":
+            boost -= 0.35
+        if "changelog" in path or path.endswith("changelog.tsx"):
+            boost -= 0.6
+
+    return boost
+
+
+def _rerank_results(query: str, results: list[dict], *, content_key: str = "content") -> list[dict]:
+    return sorted(
+        results,
+        key=lambda item: (
+            -(
+                _rank_score(item)
+                + _path_intent_boost(query, str(item.get("file_path") or ""))
+                + 0.35 * _text_term_overlap(query, str(item.get("file_path") or ""))
+                + 0.15 * _text_term_overlap(query, str(item.get(content_key) or ""))
+            ),
+            str(item.get("file_path") or ""),
+        ),
+    )
+
+
+def _rerank_doc_results(query: str, results: list[dict]) -> list[dict]:
+    terms = _query_terms(query)
+    intents = _query_intents(query)
+
+    def doc_bonus(item: dict) -> float:
+        path = str(item.get("file_path") or "").lower()
+        bonus = 0.0
+        if {"resume", "continue"} & terms and path == "readme.md":
+            bonus += 2.0
+        if "api" in intents:
+            if path == "docs/api.md":
+                bonus += 2.4
+            if path == "docs/architecture.md":
+                bonus += 0.9
+            if path == "claude.md" or path.startswith("spec/"):
+                bonus -= 1.2
+        if "pipeline" in intents:
+            if path == "docs/pipeline.md":
+                bonus += 2.4
+            if path == "readme.md":
+                bonus += 0.35
+            if path == "claude.md" or path.startswith("spec/"):
+                bonus -= 1.0
+        return bonus
+
+    return sorted(
+        results,
+        key=lambda item: (
+            -(
+                _rank_score(item)
+                + doc_bonus(item)
+                + 1.15 * _path_intent_boost(query, str(item.get("file_path") or ""))
+                + 0.45 * _text_term_overlap(query, str(item.get("file_path") or ""))
+                + 0.2 * _text_term_overlap(query, str(item.get("content") or ""))
+            ),
+            str(item.get("file_path") or ""),
+            int(item.get("chunk_index") or 0),
+        ),
+    )
+
+
+def _merge_ranked_results(*result_sets: list[dict], limit: int) -> list[dict]:
+    seen: set[tuple[str, int | str]] = set()
+    merged: list[dict] = []
+    for result_set in result_sets:
+        for item in result_set:
+            key = (str(item.get("file_path") or ""), item.get("chunk_index") or item.get("start_line") or "")
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(item)
+    return merged[:limit]
+
+
 def _memory_payload(result: dict) -> dict:
     payload = {
         "id": str(result["id"]),
@@ -173,6 +487,14 @@ def _memory_payload(result: dict) -> dict:
         "supersedes": str(result["supersedes"]) if result.get("supersedes") is not None else None,
         "superseded_by": str(result["superseded_by"]) if result.get("superseded_by") is not None else None,
         "metadata": result.get("metadata") or {},
+        "provenance": {
+            "source_db": result.get("source_db"),
+            "project_id": result.get("project_id"),
+            "source_session_id": result.get("source_session_id"),
+            "source_message_id": result.get("source_message_id"),
+            "created_at": str(result.get("created_at")) if result.get("created_at") is not None else None,
+            "updated_at": str(result.get("updated_at")) if result.get("updated_at") is not None else None,
+        },
     }
     if isinstance(payload["tags"], str):
         payload["tags"] = [tag.strip() for tag in payload["tags"].split(",") if tag.strip()]
@@ -189,9 +511,144 @@ def _merge_memory_results(*result_sets: list[dict], limit: int) -> list[dict]:
                 continue
             seen_ids.add(dedupe_key)
             merged.append(result)
-            if len(merged) >= limit:
-                return merged
-    return merged
+    return _sort_memory_results(merged)[:limit]
+
+
+def _current_git_head(project_root: Path | None = None) -> str | None:
+    cwd = project_root or Path.cwd()
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError:
+        return None
+    if result.returncode != 0:
+        return None
+    head = result.stdout.strip()
+    return head or None
+
+
+def _load_toml(path: Path) -> dict | None:
+    if not path.exists():
+        return None
+    try:
+        return tomllib.loads(path.read_text())
+    except (OSError, tomllib.TOMLDecodeError):
+        return None
+
+
+def _vibe_trust_status(project_root: Path) -> dict:
+    config_path = Path.home() / ".vibe" / "trusted_folders.toml"
+    data = _load_toml(config_path)
+    if not data:
+        return {"status": "unknown", "detail": f"{config_path} not found or unreadable"}
+
+    trusted = {Path(entry).resolve() for entry in data.get("trusted", []) if isinstance(entry, str) and "$" not in entry}
+    resolved = project_root.resolve()
+    if resolved in trusted:
+        return {"status": "ok", "detail": f"trusted in {config_path}"}
+    return {"status": "warn", "detail": f"{resolved} not trusted in {config_path}"}
+
+
+def _codex_trust_status(project_root: Path) -> dict:
+    config_path = Path.home() / ".codex" / "config.toml"
+    data = _load_toml(config_path)
+    if not data:
+        return {"status": "unknown", "detail": f"{config_path} not found or unreadable"}
+
+    projects = data.get("projects")
+    if not isinstance(projects, dict):
+        return {"status": "unknown", "detail": f"{config_path} has no [projects] entries"}
+
+    resolved = project_root.resolve()
+    candidates = [resolved, *resolved.parents]
+    for candidate in candidates:
+        entry = projects.get(str(candidate))
+        if isinstance(entry, dict) and entry.get("trust_level") == "trusted":
+            return {"status": "ok", "detail": f"trusted via {candidate} in {config_path}"}
+    return {"status": "warn", "detail": f"{resolved} not trusted in {config_path}"}
+
+
+def _index_metadata(db) -> dict:
+    return db.get_setting_json(INDEX_METADATA_KEY) or {}
+
+
+def _project_index_paths(db, project_root: Path) -> list[str]:
+    missing: list[str] = []
+    for kind in ("code", "doc"):
+        for rel_path in db.get_file_hashes(kind).keys():
+            if not (project_root / rel_path).exists():
+                missing.append(rel_path)
+    return sorted(set(missing))
+
+
+def _current_file_counts(project_root: Path) -> tuple[int, int]:
+    code_files, doc_files = collect_files([project_root])
+    return len(code_files), len(doc_files)
+
+
+def _stale_state(db, project_root: Path, project_id: str) -> dict:
+    metadata = _index_metadata(db)
+    if not metadata:
+        return {
+            "is_stale": False,
+            "warnings": [],
+            "metadata": None,
+        }
+
+    warnings: list[dict] = []
+    current_head = _current_git_head(project_root)
+    indexed_head = metadata.get("git_head")
+    if indexed_head and current_head and indexed_head != current_head:
+        warnings.append(
+            {
+                "kind": "git_head_changed",
+                "detail": f"git HEAD changed since index ({indexed_head[:12]} -> {current_head[:12]})",
+            }
+        )
+
+    indexed_total = int(metadata.get("code_file_count", 0)) + int(metadata.get("doc_file_count", 0))
+    current_code_count, current_doc_count = _current_file_counts(project_root)
+    current_total = current_code_count + current_doc_count
+    drift = abs(current_total - indexed_total)
+    drift_threshold = max(5, int(indexed_total * 0.2)) if indexed_total else 5
+    if drift >= drift_threshold:
+        warnings.append(
+            {
+                "kind": "file_count_drift",
+                "detail": f"indexed {indexed_total} files, current tree has {current_total}",
+            }
+        )
+
+    missing = _project_index_paths(db, project_root)
+    if missing:
+        preview = ", ".join(missing[:3])
+        suffix = "..." if len(missing) > 3 else ""
+        warnings.append(
+            {
+                "kind": "indexed_files_missing",
+                "detail": f"{len(missing)} indexed files no longer exist ({preview}{suffix})",
+            }
+        )
+
+    indexed_project_id = metadata.get("project_id")
+    if indexed_project_id and indexed_project_id != project_id:
+        warnings.append(
+            {
+                "kind": "project_id_changed",
+                "detail": f"indexed project_id {indexed_project_id} does not match current {project_id}",
+            }
+        )
+
+    return {
+        "is_stale": bool(warnings),
+        "warnings": warnings,
+        "metadata": metadata,
+    }
 
 
 def _memory_limit_split(limit: int) -> tuple[int, int]:
@@ -200,6 +657,24 @@ def _memory_limit_split(limit: int) -> tuple[int, int]:
     project_limit = max(1, limit // 2)
     user_limit = max(1, limit - project_limit)
     return project_limit, user_limit
+
+
+def _emit_progress(progress_callback: ProgressCallback | None, **event: object) -> None:
+    if progress_callback is None:
+        return
+    progress_callback(event)
+
+
+def _embed_sync_with_progress(
+    embed_method,
+    texts: list[str],
+    *,
+    progress_callback: ProgressCallback | None = None,
+) -> list[list[float]]:
+    try:
+        return embed_method(texts, progress_callback=progress_callback)
+    except TypeError:
+        return embed_method(texts)
 
 
 def _search_code_results(
@@ -224,8 +699,10 @@ def _search_code_results(
     except Exception as e:
         return f"Embedding failed: {e}", []
 
-    results = db.search_code(embeddings[0], limit=limit, language=language)
-    filtered = [result for result in results if _score(result) >= min_score]
+    raw_results = db.search_code(embeddings[0], limit=max(limit * 5, 10), language=language)
+    lexical_results = db.lexical_search_code(sorted(_query_terms(query)), limit=max(limit * 5, 10))
+    reranked = _rerank_results(query, _merge_ranked_results(raw_results, lexical_results, limit=max(limit * 10, 20)))
+    filtered = [result for result in reranked if _score(result) >= min_score][:limit]
     if not filtered:
         return "No matching code found.", []
     return None, filtered
@@ -245,7 +722,13 @@ def _search_docs_results(query: str, limit: int = 10) -> tuple[str | None, list[
     except Exception as e:
         return f"Embedding failed: {e}", []
 
-    results = db.search_docs(embeddings[0], limit=limit)
+    raw_results = db.search_docs(embeddings[0], limit=max(limit * 5, 10))
+    lexical_results = db.lexical_search_docs(sorted(_query_terms(query)), limit=max(limit * 5, 10))
+    results = _rerank_doc_results(
+        query,
+        _merge_ranked_results(raw_results, lexical_results, limit=max(limit * 10, 20)),
+    )
+    results = results[:limit]
     if not results:
         return "No matching docs found.", []
     return None, results
@@ -281,9 +764,11 @@ def _search_memory_results(query: str, limit: int = 10) -> tuple[str | None, lis
     return None, results
 
 
-@mcp.tool()
-def index_project(paths: list[str] | str | None = None) -> str:
-    """Index project source files and docs for semantic search. Prefer this before grep when exploring a repo."""
+def _index_project_impl(
+    paths: list[str] | str | None = None,
+    *,
+    progress_callback: ProgressCallback | None = None,
+) -> str:
     start = time.time()
 
     normalized = _normalize_paths(paths)
@@ -299,6 +784,13 @@ def index_project(paths: list[str] | str | None = None) -> str:
     code_files, doc_files = collect_files(root_paths)
     if not code_files and not doc_files:
         return "No files found to index."
+    _emit_progress(
+        progress_callback,
+        phase="file_discovery_complete",
+        code_file_total=len(code_files),
+        doc_file_total=len(doc_files),
+        project_root=str(project_root),
+    )
 
     db = _get_db()
     code_hashes = db.get_file_hashes("code")
@@ -323,6 +815,7 @@ def index_project(paths: list[str] | str | None = None) -> str:
     doc_embeddings_input: list[str] = []
     code_unchanged = 0
     doc_unchanged = 0
+    _emit_progress(progress_callback, phase="code_chunking_start", file_total=len(code_files))
 
     for path in code_files:
         try:
@@ -342,6 +835,15 @@ def index_project(paths: list[str] | str | None = None) -> str:
         code_embeddings_input.extend(chunk["content"] for chunk in file_chunks)
         db.set_file_hash(rel_path, digest, "code")
 
+    _emit_progress(
+        progress_callback,
+        phase="code_chunking_complete",
+        file_total=len(code_files),
+        chunk_total=len(code_chunks),
+        unchanged_total=code_unchanged,
+    )
+    _emit_progress(progress_callback, phase="doc_chunking_start", file_total=len(doc_files))
+
     for path in doc_files:
         try:
             content = path.read_text(errors="replace")
@@ -359,21 +861,76 @@ def index_project(paths: list[str] | str | None = None) -> str:
         doc_embeddings_input.extend(chunk["content"] for chunk in file_chunks)
         db.set_file_hash(rel_path, digest, "doc")
 
+    _emit_progress(
+        progress_callback,
+        phase="doc_chunking_complete",
+        file_total=len(doc_files),
+        chunk_total=len(doc_chunks),
+        unchanged_total=doc_unchanged,
+    )
+
     try:
         if code_chunks:
-            code_embeddings = embedder.embed_code_sync(code_embeddings_input)
+            _emit_progress(
+                progress_callback,
+                phase="code_embedding_start",
+                chunk_total=len(code_chunks),
+            )
+            code_embeddings = _embed_sync_with_progress(
+                embedder.embed_code_sync,
+                code_embeddings_input,
+                progress_callback=progress_callback,
+            )
             db.upsert_chunks(code_chunks, code_embeddings)
         if doc_chunks:
-            doc_embeddings = embedder.embed_text_sync(doc_embeddings_input)
+            _emit_progress(
+                progress_callback,
+                phase="doc_embedding_start",
+                chunk_total=len(doc_chunks),
+            )
+            doc_embeddings = _embed_sync_with_progress(
+                embedder.embed_text_sync,
+                doc_embeddings_input,
+                progress_callback=progress_callback,
+            )
             db.upsert_docs(doc_chunks, doc_embeddings)
     except Exception as e:
         return f"Indexing failed: {e}"
 
+    db.set_setting_json(
+        INDEX_METADATA_KEY,
+        {
+            "project_id": _ensure_project_id(),
+            "project_root": str(project_root),
+            "indexed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "git_head": _current_git_head(project_root),
+            "code_file_count": len(current_code_paths),
+            "doc_file_count": len(current_doc_paths),
+            "code_chunk_count": db.code_chunk_count(),
+            "doc_chunk_count": db.doc_count(),
+        },
+    )
+
     elapsed = time.time() - start
+    _emit_progress(
+        progress_callback,
+        phase="index_complete",
+        elapsed_seconds=round(elapsed, 1),
+        code_file_total=len(code_files),
+        doc_file_total=len(doc_files),
+        code_chunk_total=db.code_chunk_count(),
+        doc_chunk_total=db.doc_count(),
+    )
     return (
         f"Indexed {len(code_files)} code files ({len(code_chunks)} chunks, {code_unchanged} unchanged), "
         f"{len(doc_files)} docs ({len(doc_chunks)} chunks, {doc_unchanged} unchanged) in {elapsed:.1f}s"
     )
+
+
+@mcp.tool()
+def index_project(paths: list[str] | str | None = None) -> str:
+    """Index project source files and docs for semantic search. Prefer this before grep when exploring a repo."""
+    return _index_project_impl(paths)
 
 
 @mcp.tool()
@@ -427,7 +984,15 @@ def remember(content: str, tags: str = "") -> str:
         return f"Embedding failed: {e}"
 
     db = _get_db()
-    memory_id = db.remember(content, embeddings[0], tags, project_id=_ensure_project_id())
+    memory_id = db.remember_structured(
+        summary=_truncate(_single_line(content), 200),
+        content=content,
+        embedding=embeddings[0],
+        tags=tags,
+        project_id=_ensure_project_id(),
+        memory_kind="note",
+        metadata={"capture_kind": "freeform"},
+    )
     return f"Remembered in project memory (id={memory_id}): {content[:200]}"
 
 
@@ -466,6 +1031,7 @@ def load_session_context(
         "task": task,
         "project_id": _ensure_project_id(),
         "index": None,
+        "stale": None,
         "memories": [],
         "code": [],
         "docs": [],
@@ -473,6 +1039,9 @@ def load_session_context(
 
     if refresh_index:
         payload["index"] = index_project(paths=".")
+
+    stale_state = _stale_state(_get_db(), Path.cwd(), payload["project_id"])
+    payload["stale"] = stale_state
 
     memory_error, memory_results = _search_memory_results(task, limit=memory_limit)
     if memory_error:
@@ -493,6 +1062,11 @@ def load_session_context(
                     "symbol": result.get("symbol"),
                     "language": result.get("language"),
                     "score": round(_score(result), 4),
+                    "indexed_at": result.get("indexed_at"),
+                    "provenance": {
+                        "source": "project-index",
+                        "indexed_at": result.get("indexed_at"),
+                    },
                     "content": result["content"],
                 }
             )
@@ -507,8 +1081,13 @@ def load_session_context(
                     "file_path": result["file_path"],
                     "chunk_index": result["chunk_index"],
                     "score": round(_score(result), 4),
+                    "indexed_at": result.get("indexed_at"),
                     "content": result["content"],
                     "preview": result["content"].replace("\n", " ")[:160],
+                    "provenance": {
+                        "source": "project-index",
+                        "indexed_at": result.get("indexed_at"),
+                    },
                 }
             )
 
@@ -553,24 +1132,15 @@ def remember_structured(
         tags=tags,
         project_id=_ensure_project_id(),
         memory_kind=memory_kind,
-        metadata=metadata,
+        metadata={"capture_kind": "manual", **(metadata or {})},
         source_session_id=source_session_id or None,
         source_message_id=source_message_id or None,
     )
+    stored = db.get_memory(memory_id)
     return {
         "ok": True,
         "backend": "project-sqlite",
-        "memory": {
-            "id": str(memory_id),
-            "summary": summary,
-            "content": content,
-            "project_id": _ensure_project_id(),
-            "memory_kind": memory_kind,
-            "tags": [tag.strip() for tag in tags.split(",") if tag.strip()],
-            "metadata": metadata or {},
-            "source_session_id": source_session_id or None,
-            "source_message_id": source_message_id or None,
-        },
+        "memory": _memory_payload(stored or {"id": memory_id, "summary": summary, "content": content}),
     }
 
 
@@ -774,26 +1344,24 @@ def supersede_memory(
         tags=tags,
         project_id=_ensure_project_id(),
         memory_kind=memory_kind,
-        metadata=metadata,
+        metadata={"capture_kind": "manual", **(metadata or {})},
         source_session_id=source_session_id or None,
         source_message_id=source_message_id or None,
         supersedes=old_memory_id,
     )
+    stored = db.get_memory(new_memory_id)
     return {
         "ok": True,
         "backend": "user-sqlite",
-        "memory": {
-            "id": str(new_memory_id),
-            "summary": summary,
-            "content": content,
-            "project_id": _ensure_project_id(),
-            "memory_kind": memory_kind,
-            "tags": [tag.strip() for tag in tags.split(",") if tag.strip()],
-            "metadata": metadata or {},
-            "source_session_id": source_session_id or None,
-            "source_message_id": source_message_id or None,
-            "supersedes": old_memory_id,
-        },
+        "memory": _memory_payload(
+            stored
+            or {
+                "id": new_memory_id,
+                "summary": summary,
+                "content": content,
+                "supersedes": old_memory_id,
+            }
+        ),
     }
 
 
@@ -822,12 +1390,25 @@ def forget(memory_id: str) -> str:
 def project_status() -> str:
     """Summarize the current project index and memory state."""
     db = _get_db()
+    metadata = _index_metadata(db)
+    stale = _stale_state(db, Path.cwd(), _ensure_project_id())
     lines = [
+        f"Project id: {_ensure_project_id()}",
         f"Code chunks: {db.code_chunk_count()}",
         f"Doc chunks: {db.doc_count()}",
         f"Project memories: {db.memory_count()}",
         f"User memories: {_get_user_db().memory_count()}",
     ]
+    if metadata:
+        lines.append(f"Indexed at: {metadata.get('indexed_at') or 'unknown'}")
+        if metadata.get("git_head"):
+            lines.append(f"Indexed git HEAD: {metadata['git_head']}")
+    if stale.get("warnings"):
+        lines.append(f"Stale warnings: {len(stale['warnings'])}")
+        for warning in stale["warnings"][:3]:
+            lines.append(f"- {warning['detail']}")
+    else:
+        lines.append("Stale warnings: none")
     language_stats = db.language_stats()
     if language_stats:
         language_summary = ", ".join(

@@ -1,6 +1,6 @@
 [project]
 name = "vibe-rag"
-version = "0.0.18"
+version = "0.0.19"
 description = "Semantic code search and persistent memory MCP server for Mistral Vibe"
 readme = "README.md"
 license = "MIT"

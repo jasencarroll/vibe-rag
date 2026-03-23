@@ -1,10 +1,12 @@
 # vibe-rag
 
-`vibe-rag` is a memory and semantic search MCP server for Vibe.
+`vibe-rag` is an MCP server for semantic repo search and durable coding memory.
 
-Vibe is the first-class client.
+It is built for agentic coding workflows across clients.
 
-Generated repos also include experimental scaffolding for:
+The most complete integration today is Vibe.
+
+Generated repos also include scaffolding for:
 
 - Codex
 - Claude Code
@@ -23,6 +25,16 @@ Storage is local and simple:
 
 No external database is required.
 
+## Support Levels
+
+| Layer | Status | Notes |
+| --- | --- | --- |
+| `vibe-rag serve` MCP server | core identity | client-agnostic semantic repo search and memory |
+| Vibe integration | most complete | first-class path with session bootstrap and session memory hooks |
+| Codex integration | experimental | project scaffolding plus session-start hook |
+| Claude Code integration | experimental | project scaffolding plus session-start hook |
+| Gemini CLI integration | experimental | project scaffolding plus session-start hook |
+
 ## What You Need
 
 - Python 3.12+
@@ -32,9 +44,9 @@ No external database is required.
 
 Use Python 3.12 for `uv tool install`. In this environment, `tree-sitter-languages` does not have cp313 wheels.
 
-## Required Vibe Fork
+## Vibe Integration
 
-Use the fork that contains the background MCP session bootstrap hook:
+If you want the most complete integration path today, use the fork that contains the background MCP session bootstrap hook:
 
 - `https://github.com/jasencarroll/mistral-vibe`
 
@@ -56,7 +68,7 @@ vibe-rag --version
 Pinned release:
 
 ```bash
-uv tool install vibe-rag@0.0.18
+uv tool install vibe-rag@0.0.19
 ```
 
 If your machine defaults `uv` tools to Python 3.13:
@@ -66,6 +78,10 @@ uv tool install --python 3.12 vibe-rag
 ```
 
 ## Quick Start
+
+Choose the client path you want to start with.
+
+For the most complete Vibe path:
 
 ```bash
 vibe-rag setup-ollama
@@ -129,6 +145,16 @@ vibe-rag setup-ollama
 vibe-rag hook-session-start --format codex
 ```
 
+`vibe-rag doctor` now verifies:
+
+- effective project id
+- project MCP command resolution
+- Codex SessionStart hook execution
+- project and user DB readability
+- embedding provider reachability
+- Vibe and Codex trust status
+- stale index warnings
+
 First prompts:
 
 ```text
@@ -145,9 +171,9 @@ Success looks like:
 - `search the code for ...` returns a relevant file or snippet
 - `search docs for ...` returns a relevant text chunk
 - `remember ...` returns a memory id
-- a fresh Vibe session can answer from prior context
+- a fresh client session can answer from prior context
 
-## Experimental Codex And Claude Code Scaffolding
+## Client Scaffolding
 
 `vibe-rag init` also writes:
 
@@ -166,12 +192,7 @@ These files use:
 
 Generated Codex config also sets `suppress_unstable_features_warning = true`.
 
-Current support level:
-
-- Vibe: first-class
-- Codex: experimental
-- Claude Code: experimental
-- Gemini CLI: experimental
+Current support level is shown in the support table above.
 
 ## Storage Model
 
@@ -198,6 +219,16 @@ Provider env vars:
 - `OPENAI_API_KEY` for OpenAI
 - `VOYAGE_API_KEY` for Voyage
 - `VIBE_RAG_CODE_EMBEDDING_MODEL` for Voyage code embeddings
+
+## Local Evals
+
+For real local repo evals, copy [evals/local_repos.toml.example](/Users/jasen/dev/vibe-rag/evals/local_repos.toml.example) to `evals/local_repos.toml`, point it at repos in `~/dev`, and run:
+
+```bash
+uv run python scripts/run_retrieval_eval.py evals/local_repos.toml
+```
+
+The runner uses temporary sqlite DBs so it does not overwrite a repo's normal `.vibe/index.db`.
 
 ## Docs
 

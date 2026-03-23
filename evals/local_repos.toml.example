@@ -1,0 +1,34 @@
+# Copy this file to `evals/local_repos.toml` and adjust paths/tasks for your local repos.
+
+[[repo]]
+name = "vibe-rag"
+path = "~/dev/vibe-rag"
+
+[[repo.task]]
+query = "release publish tag flow"
+expected_code = ["src/vibe_rag/cli.py"]
+expected_docs = ["README.md", "docs/setup-guide.md"]
+unexpected_code = ["src/vibe_rag/indexing/embedder.py"]
+unexpected_docs = []
+max_irrelevant_code = 1
+max_irrelevant_docs = 1
+
+[[repo]]
+name = "mistral-vibe"
+path = "~/dev/mistral-vibe"
+
+[[repo.task]]
+query = "session bootstrap hook trust and MCP config"
+expected_docs = ["README.md"]
+unexpected_docs = []
+max_irrelevant_docs = 1
+
+[[repo]]
+name = "codex"
+path = "~/dev/codex"
+
+[[repo.task]]
+query = "session start hook and MCP startup behavior"
+expected_docs = ["README.md"]
+unexpected_docs = []
+max_irrelevant_docs = 1

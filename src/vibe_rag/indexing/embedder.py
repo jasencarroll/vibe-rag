@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from typing import Protocol
 
 import httpx
@@ -16,18 +17,68 @@ DEFAULT_OPENAI_MODEL = "text-embedding-3-small"
 DEFAULT_VOYAGE_TEXT_MODEL = "voyage-4"
 DEFAULT_VOYAGE_CODE_MODEL = "voyage-code-3"
 BATCH_SIZE = 64
+VOYAGE_BATCH_SIZE = 1000
+VOYAGE_MAX_BATCH_TOKENS = 100_000
 MAX_CHARS = 16_000
 DEFAULT_OLLAMA_HOST = "http://localhost:11434"
 OLLAMA_HOST_CANDIDATES = (
     "http://localhost:11434",
     "http://127.0.0.1:11434",
 )
+ProgressCallback = Callable[[dict[str, object]], None]
+
+
+def _emit_progress(progress_callback: ProgressCallback | None, **event: object) -> None:
+    if progress_callback is None:
+        return
+    progress_callback(event)
+
+
+def _estimate_tokens(text: str) -> int:
+    # Conservative enough for batching against hosted token caps without a provider tokenizer.
+    return max(1, (len(text) + 3) // 4)
+
+
+def _batch_by_limits(
+    texts: list[str],
+    *,
+    max_items: int,
+    max_tokens: int | None = None,
+) -> list[list[str]]:
+    if not texts:
+        return []
+
+    batches: list[list[str]] = []
+    current_batch: list[str] = []
+    current_tokens = 0
+
+    for text in texts:
+        token_estimate = _estimate_tokens(text)
+        if current_batch and (
+            len(current_batch) >= max_items
+            or (max_tokens is not None and current_tokens + token_estimate > max_tokens)
+        ):
+            batches.append(current_batch)
+            current_batch = []
+            current_tokens = 0
+
+        current_batch.append(text)
+        current_tokens += token_estimate
+
+    if current_batch:
+        batches.append(current_batch)
+
+    return batches
 
 
 class EmbeddingProvider(Protocol):
-    def embed_text_sync(self, texts: list[str]) -> list[list[float]]: ...
+    def embed_text_sync(
+        self, texts: list[str], *, progress_callback: ProgressCallback | None = None
+    ) -> list[list[float]]: ...
 
-    def embed_code_sync(self, texts: list[str]) -> list[list[float]]: ...
+    def embed_code_sync(
+        self, texts: list[str], *, progress_callback: ProgressCallback | None = None
+    ) -> list[list[float]]: ...
 
 
 class MistralEmbeddingProvider:
@@ -57,20 +108,55 @@ class MistralEmbeddingProvider:
             raise RuntimeError(f"Embedding API error {resp.status_code}: {msg}")
         return [item["embedding"] for item in resp.json()["data"]]
 
-    def _embed_all(self, texts: list[str]) -> list[list[float]]:
+    def _embed_all(
+        self,
+        texts: list[str],
+        *,
+        input_kind: str,
+        progress_callback: ProgressCallback | None = None,
+    ) -> list[list[float]]:
         truncated = [t[:MAX_CHARS] for t in texts]
         results: list[list[float]] = []
         client = self._get_client()
-        for i in range(0, len(truncated), BATCH_SIZE):
-            batch = truncated[i : i + BATCH_SIZE]
+        batches = _batch_by_limits(truncated, max_items=BATCH_SIZE)
+        total_batches = max(1, len(batches))
+        completed_items = 0
+        for batch_index, batch in enumerate(batches, start=1):
+            _emit_progress(
+                progress_callback,
+                phase="embedding_batch_start",
+                provider="mistral",
+                input_kind=input_kind,
+                batch_current=batch_index,
+                batch_total=total_batches,
+                items_completed=completed_items,
+                items_total=len(truncated),
+                model=self._model,
+            )
             results.extend(self._embed_batch(batch, client))
+            completed_items += len(batch)
+            _emit_progress(
+                progress_callback,
+                phase="embedding_batch_complete",
+                provider="mistral",
+                input_kind=input_kind,
+                batch_current=batch_index,
+                batch_total=total_batches,
+                items_completed=completed_items,
+                items_total=len(truncated),
+                model=self._model,
+            )
         return results
 
-    def embed_text_sync(self, texts: list[str]) -> list[list[float]]:
-        return self._embed_all(texts)
+    def embed_text_sync(
+        self, texts: list[str], *, progress_callback: ProgressCallback | None = None
+    ) -> list[list[float]]:
+        return self._embed_all(texts, input_kind="text", progress_callback=progress_callback)
 
-    def embed_code_sync(self, texts: list[str]) -> list[list[float]]:
-        return self._embed_all(texts)
+    def embed_code_sync(
+        self, texts: list[str], *, progress_callback: ProgressCallback | None = None
+    ) -> list[list[float]]:
+        return self._embed_all(texts, input_kind="code", progress_callback=progress_callback)
 
 
 class OllamaEmbeddingProvider:
@@ -86,31 +172,72 @@ class OllamaEmbeddingProvider:
         self._truncate = truncate
         self._client = OllamaClient(host=host)
 
-    def _embed_all(self, texts: list[str]) -> list[list[float]]:
-        kwargs: dict[str, object] = {
-            "model": self._model,
-            "input": texts,
-            "truncate": self._truncate,
-        }
-        if self._dimensions is not None:
-            kwargs["dimensions"] = self._dimensions
-        try:
-            response = self._client.embed(**kwargs)
-        except OllamaResponseError as exc:
-            if exc.status_code == 404:
-                raise RuntimeError(
-                    f"Ollama model '{self._model}' is not available. Run: ollama pull {self._model}"
-                ) from exc
-            raise RuntimeError(f"Ollama embed failed: {exc.error}") from exc
-        except Exception as exc:
-            raise RuntimeError(f"Ollama embed failed: {exc}") from exc
-        return [list(embedding) for embedding in response["embeddings"]]
+    def _embed_all(
+        self,
+        texts: list[str],
+        *,
+        input_kind: str,
+        progress_callback: ProgressCallback | None = None,
+    ) -> list[list[float]]:
+        truncated = [text[:MAX_CHARS] for text in texts]
+        results: list[list[float]] = []
+        batches = _batch_by_limits(truncated, max_items=BATCH_SIZE)
+        total_batches = max(1, len(batches))
+        completed_items = 0
 
-    def embed_text_sync(self, texts: list[str]) -> list[list[float]]:
-        return self._embed_all(texts)
+        for batch_index, batch in enumerate(batches, start=1):
+            kwargs: dict[str, object] = {
+                "model": self._model,
+                "input": batch,
+                "truncate": self._truncate,
+            }
+            if self._dimensions is not None:
+                kwargs["dimensions"] = self._dimensions
+            try:
+                _emit_progress(
+                    progress_callback,
+                    phase="embedding_batch_start",
+                    provider="ollama",
+                    input_kind=input_kind,
+                    batch_current=batch_index,
+                    batch_total=total_batches,
+                    items_completed=completed_items,
+                    items_total=len(truncated),
+                    model=self._model,
+                )
+                response = self._client.embed(**kwargs)
+            except OllamaResponseError as exc:
+                if exc.status_code == 404:
+                    raise RuntimeError(
+                        f"Ollama model '{self._model}' is not available. Run: ollama pull {self._model}"
+                    ) from exc
+                raise RuntimeError(f"Ollama embed failed: {exc.error}") from exc
+            except Exception as exc:
+                raise RuntimeError(f"Ollama embed failed: {exc}") from exc
+            results.extend(list(embedding) for embedding in response["embeddings"])
+            completed_items += len(batch)
+            _emit_progress(
+                progress_callback,
+                phase="embedding_batch_complete",
+                provider="ollama",
+                input_kind=input_kind,
+                batch_current=batch_index,
+                batch_total=total_batches,
+                items_completed=completed_items,
+                items_total=len(truncated),
+                model=self._model,
+            )
+        return results
 
-    def embed_code_sync(self, texts: list[str]) -> list[list[float]]:
-        return self._embed_all(texts)
+    def embed_text_sync(
+        self, texts: list[str], *, progress_callback: ProgressCallback | None = None
+    ) -> list[list[float]]:
+        return self._embed_all(texts, input_kind="text", progress_callback=progress_callback)
+
+    def embed_code_sync(
+        self, texts: list[str], *, progress_callback: ProgressCallback | None = None
+    ) -> list[list[float]]:
+        return self._embed_all(texts, input_kind="code", progress_callback=progress_callback)
 
 
 class OpenAIEmbeddingProvider:
@@ -142,20 +269,55 @@ class OpenAIEmbeddingProvider:
             raise RuntimeError(f"Embedding API error {resp.status_code}: {msg}")
         return [item["embedding"] for item in resp.json()["data"]]
 
-    def _embed_all(self, texts: list[str]) -> list[list[float]]:
+    def _embed_all(
+        self,
+        texts: list[str],
+        *,
+        input_kind: str,
+        progress_callback: ProgressCallback | None = None,
+    ) -> list[list[float]]:
         truncated = [t[:MAX_CHARS] for t in texts]
         results: list[list[float]] = []
         client = self._get_client()
-        for i in range(0, len(truncated), BATCH_SIZE):
-            batch = truncated[i : i + BATCH_SIZE]
+        batches = _batch_by_limits(truncated, max_items=BATCH_SIZE)
+        total_batches = max(1, len(batches))
+        completed_items = 0
+        for batch_index, batch in enumerate(batches, start=1):
+            _emit_progress(
+                progress_callback,
+                phase="embedding_batch_start",
+                provider="openai",
+                input_kind=input_kind,
+                batch_current=batch_index,
+                batch_total=total_batches,
+                items_completed=completed_items,
+                items_total=len(truncated),
+                model=self._model,
+            )
             results.extend(self._embed_batch(batch, client))
+            completed_items += len(batch)
+            _emit_progress(
+                progress_callback,
+                phase="embedding_batch_complete",
+                provider="openai",
+                input_kind=input_kind,
+                batch_current=batch_index,
+                batch_total=total_batches,
+                items_completed=completed_items,
+                items_total=len(truncated),
+                model=self._model,
+            )
         return results
 
-    def embed_text_sync(self, texts: list[str]) -> list[list[float]]:
-        return self._embed_all(texts)
+    def embed_text_sync(
+        self, texts: list[str], *, progress_callback: ProgressCallback | None = None
+    ) -> list[list[float]]:
+        return self._embed_all(texts, input_kind="text", progress_callback=progress_callback)
 
-    def embed_code_sync(self, texts: list[str]) -> list[list[float]]:
-        return self._embed_all(texts)
+    def embed_code_sync(
+        self, texts: list[str], *, progress_callback: ProgressCallback | None = None
+    ) -> list[list[float]]:
+        return self._embed_all(texts, input_kind="code", progress_callback=progress_callback)
 
 
 class VoyageEmbeddingProvider:
@@ -180,29 +342,88 @@ class VoyageEmbeddingProvider:
             )
         return self._client
 
-    def _embed_all(self, texts: list[str], model: str, input_type: str) -> list[list[float]]:
-        payload: dict[str, object] = {
-            "input": texts,
-            "model": model,
-            "input_type": input_type,
-            "truncation": True,
-        }
-        if self._dimensions is not None:
-            payload["output_dimension"] = self._dimensions
-        resp = self._get_client().post(VOYAGE_EMBED_URL, json=payload)
-        if resp.status_code != 200:
-            try:
-                msg = resp.json().get("detail") or resp.json().get("message") or "unknown error"
-            except Exception:
-                msg = "unknown error"
-            raise RuntimeError(f"Embedding API error {resp.status_code}: {msg}")
-        return [item["embedding"] for item in resp.json()["data"]]
+    def _embed_all(
+        self,
+        texts: list[str],
+        *,
+        model: str,
+        input_type: str,
+        input_kind: str,
+        progress_callback: ProgressCallback | None = None,
+    ) -> list[list[float]]:
+        truncated = [text[:MAX_CHARS] for text in texts]
+        results: list[list[float]] = []
+        batches = _batch_by_limits(
+            truncated,
+            max_items=VOYAGE_BATCH_SIZE,
+            max_tokens=VOYAGE_MAX_BATCH_TOKENS,
+        )
+        total_batches = max(1, len(batches))
+        completed_items = 0
 
-    def embed_text_sync(self, texts: list[str]) -> list[list[float]]:
-        return self._embed_all(texts, model=self._text_model, input_type="document")
+        for batch_index, batch in enumerate(batches, start=1):
+            payload: dict[str, object] = {
+                "input": batch,
+                "model": model,
+                "input_type": input_type,
+                "truncation": True,
+            }
+            if self._dimensions is not None:
+                payload["output_dimension"] = self._dimensions
+            _emit_progress(
+                progress_callback,
+                phase="embedding_batch_start",
+                provider="voyage",
+                input_kind=input_kind,
+                batch_current=batch_index,
+                batch_total=total_batches,
+                items_completed=completed_items,
+                items_total=len(truncated),
+                model=model,
+            )
+            resp = self._get_client().post(VOYAGE_EMBED_URL, json=payload)
+            if resp.status_code != 200:
+                try:
+                    msg = resp.json().get("detail") or resp.json().get("message") or "unknown error"
+                except Exception:
+                    msg = "unknown error"
+                raise RuntimeError(f"Embedding API error {resp.status_code}: {msg}")
+            results.extend(item["embedding"] for item in resp.json()["data"])
+            completed_items += len(batch)
+            _emit_progress(
+                progress_callback,
+                phase="embedding_batch_complete",
+                provider="voyage",
+                input_kind=input_kind,
+                batch_current=batch_index,
+                batch_total=total_batches,
+                items_completed=completed_items,
+                items_total=len(truncated),
+                model=model,
+            )
+        return results
 
-    def embed_code_sync(self, texts: list[str]) -> list[list[float]]:
-        return self._embed_all(texts, model=self._code_model, input_type="query")
+    def embed_text_sync(
+        self, texts: list[str], *, progress_callback: ProgressCallback | None = None
+    ) -> list[list[float]]:
+        return self._embed_all(
+            texts,
+            model=self._text_model,
+            input_type="document",
+            input_kind="text",
+            progress_callback=progress_callback,
+        )
+
+    def embed_code_sync(
+        self, texts: list[str], *, progress_callback: ProgressCallback | None = None
+    ) -> list[list[float]]:
+        return self._embed_all(
+            texts,
+            model=self._code_model,
+            input_type="query",
+            input_kind="code",
+            progress_callback=progress_callback,
+        )
 
 
 def create_embedding_provider() -> EmbeddingProvider:

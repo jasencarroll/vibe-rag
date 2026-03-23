@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from vibe_rag.tools import (
+    _index_project_impl,
     forget,
     index_project,
     load_session_context,
@@ -63,6 +64,28 @@ def test_index_project_real_dir(tmp_db, mock_embedder, tmp_path: Path):
 
     assert "1 code files" in result
     assert "1 docs" in result
+
+
+def test_index_project_emits_progress_events(tmp_db, mock_embedder, tmp_path: Path):
+    import os
+
+    events = []
+    (tmp_path / "hello.py").write_text("def hello():\n    return 1\n")
+    (tmp_path / "readme.md").write_text("## Overview\n\nThis is a test project.\n")
+
+    old_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        result = _index_project_impl(progress_callback=events.append)
+    finally:
+        os.chdir(old_cwd)
+
+    assert "Indexed 1 code files" in result
+    phases = [event["phase"] for event in events]
+    assert "file_discovery_complete" in phases
+    assert "code_chunking_complete" in phases
+    assert "doc_chunking_complete" in phases
+    assert "index_complete" in phases
 
 
 def test_index_project_accepts_relative_paths_argument(tmp_db, mock_embedder, tmp_path: Path):
@@ -131,6 +154,203 @@ def test_search_docs_after_index(tmp_db, mock_embedder, tmp_path: Path):
     assert "guide.md" in result
 
 
+def test_release_docs_queries_prefer_real_docs_over_eval_noise(tmp_db, mock_embedder, tmp_path: Path):
+    import os
+
+    (tmp_path / "README.md").write_text("## Release\n\nRelease notes explain the publish workflow.\n")
+    (tmp_path / "CHANGELOG.md").write_text("## Release Notes\n\nPublish the tag and update release notes.\n")
+    (tmp_path / "evals").mkdir()
+    (tmp_path / "evals" / "local_repos.toml").write_text('query = "release publish tag workflow and release notes"\n')
+
+    old_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        index_project()
+        result = search_docs("release publish tag workflow and release notes", limit=2)
+    finally:
+        os.chdir(old_cwd)
+
+    assert "README.md" in result or "CHANGELOG.md" in result
+    assert "evals/local_repos.toml" not in result
+
+
+def test_release_docs_queries_can_find_changelog_with_semantic_plus_lexical(tmp_db, mock_embedder, tmp_path: Path):
+    import os
+
+    (tmp_path / "CHANGELOG.md").write_text("## Release Notes\n\nCreate the release tag and publish workflow notes here.\n")
+    (tmp_path / "AGENTS.md").write_text("General coding rules.\n")
+
+    old_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        index_project()
+        result = search_docs("release publish tag workflow and release notes", limit=1)
+    finally:
+        os.chdir(old_cwd)
+
+    assert "CHANGELOG.md" in result
+
+
+def test_release_procedure_queries_surface_agents_and_changelog(tmp_db, mock_embedder, tmp_path: Path):
+    import os
+
+    (tmp_path / "AGENTS.md").write_text("Release workflow: update the changelog, push main, create the GitHub release.\n")
+    (tmp_path / "CHANGELOG.md").write_text("## v0.0.18\n\nRelease notes for the publish.\n")
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "billing.py").write_text("def create_invoice(customer_id):\n    return customer_id\n")
+
+    old_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        index_project()
+        result = search_docs("release procedure and maintainer steps for changelog publish tag workflow", limit=2)
+    finally:
+        os.chdir(old_cwd)
+
+    assert "AGENTS.md" in result
+    assert "CHANGELOG.md" in result
+
+
+def test_release_procedure_queries_prefer_repo_agents_over_template_agents(
+    tmp_db, mock_embedder, tmp_path: Path
+):
+    import os
+
+    (tmp_path / "AGENTS.md").write_text("Release procedure for maintainers.\n")
+    template_dir = tmp_path / "src" / "vibe_rag" / "templates"
+    template_dir.mkdir(parents=True)
+    (template_dir / "AGENTS.md").write_text("Generated project maintainer template.\n")
+    (tmp_path / "CHANGELOG.md").write_text("Release notes.\n")
+
+    old_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        index_project()
+        payload = load_session_context(
+            "release procedure and maintainer steps for changelog publish tag workflow",
+            memory_limit=0,
+            code_limit=0,
+            docs_limit=2,
+        )
+    finally:
+        os.chdir(old_cwd)
+
+    doc_paths = [item["file_path"] for item in payload["docs"]]
+    assert "AGENTS.md" in doc_paths
+    assert "src/vibe_rag/templates/AGENTS.md" not in doc_paths
+
+
+def test_setup_doc_queries_prefer_readme_and_docs_over_operational_docs(
+    tmp_db, mock_embedder, tmp_path: Path
+):
+    import os
+
+    (tmp_path / "README.md").write_text("ACP setup for editors and IDE integration.\n")
+    (tmp_path / "AGENTS.md").write_text("Maintainer notes.\n")
+    (tmp_path / "CHANGELOG.md").write_text("Release notes.\n")
+    docs_dir = tmp_path / "docs"
+    docs_dir.mkdir()
+    (docs_dir / "acp-setup.md").write_text("Set up vibe-acp for Zed, JetBrains, and Neovim.\n")
+
+    old_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        index_project()
+        payload = load_session_context(
+            "vibe acp setup in editors and ide integration",
+            memory_limit=0,
+            code_limit=0,
+            docs_limit=2,
+        )
+    finally:
+        os.chdir(old_cwd)
+
+    doc_paths = [item["file_path"] for item in payload["docs"]]
+    assert "README.md" in doc_paths or "docs/acp-setup.md" in doc_paths
+    assert "AGENTS.md" not in doc_paths
+
+
+def test_resume_doc_queries_prefer_readme_over_changelog(
+    tmp_db, mock_embedder, tmp_path: Path
+):
+    import os
+
+    (tmp_path / "README.md").write_text("Use --continue or --resume to load a saved session.\n")
+    (tmp_path / "CHANGELOG.md").write_text("Release notes and version history.\n")
+
+    old_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        index_project()
+        payload = load_session_context(
+            "resume continue load session metadata and messages",
+            memory_limit=0,
+            code_limit=0,
+            docs_limit=1,
+        )
+    finally:
+        os.chdir(old_cwd)
+
+    assert payload["docs"][0]["file_path"] == "README.md"
+
+
+def test_api_and_pipeline_doc_queries_prefer_operational_docs_over_plans(
+    tmp_db, mock_embedder, tmp_path: Path
+):
+    import os
+
+    docs_dir = tmp_path / "docs"
+    docs_dir.mkdir()
+    spec_dir = tmp_path / "spec"
+    spec_dir.mkdir()
+    (tmp_path / "CLAUDE.md").write_text("Planning and repo notes.\n")
+    (spec_dir / "05-api-routes.md").write_text("Draft route plan.\n")
+    (spec_dir / "06-pipeline.md").write_text("Draft pipeline plan.\n")
+    (docs_dir / "API.md").write_text("REST API endpoints for auth, letters, analytics, billing, and health.\n")
+    (docs_dir / "PIPELINE.md").write_text("Warning letter discover, scrape, classify, enrich, and 483 ingestion pipeline.\n")
+
+    old_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        index_project()
+        api_payload = load_session_context(
+            "backend api auth letters analytics engines billing health endpoints",
+            memory_limit=0,
+            code_limit=0,
+            docs_limit=1,
+        )
+        pipeline_payload = load_session_context(
+            "warning letter scrape parse classify enrich 483 observation pipeline",
+            memory_limit=0,
+            code_limit=0,
+            docs_limit=1,
+        )
+    finally:
+        os.chdir(old_cwd)
+
+    assert api_payload["docs"][0]["file_path"] == "docs/API.md"
+    assert pipeline_payload["docs"][0]["file_path"] == "docs/PIPELINE.md"
+
+
+def test_release_automation_queries_surface_workflow_file(tmp_db, mock_embedder, tmp_path: Path):
+    import os
+
+    workflow_dir = tmp_path / ".github" / "workflows"
+    workflow_dir.mkdir(parents=True)
+    (workflow_dir / "publish.yml").write_text("name: publish\non:\n  release:\n    types: [published]\n")
+    (tmp_path / "README.md").write_text("General project overview.\n")
+
+    old_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        index_project()
+        result = search_code("release automation github workflow publish tag", limit=3)
+    finally:
+        os.chdir(old_cwd)
+
+    assert ".github/workflows/publish.yml" in result
+
+
 def test_load_session_context_bundles_memory_code_and_docs(tmp_db, mock_embedder, tmp_path: Path):
     import os
 
@@ -148,9 +368,12 @@ def test_load_session_context_bundles_memory_code_and_docs(tmp_db, mock_embedder
 
     assert result["ok"] is True
     assert result["memories"][0]["content"] == "billing uses invoices and customer ids"
+    assert result["memories"][0]["provenance"]["project_id"] == result["project_id"]
     assert result["code"][0]["file_path"] == "billing.py"
     assert result["code"][0]["start_line"] == 1
+    assert result["code"][0]["provenance"]["source"] == "project-index"
     assert result["docs"][0]["file_path"] == "billing.md"
+    assert result["docs"][0]["provenance"]["source"] == "project-index"
 
 
 # --- Edge case tests ---
@@ -234,7 +457,16 @@ def test_remember_structured_returns_memory_payload(tmp_db, mock_embedder):
     assert result["ok"] is True
     assert result["memory"]["summary"] == "auth decisions live in the gateway"
     assert result["memory"]["memory_kind"] == "decision"
+    assert result["memory"]["metadata"]["capture_kind"] == "manual"
     assert result["memory"]["metadata"]["confidence"] == "high"
+
+
+def test_remember_marks_freeform_memory_metadata(tmp_db, mock_embedder):
+    remember("freeform note about auth")
+    result = load_session_context("freeform note", memory_limit=1, code_limit=0, docs_limit=0)
+
+    assert result["memories"][0]["memory_kind"] == "note"
+    assert result["memories"][0]["metadata"]["capture_kind"] == "freeform"
 
 
 def test_save_session_memory_distills_and_deduplicates(tmp_db, mock_embedder):
@@ -463,6 +695,51 @@ def test_load_session_context_reports_empty_memory(tmp_db, mock_embedder, tmp_pa
 
     assert result["memory_status"] == "No memories stored yet."
     assert result["docs"][0]["file_path"] == "notes.md"
+
+
+def test_load_session_context_reports_stale_deleted_files(tmp_db, mock_embedder, tmp_path: Path):
+    import os
+
+    (tmp_path / "old.py").write_text("def old():\n    return 1\n")
+
+    old_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        index_project()
+        (tmp_path / "old.py").unlink()
+        result = load_session_context("continue old work")
+    finally:
+        os.chdir(old_cwd)
+
+    assert result["stale"]["is_stale"] is True
+    assert any(warning["kind"] == "indexed_files_missing" for warning in result["stale"]["warnings"])
+
+
+def test_search_memory_prefers_structured_memory_kinds(tmp_db, mock_embedder):
+    remember("raw note about deployment")
+    remember_structured(summary="deployment constraint", memory_kind="constraint")
+
+    result = load_session_context("deployment", memory_limit=2)
+
+    assert result["memories"][0]["memory_kind"] == "constraint"
+
+
+def test_project_status_includes_index_metadata(tmp_db, mock_embedder, tmp_path: Path):
+    import os
+
+    (tmp_path / "app.py").write_text("def run():\n    return 1\n")
+
+    old_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        index_project()
+        status = project_status()
+    finally:
+        os.chdir(old_cwd)
+
+    assert "Project id:" in status
+    assert "Indexed at:" in status
+    assert "Stale warnings: none" in status
 
 
 # --- Input validation tests ---

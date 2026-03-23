@@ -1,0 +1,97 @@
+{
+  "ok": true,
+  "repos": [
+    {
+      "name": "goodware",
+      "path": "/Users/jasen/dev/goodware",
+      "ok": true,
+      "index_result": "Indexed 483 code files (499 chunks, 0 unchanged), 7 docs (22 chunks, 0 unchanged) in 20.4s",
+      "tasks": [
+        {
+          "query": "flask api json predict upload csv health endpoint malware goodware",
+          "ok": true,
+          "project_id": "goodware-a46def9fc1de",
+          "expected_code_found": [
+            "app.py"
+          ],
+          "expected_docs_found": [
+            "README.md"
+          ],
+          "irrelevant_code": [],
+          "irrelevant_docs": [
+            "docs/evaluation-and-design.md"
+          ],
+          "code_hits": [
+            ".mypy_cache/3.13/numpy/__init__.meta.json",
+            ".mypy_cache/3.13/numpy/_array_api_info.data.json",
+            ".mypy_cache/3.13/numpy/_array_api_info.meta.json",
+            "app.py",
+            "tests/test_app.py"
+          ],
+          "doc_hits": [
+            "README.md",
+            "docs/evaluation-and-design.md"
+          ],
+          "stale": {
+            "is_stale": false,
+            "warnings": [],
+            "metadata": {
+              "project_id": "goodware-a46def9fc1de",
+              "project_root": "/Users/jasen/dev/goodware",
+              "indexed_at": "2026-03-23T03:27:52Z",
+              "git_head": "245b82abd3e7313c6295993262140f96bde9c104",
+              "code_file_count": 483,
+              "doc_file_count": 7,
+              "code_chunk_count": 499,
+              "doc_chunk_count": 22
+            }
+          },
+          "attempt_count": 1
+        },
+        {
+          "query": "training pipeline cross validation hold-out evaluation best model lightgbm xgboost",
+          "ok": true,
+          "project_id": "goodware-a46def9fc1de",
+          "expected_code_found": [
+            "processing/main.py"
+          ],
+          "expected_docs_found": [
+            "docs/evaluation-and-design.md"
+          ],
+          "irrelevant_code": [],
+          "irrelevant_docs": [],
+          "code_hits": [
+            ".mypy_cache/3.13/asyncio/coroutines.data.json",
+            ".mypy_cache/3.13/numpy/f2py/f2py2e.data.json",
+            "processing/main.py",
+            "processing/outputs/tune_results.json"
+          ],
+          "doc_hits": [
+            "docs/ai-tooling.md",
+            "docs/evaluation-and-design.md"
+          ],
+          "stale": {
+            "is_stale": false,
+            "warnings": [],
+            "metadata": {
+              "project_id": "goodware-a46def9fc1de",
+              "project_root": "/Users/jasen/dev/goodware",
+              "indexed_at": "2026-03-23T03:27:52Z",
+              "git_head": "245b82abd3e7313c6295993262140f96bde9c104",
+              "code_file_count": 483,
+              "doc_file_count": 7,
+              "code_chunk_count": 499,
+              "doc_chunk_count": 22
+            }
+          },
+          "attempt_count": 1
+        }
+      ]
+    }
+  ],
+  "generated_at": "2026-03-23T03:27:53.729268+00:00",
+  "manifest": "/private/tmp/goodware-eval.toml",
+  "embedding_provider": "voyage",
+  "embedding_model": "voyage-code-3",
+  "code_embedding_model": ""
+}

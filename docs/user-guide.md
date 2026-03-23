@@ -1,6 +1,6 @@
 # vibe-rag User Guide
 
-Use `vibe-rag` as two systems:
+Use `vibe-rag` as two systems inside your coding client:
 
 | System | Purpose | Storage |
 | --- | --- | --- |
@@ -72,11 +72,17 @@ Good memory kinds:
 
 ## Session Memory
 
-If the Vibe fork hooks are enabled:
+If your client integration enables session hooks:
 
 - completed turns are distilled into durable memory
 - rolling session summaries are updated automatically
 - new sessions can pull that context back through `memory_load_session_context`
+
+Bootstrap results now include:
+
+- provenance for memory, code, and docs hits
+- index staleness warnings when git head or indexed files drift
+- stronger bias toward structured memory kinds like `decision`, `constraint`, `summary`, and `todo`
 
 ## Other Clients
 
@@ -93,7 +99,7 @@ Those clients currently get:
 - automatic `git init` when the scaffold target is not already a repo
 - Codex config with `suppress_unstable_features_warning = true`
 
-Vibe remains the primary supported client.
+Vibe is currently the most complete integration, but the core `vibe-rag serve` MCP server is the product identity.
 
 ## Retrieval Order
 

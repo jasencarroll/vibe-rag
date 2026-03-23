@@ -99,6 +99,34 @@ class SqliteVecDB:
         self._ensure_memory_columns(conn)
         conn.commit()
 
+    def get_setting(self, key: str) -> str | None:
+        conn = self._get_conn()
+        row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+        if row is None:
+            return None
+        return str(row["value"])
+
+    def set_setting(self, key: str, value: str) -> None:
+        conn = self._get_conn()
+        conn.execute(
+            "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+            (key, value),
+        )
+        conn.commit()
+
+    def get_setting_json(self, key: str) -> dict | None:
+        raw = self.get_setting(key)
+        if raw is None:
+            return None
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            return None
+        return parsed if isinstance(parsed, dict) else None
+
+    def set_setting_json(self, key: str, value: dict) -> None:
+        self.set_setting(key, json.dumps(value))
+
     def _ensure_dimensions(self, conn: sqlite3.Connection) -> None:
         row = conn.execute(
             "SELECT value FROM settings WHERE key = 'embedding_dimensions'"
@@ -182,7 +210,7 @@ class SqliteVecDB:
         if language:
             rows = conn.execute(
                 """SELECT c.file_path, c.chunk_index, c.content, c.language,
-                          c.symbol, c.start_line, c.end_line, v.distance
+                          c.symbol, c.start_line, c.end_line, c.indexed_at, v.distance
                    FROM code_chunks_vec v
                    JOIN code_chunks c ON c.id = v.id
                    WHERE v.embedding MATCH ? AND k = ?
@@ -194,7 +222,7 @@ class SqliteVecDB:
         else:
             rows = conn.execute(
                 """SELECT c.file_path, c.chunk_index, c.content, c.language,
-                          c.symbol, c.start_line, c.end_line, v.distance
+                          c.symbol, c.start_line, c.end_line, c.indexed_at, v.distance
                    FROM code_chunks_vec v
                    JOIN code_chunks c ON c.id = v.id
                    WHERE v.embedding MATCH ? AND k = ?
@@ -212,6 +240,28 @@ class SqliteVecDB:
     def code_chunk_count(self) -> int:
         conn = self._get_conn()
         return conn.execute("SELECT COUNT(*) FROM code_chunks").fetchone()[0]
+
+    def lexical_search_code(self, terms: list[str], limit: int = 10) -> list[dict]:
+        if not terms:
+            return []
+        conn = self._get_conn()
+        rows = conn.execute(
+            """
+            SELECT file_path, chunk_index, content, language, symbol, start_line, end_line, indexed_at
+            FROM code_chunks
+            """
+        ).fetchall()
+        results: list[dict] = []
+        for row in rows:
+            item = dict(row)
+            haystack = f"{item['file_path']} {item['content']}".lower()
+            matches = sum(1 for term in terms if term in haystack)
+            if matches == 0:
+                continue
+            item["score"] = matches / len(terms)
+            results.append(item)
+        results.sort(key=lambda item: (-float(item["score"]), str(item["file_path"]), int(item["chunk_index"])))
+        return results[:limit]
 
     # --- Memories ---
 
@@ -375,7 +425,7 @@ class SqliteVecDB:
         conn = self._get_conn()
         serialized = sqlite_vec.serialize_float32(query_embedding)
         rows = conn.execute(
-            """SELECT d.file_path, d.chunk_index, d.content, v.distance
+            """SELECT d.file_path, d.chunk_index, d.content, d.indexed_at, v.distance
                FROM docs_vec v
                JOIN docs d ON d.id = v.id
                WHERE v.embedding MATCH ? AND k = ?
@@ -392,6 +442,28 @@ class SqliteVecDB:
     def doc_count(self) -> int:
         conn = self._get_conn()
         return conn.execute("SELECT COUNT(*) FROM docs").fetchone()[0]
+
+    def lexical_search_docs(self, terms: list[str], limit: int = 10) -> list[dict]:
+        if not terms:
+            return []
+        conn = self._get_conn()
+        rows = conn.execute(
+            """
+            SELECT file_path, chunk_index, content, indexed_at
+            FROM docs
+            """
+        ).fetchall()
+        results: list[dict] = []
+        for row in rows:
+            item = dict(row)
+            haystack = f"{item['file_path']} {item['content']}".lower()
+            matches = sum(1 for term in terms if term in haystack)
+            if matches == 0:
+                continue
+            item["score"] = matches / len(terms)
+            results.append(item)
+        results.sort(key=lambda item: (-float(item["score"]), str(item["file_path"]), int(item["chunk_index"])))
+        return results[:limit]
 
     def language_stats(self) -> dict[str, int]:
         conn = self._get_conn()

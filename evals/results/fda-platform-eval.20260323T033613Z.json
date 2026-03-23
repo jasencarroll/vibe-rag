@@ -1,0 +1,131 @@
+{
+  "ok": true,
+  "repos": [
+    {
+      "name": "fda-platform",
+      "path": "/Users/jasen/dev/fda-platform",
+      "ok": true,
+      "index_result": "Indexed 194 code files (711 chunks, 0 unchanged), 36 docs (290 chunks, 0 unchanged) in 17.8s",
+      "tasks": [
+        {
+          "query": "backend api auth letters analytics engines pipeline checkout keys health endpoints",
+          "ok": true,
+          "project_id": "fda-platform-92c893200009",
+          "expected_code_found": [
+            "backend/app/main.py"
+          ],
+          "expected_docs_found": [
+            "docs/API.md"
+          ],
+          "irrelevant_code": [],
+          "irrelevant_docs": [],
+          "code_hits": [
+            "backend/app/main.py",
+            "backend/app/routes/analytics.py",
+            "backend/app/routes/engines.py",
+            "backend/app/routes/pipeline.py"
+          ],
+          "doc_hits": [
+            "docs/API.md"
+          ],
+          "stale": {
+            "is_stale": false,
+            "warnings": [],
+            "metadata": {
+              "project_id": "fda-platform-92c893200009",
+              "project_root": "/Users/jasen/dev/fda-platform",
+              "indexed_at": "2026-03-23T03:36:11Z",
+              "git_head": "9bf7cf318a2ad8d862ad30328d5b5c56ae985b8a",
+              "code_file_count": 194,
+              "doc_file_count": 36,
+              "code_chunk_count": 711,
+              "doc_chunk_count": 290
+            }
+          },
+          "attempt_count": 1
+        },
+        {
+          "query": "warning letter scrape parse classify enrich 483 observation pipeline",
+          "ok": true,
+          "project_id": "fda-platform-92c893200009",
+          "expected_code_found": [
+            "backend/app/pipeline/cli.py"
+          ],
+          "expected_docs_found": [
+            "docs/PIPELINE.md"
+          ],
+          "irrelevant_code": [],
+          "irrelevant_docs": [],
+          "code_hits": [
+            "backend/app/pipeline/cli.py",
+            "backend/app/pipeline/csa_enrichment.py",
+            "backend/app/pipeline/decree_scraper.py",
+            "backend/app/pipeline/parser.py"
+          ],
+          "doc_hits": [
+            "docs/PIPELINE.md"
+          ],
+          "stale": {
+            "is_stale": false,
+            "warnings": [],
+            "metadata": {
+              "project_id": "fda-platform-92c893200009",
+              "project_root": "/Users/jasen/dev/fda-platform",
+              "indexed_at": "2026-03-23T03:36:11Z",
+              "git_head": "9bf7cf318a2ad8d862ad30328d5b5c56ae985b8a",
+              "code_file_count": 194,
+              "doc_file_count": 36,
+              "code_chunk_count": 711,
+              "doc_chunk_count": 290
+            }
+          },
+          "attempt_count": 1
+        },
+        {
+          "query": "mcp server tools openfda compliance engines npm package bun typescript",
+          "ok": true,
+          "project_id": "fda-platform-92c893200009",
+          "expected_code_found": [
+            "mcp-server/src/index.ts"
+          ],
+          "expected_docs_found": [
+            "docs/MCP-TOOLS.md",
+            "mcp-server/README.md"
+          ],
+          "irrelevant_code": [],
+          "irrelevant_docs": [],
+          "code_hits": [
+            ".github/workflows/ci.yml",
+            ".github/workflows/publish-mcp.yml",
+            "mcp-server/package.json",
+            "mcp-server/src/index.ts"
+          ],
+          "doc_hits": [
+            "docs/MCP-TOOLS.md",
+            "mcp-server/README.md"
+          ],
+          "stale": {
+            "is_stale": false,
+            "warnings": [],
+            "metadata": {
+              "project_id": "fda-platform-92c893200009",
+              "project_root": "/Users/jasen/dev/fda-platform",
+              "indexed_at": "2026-03-23T03:36:11Z",
+              "git_head": "9bf7cf318a2ad8d862ad30328d5b5c56ae985b8a",
+              "code_file_count": 194,
+              "doc_file_count": 36,
+              "code_chunk_count": 711,
+              "doc_chunk_count": 290
+            }
+          },
+          "attempt_count": 1
+        }
+      ]
+    }
+  ],
+  "generated_at": "2026-03-23T03:36:13.371584+00:00",
+  "manifest": "/private/tmp/fda-platform-eval.toml",
+  "embedding_provider": "voyage",
+  "embedding_model": "voyage-code-3",
+  "code_embedding_model": ""
+}

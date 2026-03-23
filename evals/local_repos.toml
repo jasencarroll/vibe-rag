@@ -1,0 +1,71 @@
+[[repo]]
+name = "vibe-rag"
+path = "~/dev/vibe-rag"
+
+[[repo.task]]
+query = "release automation github workflow publish tag"
+query_variants = ["github release publish workflow file and tag automation", "publish workflow for release.published event"]
+expected_code = [".github/workflows/publish.yml"]
+expected_docs = ["CHANGELOG.md"]
+unexpected_code = ["src/vibe_rag/indexing/embedder.py"]
+unexpected_docs = []
+max_irrelevant_code = 1
+max_irrelevant_docs = 1
+
+[[repo.task]]
+query = "release procedure and maintainer steps for changelog publish tag workflow"
+query_variants = ["operator steps to cut a release and publish notes", "maintainer guide for release tag push and github release"]
+expected_code = [".github/workflows/publish.yml"]
+expected_docs = ["AGENTS.md", "CHANGELOG.md"]
+unexpected_code = ["src/vibe_rag/indexing/embedder.py"]
+unexpected_docs = []
+max_irrelevant_code = 1
+max_irrelevant_docs = 1
+
+[[repo.task]]
+query = "session bootstrap hook for codex and mcp startup"
+expected_code = ["src/vibe_rag/hook_bridge.py", "src/vibe_rag/cli.py"]
+expected_docs = ["README.md", "docs/setup-guide.md"]
+unexpected_docs = []
+max_irrelevant_code = 1
+max_irrelevant_docs = 1
+
+[[repo]]
+name = "mistral-vibe"
+path = "~/dev/mistral-vibe"
+
+[[repo.task]]
+query = "background mcp hook acp session bootstrap trusted folder config"
+query_variants = ["background_mcp_hook config and acp session startup with trusted folders", "acp session bootstrap mcp config trust flow"]
+expected_code = ["vibe/acp/acp_agent_loop.py", "vibe/core/config/_settings.py", "vibe/cli/entrypoint.py"]
+expected_docs = ["README.md", "docs/acp-setup.md"]
+unexpected_docs = []
+max_irrelevant_code = 1
+max_irrelevant_docs = 1
+
+[[repo.task]]
+query = "session logging and session loading behavior"
+query_variants = ["session logger and session loader behavior", "resume continue load session metadata and messages"]
+expected_code = ["vibe/core/session/session_logger.py", "vibe/core/session/session_loader.py", "vibe/acp/acp_agent_loop.py"]
+expected_docs = ["README.md"]
+unexpected_docs = []
+max_irrelevant_code = 1
+max_irrelevant_docs = 1
+
+[[repo]]
+name = "codex"
+path = "~/dev/codex"
+
+[[repo.task]]
+query = "mcp server startup and shell tool mcp"
+expected_code = ["shell-tool-mcp/src/index.ts"]
+expected_docs = ["README.md", "shell-tool-mcp/README.md"]
+unexpected_docs = []
+max_irrelevant_code = 1
+max_irrelevant_docs = 1
+
+[[repo.task]]
+query = "config and getting started for codex cli"
+expected_docs = ["README.md", "docs/config.md", "docs/getting-started.md"]
+unexpected_docs = []
+max_irrelevant_docs = 1

@@ -9,6 +9,7 @@ from vibe_rag.indexing.embedder import (
     OllamaEmbeddingProvider,
     OpenAIEmbeddingProvider,
     VoyageEmbeddingProvider,
+    _batch_by_limits,
     embedding_provider_status,
     create_embedding_provider,
 )
@@ -57,6 +58,23 @@ def test_embed_batches_large_input(httpx_mock):
     result = embedder.embed_text_sync(texts)
     assert len(result) == 100
     assert len(httpx_mock.get_requests()) == 2
+
+
+def test_embed_batches_emit_progress_events(httpx_mock):
+    embedder = MistralEmbeddingProvider(api_key="test-key")
+    events = []
+    for count in [64, 36]:
+        httpx_mock.add_response(
+            url="https://api.mistral.ai/v1/embeddings",
+            json={"data": [{"embedding": [0.1] * 1536} for _ in range(count)]},
+        )
+
+    embedder.embed_text_sync([f"text {i}" for i in range(100)], progress_callback=events.append)
+
+    assert events[0]["phase"] == "embedding_batch_start"
+    assert events[1]["phase"] == "embedding_batch_complete"
+    assert events[-1]["batch_current"] == 2
+    assert events[-1]["items_completed"] == 100
 
 
 def test_embed_truncates_long_input(embedder, httpx_mock):
@@ -133,6 +151,52 @@ def test_ollama_provider_calls_embed_with_dimensions(monkeypatch):
     assert calls[0]["model"] == "qwen3-embedding:0.6b"
     assert calls[0]["input"] == ["hello world"]
     assert calls[0]["dimensions"] == 1024
+
+
+def test_ollama_provider_batches_large_input(monkeypatch):
+    calls = []
+
+    class FakeClient:
+        def __init__(self, host):
+            self.host = host
+
+        def embed(self, **kwargs):
+            calls.append(kwargs)
+            return {"embeddings": [[0.1, 0.2, 0.3] for _ in kwargs["input"]]}
+
+    monkeypatch.setattr("vibe_rag.indexing.embedder.OllamaClient", FakeClient)
+    provider = OllamaEmbeddingProvider(model="qwen3-embedding:0.6b", host="http://localhost:11434")
+
+    result = provider.embed_code_sync([f"chunk {i}" for i in range(100)])
+
+    assert len(result) == 100
+    assert len(calls) == 2
+    assert len(calls[0]["input"]) == 64
+    assert len(calls[1]["input"]) == 36
+
+
+def test_ollama_provider_batches_emit_progress_events(monkeypatch):
+    calls = []
+    events = []
+
+    class FakeClient:
+        def __init__(self, host):
+            self.host = host
+
+        def embed(self, **kwargs):
+            calls.append(kwargs)
+            return {"embeddings": [[0.1, 0.2, 0.3] for _ in kwargs["input"]]}
+
+    monkeypatch.setattr("vibe_rag.indexing.embedder.OllamaClient", FakeClient)
+    provider = OllamaEmbeddingProvider(model="qwen3-embedding:0.6b", host="http://localhost:11434")
+
+    provider.embed_text_sync([f"text {i}" for i in range(100)], progress_callback=events.append)
+
+    assert len(calls) == 2
+    assert events[0]["phase"] == "embedding_batch_start"
+    assert events[1]["phase"] == "embedding_batch_complete"
+    assert events[-1]["batch_current"] == 2
+    assert events[-1]["items_completed"] == 100
 
 
 def test_resolve_ollama_host_prefers_explicit_host(monkeypatch):
@@ -281,3 +345,63 @@ def test_embedding_provider_status_for_voyage(monkeypatch):
     assert status["provider"] == "voyage"
     assert status["ok"] is True
     assert status["model"] == "voyage-4"
+
+
+def test_voyage_provider_batches_large_input():
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        body = request.read().decode()
+        item_count = body.count('"input_type"')
+        assert item_count == 1
+        import json
+
+        payload = json.loads(body)
+        return httpx.Response(
+            200,
+            json={"data": [{"embedding": [0.5, 0.4, 0.3]} for _ in payload["input"]]},
+        )
+
+    transport = httpx.MockTransport(handler)
+    provider = VoyageEmbeddingProvider(api_key="test-key")
+    provider._client = httpx.Client(transport=transport)
+
+    result = provider.embed_code_sync([f"chunk {i}" for i in range(1109)])
+
+    assert len(result) == 1109
+    assert len(requests) == 2
+
+
+def test_voyage_provider_batches_emit_progress_events():
+    events = []
+
+    def handler(request):
+        import json
+
+        payload = json.loads(request.read().decode())
+        return httpx.Response(
+            200,
+            json={"data": [{"embedding": [0.5, 0.4, 0.3]} for _ in payload["input"]]},
+        )
+
+    transport = httpx.MockTransport(handler)
+    provider = VoyageEmbeddingProvider(api_key="test-key")
+    provider._client = httpx.Client(transport=transport)
+
+    provider.embed_code_sync([f"chunk {i}" for i in range(1109)], progress_callback=events.append)
+
+    assert events[0]["phase"] == "embedding_batch_start"
+    assert events[1]["phase"] == "embedding_batch_complete"
+    assert events[-1]["batch_current"] == 2
+    assert events[-1]["items_completed"] == 1109
+
+
+def test_batch_by_limits_splits_on_token_budget_before_item_budget():
+    texts = ["x" * 16000 for _ in range(30)]
+
+    batches = _batch_by_limits(texts, max_items=1000, max_tokens=100000)
+
+    assert len(batches) == 2
+    assert len(batches[0]) == 25
+    assert len(batches[1]) == 5

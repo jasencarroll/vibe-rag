@@ -20,6 +20,27 @@ def _trim_block(text: str, limit: int = 500) -> str:
     return compact[: limit - 1] + "..."
 
 
+def _error_category(error: str) -> str:
+    lowered = error.lower()
+    if "not found" in lowered or "no such file" in lowered:
+        return "command not found"
+    if "no code index" in lowered or "no docs indexed" in lowered or "no memories stored" in lowered:
+        return "empty retrieval"
+    if "embedding failed" in lowered or "ollama" in lowered or "api key" in lowered:
+        return "embedding failure"
+    if "trust" in lowered:
+        return "trust/config issue"
+    if "db" in lowered or "sqlite" in lowered:
+        return "db missing"
+    return "unknown error"
+
+
+def _truncate_context(text: str, limit: int = 1800) -> str:
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1].rstrip() + "…"
+
+
 def _format_context(payload: dict[str, Any]) -> str:
     lines: list[str] = []
 
@@ -27,13 +48,23 @@ def _format_context(payload: dict[str, Any]) -> str:
     if project_id:
         lines.append(f"vibe-rag context for project `{project_id}`")
 
+    stale = payload.get("stale") or {}
+    stale_warnings = stale.get("warnings") or []
+    if stale_warnings:
+        lines.append("Index warnings:")
+        for warning in stale_warnings[:2]:
+            lines.append(f"- {warning.get('detail')}")
+
     memories = payload.get("memories") or []
     if memories:
         lines.append("Relevant memories:")
         for memory in memories[:2]:
             summary = memory.get("summary") or memory.get("content") or ""
             memory_id = memory.get("id")
-            lines.append(f"- [id={memory_id}] {_trim_block(summary, 220)}")
+            kind = memory.get("memory_kind") or "note"
+            updated_at = ((memory.get("provenance") or {}).get("updated_at")) or memory.get("updated_at")
+            suffix = f" ({updated_at})" if updated_at else ""
+            lines.append(f"- [{kind} id={memory_id}]{suffix} {_trim_block(summary, 200)}")
 
     code_results = payload.get("code") or []
     if code_results:
@@ -42,7 +73,9 @@ def _format_context(payload: dict[str, Any]) -> str:
             file_path = item.get("file_path") or "unknown"
             start_line = item.get("start_line") or 1
             content = _trim_block(item.get("content") or "", 240)
-            lines.append(f"- {file_path}:{start_line} {content}")
+            indexed_at = ((item.get("provenance") or {}).get("indexed_at")) or item.get("indexed_at")
+            suffix = f" [{indexed_at}]" if indexed_at else ""
+            lines.append(f"- {file_path}:{start_line}{suffix} {content}")
 
     docs_results = payload.get("docs") or []
     if docs_results:
@@ -50,12 +83,14 @@ def _format_context(payload: dict[str, Any]) -> str:
         for item in docs_results[:2]:
             file_path = item.get("file_path") or "unknown"
             preview = _trim_block(item.get("preview") or item.get("content") or "", 220)
-            lines.append(f"- {file_path} {preview}")
+            indexed_at = ((item.get("provenance") or {}).get("indexed_at")) or item.get("indexed_at")
+            suffix = f" [{indexed_at}]" if indexed_at else ""
+            lines.append(f"- {file_path}{suffix} {preview}")
 
     if len(lines) == 1 and project_id:
         lines.append("No matching memory, code, or docs were returned.")
 
-    return "\n".join(lines)
+    return _truncate_context("\n".join(lines))
 
 
 def _response_for_format(target_format: str, additional_context: str, system_message: str | None) -> dict[str, Any]:
@@ -97,7 +132,7 @@ def render_session_start_hook(target_format: str, hook_input: dict[str, Any]) ->
         return _response_for_format(
             target_format,
             "vibe-rag session bootstrap did not return usable context.",
-            f"vibe-rag session hook failed: {error}",
+            f"vibe-rag session hook failed ({_error_category(error)}): {error}",
         )
 
     return _response_for_format(target_format, _format_context(payload), None)
