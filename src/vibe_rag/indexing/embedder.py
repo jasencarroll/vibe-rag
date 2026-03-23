@@ -18,7 +18,7 @@ DEFAULT_VOYAGE_TEXT_MODEL = "voyage-4"
 DEFAULT_VOYAGE_CODE_MODEL = "voyage-code-3"
 BATCH_SIZE = 64
 VOYAGE_BATCH_SIZE = 1000
-VOYAGE_MAX_BATCH_TOKENS = 100_000
+VOYAGE_MAX_BATCH_TOKENS = 75_000
 MAX_CHARS = 16_000
 DEFAULT_OLLAMA_HOST = "http://localhost:11434"
 OLLAMA_HOST_CANDIDATES = (
@@ -342,6 +342,35 @@ class VoyageEmbeddingProvider:
             )
         return self._client
 
+    def _embed_batch(self, payload: dict[str, object], texts: list[str]) -> list[list[float]]:
+        resp = self._get_client().post(VOYAGE_EMBED_URL, json=payload)
+        if resp.status_code == 200:
+            return [item["embedding"] for item in resp.json()["data"]]
+
+        try:
+            msg = resp.json().get("detail") or resp.json().get("message") or "unknown error"
+        except Exception:
+            msg = "unknown error"
+
+        # Voyage enforces a hard per-request token cap. Our estimate is intentionally
+        # conservative, but very large markdown/doc batches can still exceed the real
+        # tokenizer count. Split and retry instead of failing the whole index run.
+        if (
+            resp.status_code == 400
+            and "max allowed tokens per submitted batch" in msg.lower()
+            and len(texts) > 1
+        ):
+            midpoint = max(1, len(texts) // 2)
+            left = list(texts[:midpoint])
+            right = list(texts[midpoint:])
+            left_payload = dict(payload)
+            left_payload["input"] = left
+            right_payload = dict(payload)
+            right_payload["input"] = right
+            return self._embed_batch(left_payload, left) + self._embed_batch(right_payload, right)
+
+        raise RuntimeError(f"Embedding API error {resp.status_code}: {msg}")
+
     def _embed_all(
         self,
         texts: list[str],
@@ -381,14 +410,7 @@ class VoyageEmbeddingProvider:
                 items_total=len(truncated),
                 model=model,
             )
-            resp = self._get_client().post(VOYAGE_EMBED_URL, json=payload)
-            if resp.status_code != 200:
-                try:
-                    msg = resp.json().get("detail") or resp.json().get("message") or "unknown error"
-                except Exception:
-                    msg = "unknown error"
-                raise RuntimeError(f"Embedding API error {resp.status_code}: {msg}")
-            results.extend(item["embedding"] for item in resp.json()["data"])
+            results.extend(self._embed_batch(payload, batch))
             completed_items += len(batch)
             _emit_progress(
                 progress_callback,

@@ -1,0 +1,30 @@
+[[repo]]
+name = "agent-os"
+path = "~/dev/agent-os"
+
+[[repo.task]]
+query = "magic link session auth api routes and cookie login flow"
+query_variants = ["auth routes magic link verify session cookie flow", "api auth send magic link me logout session validation"]
+expected_code = ["backend/app/routes/auth_routes.py", "backend/app/lib/auth.py", "backend/app/dependencies.py"]
+expected_docs = ["docs/docs/api.md", "docs/docs/quickstart.md"]
+unexpected_docs = ["FINISH-LINE-PLAN.md", "CLAUDE.md"]
+max_irrelevant_code = 1
+max_irrelevant_docs = 1
+
+[[repo.task]]
+query = "signal bus architecture immutable signals decisions and context injection"
+query_variants = ["append only signal store decision lifecycle and signal context injection", "signal bus docs with parser engine and immutability triggers"]
+expected_code = ["backend/app/runner/engine.py", "backend/app/runner/parser.py"]
+expected_docs = ["docs/docs/signal-bus.md", "README.md"]
+unexpected_docs = ["FINISH-LINE-PLAN.md"]
+max_irrelevant_code = 1
+max_irrelevant_docs = 1
+
+[[repo.task]]
+query = "mcp server lifecycle config availability and test endpoint"
+query_variants = ["runner mcp server config stdio lifecycle and api mcp test route", "mcp server definitions and api route to test connectivity"]
+expected_code = ["backend/app/runner/mcp.py", "backend/app/routes/mcp.py"]
+expected_docs = ["docs/docs/mcp-troubleshooting.md", "docs/adr/003-mcp-over-direct-api.md"]
+unexpected_docs = ["FINISH-LINE-PLAN.md", "CLAUDE.md"]
+max_irrelevant_code = 1
+max_irrelevant_docs = 1

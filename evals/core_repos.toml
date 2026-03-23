@@ -52,21 +52,31 @@ max_irrelevant_code = 1
 max_irrelevant_docs = 1
 
 [[repo]]
-name = "codex"
-path = "~/dev/codex"
+name = "fda-platform"
+path = "~/dev/fda-platform"
 
 [[repo.task]]
-query = "mcp server startup and shell tool mcp"
-expected_code = ["shell-tool-mcp/src/index.ts"]
-expected_docs = ["README.md", "shell-tool-mcp/README.md"]
+query = "backend api auth letters analytics engines billing health endpoints"
+expected_code = ["backend/app/main.py"]
+expected_docs = ["docs/API.md"]
 unexpected_docs = []
 max_irrelevant_code = 1
 max_irrelevant_docs = 1
 
 [[repo.task]]
-query = "config and getting started for codex cli"
-expected_docs = ["README.md", "docs/config.md", "docs/getting-started.md"]
+query = "warning letter scrape parse classify enrich 483 observation pipeline"
+expected_code = ["backend/app/pipeline/cli.py"]
+expected_docs = ["docs/PIPELINE.md"]
 unexpected_docs = []
+max_irrelevant_code = 1
+max_irrelevant_docs = 1
+
+[[repo.task]]
+query = "mcp tools server typescript route integrations and available tool docs"
+expected_code = ["mcp-server/src/index.ts"]
+expected_docs = ["docs/MCP-TOOLS.md", "mcp-server/README.md"]
+unexpected_docs = []
+max_irrelevant_code = 1
 max_irrelevant_docs = 1
 
 [[repo]]

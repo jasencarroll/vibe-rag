@@ -404,6 +404,38 @@ class SqliteVecDB:
             return conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0]
         return conn.execute("SELECT COUNT(*) FROM memories WHERE superseded_by IS NULL").fetchone()[0]
 
+    def list_memories(
+        self,
+        limit: int = 20,
+        include_superseded: bool = False,
+        project_id: str | None = None,
+    ) -> list[dict]:
+        conn = self._get_conn()
+        superseded_filter = "" if include_superseded else "AND superseded_by IS NULL"
+        project_filter = "" if project_id is None else "AND project_id = ?"
+        params: tuple[object, ...] = ()
+        if project_id is not None:
+            params += (project_id,)
+        params += (limit,)
+        rows = conn.execute(
+            f"""
+            SELECT id, content, tags, project_id, memory_kind, summary, metadata_json,
+                   source_session_id, source_message_id, supersedes, superseded_by,
+                   created_at, updated_at
+            FROM memories
+            WHERE 1=1 {superseded_filter} {project_filter}
+            ORDER BY updated_at DESC, id DESC
+            LIMIT ?
+            """,
+            params,
+        ).fetchall()
+        results = []
+        for row in rows:
+            result = dict(row)
+            result["metadata"] = json.loads(result.pop("metadata_json") or "{}")
+            results.append(result)
+        return results
+
     # --- Docs ---
 
     def upsert_docs(self, chunks: list[dict], embeddings: list[list[float]]) -> None:

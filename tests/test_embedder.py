@@ -283,6 +283,7 @@ def test_openai_provider_calls_embeddings_endpoint(httpx_mock):
 def test_embedding_provider_status_for_openai(monkeypatch):
     monkeypatch.setenv("VIBE_RAG_EMBEDDING_PROVIDER", "openai")
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("VIBE_RAG_EMBEDDING_MODEL", "text-embedding-3-small")
 
     status = embedding_provider_status()
 
@@ -339,6 +340,7 @@ def test_voyage_provider_uses_document_and_query_modes(monkeypatch):
 def test_embedding_provider_status_for_voyage(monkeypatch):
     monkeypatch.setenv("VIBE_RAG_EMBEDDING_PROVIDER", "voyage")
     monkeypatch.setenv("VOYAGE_API_KEY", "test-key")
+    monkeypatch.setenv("VIBE_RAG_EMBEDDING_MODEL", "voyage-4")
 
     status = embedding_provider_status()
 
@@ -405,3 +407,34 @@ def test_batch_by_limits_splits_on_token_budget_before_item_budget():
     assert len(batches) == 2
     assert len(batches[0]) == 25
     assert len(batches[1]) == 5
+
+
+def test_voyage_provider_retries_with_smaller_batches_on_token_cap():
+    requests = []
+
+    def handler(request):
+        import json
+
+        payload = json.loads(request.read().decode())
+        requests.append(len(payload["input"]))
+        if len(payload["input"]) > 1:
+            return httpx.Response(
+                400,
+                json={
+                    "detail": (
+                        "Request to model 'voyage-code-3' failed. "
+                        "The max allowed tokens per submitted batch is 120000. "
+                        "Your batch has 131126 tokens after truncation. Please lower the number of tokens in the batch."
+                    )
+                },
+            )
+        return httpx.Response(200, json={"data": [{"embedding": [0.5, 0.4, 0.3]}]})
+
+    transport = httpx.MockTransport(handler)
+    provider = VoyageEmbeddingProvider(api_key="test-key")
+    provider._client = httpx.Client(transport=transport)
+
+    result = provider.embed_text_sync(["x" * 16000, "y" * 16000])
+
+    assert len(result) == 2
+    assert requests == [2, 1, 1]

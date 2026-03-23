@@ -24,17 +24,26 @@ Use it when making changes in this repository, especially for packaging, release
 
 ## Release Workflow
 
-Follow this exact order for a normal release.
+Preferred path: trigger the `Release` GitHub Actions workflow from `main`. It now prepares the version bump, promotes `CHANGELOG.md`, runs tests, builds the wheel, commits `Release vX.Y.Z`, pushes `main`, and creates the GitHub release that triggers PyPI publishing.
 
-### 1. Update versioned files
+If you need the manual fallback, follow this exact order.
 
-Update all version references together:
+### 1. Prepare versioned files
+
+Use:
+
+```bash
+python scripts/prepare_release.py --version X.Y.Z --notes-out /tmp/release-notes.md
+```
+
+This updates:
 
 - `pyproject.toml`
 - `src/vibe_rag/__init__.py`
 - `tests/test_cli.py`
 - `README.md`
 - `uv.lock`
+- `CHANGELOG.md`
 
 ### 2. If packaging or scaffold behavior changed
 
@@ -106,7 +115,7 @@ Do not rely on pushing the tag alone. Create the release:
 
 ```bash
 git tag -a vX.Y.Z -m "vX.Y.Z"
-gh release create vX.Y.Z --repo jasencarroll/vibe-rag --title "vX.Y.Z" --notes-file CHANGELOG.md
+gh release create vX.Y.Z --repo jasencarroll/vibe-rag --title "vX.Y.Z" --notes-file /tmp/release-notes.md
 ```
 
 Important:

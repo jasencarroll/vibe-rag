@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.12"
+      - run: uv sync --dev
+      - run: uv run pytest
+      - run: uv build
+      - name: Summarize build artifacts
+        run: |
+          sha256sum dist/* | tee dist.sha256
+          {
+            echo "## Build Artifacts"
+            echo
+            echo "- Commit: \`${GITHUB_SHA}\`"
+            echo "- Files:"
+            for file in dist/*; do
+              echo "  - \`$(basename "$file")\`"
+            done
+            echo
+            echo "### SHA256"
+            echo
+            echo '```text'
+            cat dist.sha256
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ github.sha }}
+          path: |
+            dist/*
+            dist.sha256
+          if-no-files-found: error

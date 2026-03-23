@@ -2,9 +2,12 @@ from pathlib import Path
 
 from vibe_rag.tools import (
     _index_project_impl,
+    cleanup_duplicate_auto_memories,
     forget,
     index_project,
     load_session_context,
+    memory_cleanup_report,
+    memory_quality_report,
     project_status,
     remember,
     remember_structured,
@@ -191,6 +194,30 @@ def test_release_docs_queries_can_find_changelog_with_semantic_plus_lexical(tmp_
     assert "CHANGELOG.md" in result
 
 
+def test_release_automation_doc_queries_prefer_changelog_over_agents(
+    tmp_db, mock_embedder, tmp_path: Path
+):
+    import os
+
+    (tmp_path / "CHANGELOG.md").write_text("Release notes for the publish workflow and release.published event.\n")
+    (tmp_path / "AGENTS.md").write_text("Maintainer release guide.\n")
+
+    old_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        index_project()
+        payload = load_session_context(
+            "publish workflow for release.published event",
+            memory_limit=0,
+            code_limit=0,
+            docs_limit=1,
+        )
+    finally:
+        os.chdir(old_cwd)
+
+    assert payload["docs"][0]["file_path"] == "CHANGELOG.md"
+
+
 def test_release_procedure_queries_surface_agents_and_changelog(tmp_db, mock_embedder, tmp_path: Path):
     import os
 
@@ -270,6 +297,36 @@ def test_setup_doc_queries_prefer_readme_and_docs_over_operational_docs(
     assert "AGENTS.md" not in doc_paths
 
 
+def test_bootstrap_doc_queries_prefer_setup_docs_over_agents_and_changelog(
+    tmp_db, mock_embedder, tmp_path: Path
+):
+    import os
+
+    (tmp_path / "AGENTS.md").write_text("Maintainer notes.\n")
+    (tmp_path / "CHANGELOG.md").write_text("Release notes.\n")
+    (tmp_path / "README.md").write_text("Session bootstrap hook for codex and MCP startup.\n")
+    docs_dir = tmp_path / "docs"
+    docs_dir.mkdir()
+    (docs_dir / "setup-guide.md").write_text("Codex hook bootstrap and MCP startup setup guide.\n")
+
+    old_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        index_project()
+        payload = load_session_context(
+            "session bootstrap hook for codex and mcp startup",
+            memory_limit=0,
+            code_limit=0,
+            docs_limit=2,
+        )
+    finally:
+        os.chdir(old_cwd)
+
+    doc_paths = [item["file_path"] for item in payload["docs"]]
+    assert "README.md" in doc_paths or "docs/setup-guide.md" in doc_paths
+    assert "AGENTS.md" not in doc_paths
+
+
 def test_resume_doc_queries_prefer_readme_over_changelog(
     tmp_db, mock_embedder, tmp_path: Path
 ):
@@ -332,6 +389,90 @@ def test_api_and_pipeline_doc_queries_prefer_operational_docs_over_plans(
     assert pipeline_payload["docs"][0]["file_path"] == "docs/PIPELINE.md"
 
 
+def test_api_doc_queries_prefer_nested_api_docs_over_setup_docs(
+    tmp_db, mock_embedder, tmp_path: Path
+):
+    import os
+
+    docs_dir = tmp_path / "docs" / "docs"
+    docs_dir.mkdir(parents=True)
+    (docs_dir / "api.md").write_text("API auth and route reference.\n")
+    (docs_dir / "drive-setup.md").write_text("Drive setup auth guide.\n")
+    (docs_dir / "gmail-setup.md").write_text("Gmail setup auth guide.\n")
+
+    old_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        index_project()
+        payload = load_session_context(
+            "api auth send magic link me logout session validation",
+            memory_limit=0,
+            code_limit=0,
+            docs_limit=1,
+        )
+    finally:
+        os.chdir(old_cwd)
+
+    assert payload["docs"][0]["file_path"] == "docs/docs/api.md"
+
+
+def test_procedural_docs_queries_prefer_operational_docs_over_finish_line_plan(
+    tmp_db, mock_embedder, tmp_path: Path
+):
+    import os
+
+    docs_dir = tmp_path / "docs" / "docs"
+    docs_dir.mkdir(parents=True)
+    (tmp_path / "FINISH-LINE-PLAN.md").write_text("Action backlog and planning notes for signal bus cleanup.\n")
+    (docs_dir / "signal-bus.md").write_text(
+        "Signal bus architecture, immutable signals, decision lifecycle, and context injection.\n"
+    )
+
+    old_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        index_project()
+        payload = load_session_context(
+            "signal bus architecture immutable signals decisions and context injection",
+            memory_limit=0,
+            code_limit=0,
+            docs_limit=1,
+        )
+    finally:
+        os.chdir(old_cwd)
+
+    assert payload["docs"][0]["file_path"] == "docs/docs/signal-bus.md"
+
+
+def test_mcp_doc_queries_prefer_mcp_tools_docs_over_generic_architecture(
+    tmp_db, mock_embedder, tmp_path: Path
+):
+    import os
+
+    docs_dir = tmp_path / "docs"
+    docs_dir.mkdir()
+    mcp_server_dir = tmp_path / "mcp-server"
+    mcp_server_dir.mkdir()
+    (docs_dir / "MCP-TOOLS.md").write_text("Available MCP tools and routes.\n")
+    (docs_dir / "ARCHITECTURE.md").write_text("General architecture.\n")
+    (mcp_server_dir / "README.md").write_text("MCP server overview.\n")
+
+    old_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        index_project()
+        payload = load_session_context(
+            "mcp tools server typescript route integrations and available tool docs",
+            memory_limit=0,
+            code_limit=0,
+            docs_limit=1,
+        )
+    finally:
+        os.chdir(old_cwd)
+
+    assert payload["docs"][0]["file_path"] == "docs/MCP-TOOLS.md"
+
+
 def test_release_automation_queries_surface_workflow_file(tmp_db, mock_embedder, tmp_path: Path):
     import os
 
@@ -349,6 +490,64 @@ def test_release_automation_queries_surface_workflow_file(tmp_db, mock_embedder,
         os.chdir(old_cwd)
 
     assert ".github/workflows/publish.yml" in result
+
+
+def test_codex_config_queries_prefer_config_and_cli_surfaces(tmp_db, mock_embedder, tmp_path: Path):
+    import os
+
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "config.md").write_text("Configure CODEX_HOME and connect MCP servers in config.toml.\n")
+    (tmp_path / "codex-rs" / "config" / "src").mkdir(parents=True)
+    (tmp_path / "codex-rs" / "config" / "src" / "lib.rs").write_text(
+        "pub const CODEX_HOME: &str = \"CODEX_HOME\";\npub fn sqlite_home() {}\n"
+    )
+    (tmp_path / "codex-rs" / "cli" / "src").mkdir(parents=True)
+    (tmp_path / "codex-rs" / "cli" / "src" / "mcp_cmd.rs").write_text(
+        "pub struct McpCli;\npub fn list_servers() {}\n"
+    )
+    (tmp_path / ".github" / "workflows").mkdir(parents=True)
+    (tmp_path / ".github" / "workflows" / "rust-ci.yml").write_text("name: rust-ci\n")
+
+    old_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        index_project()
+        result = search_code("install build codex cli config toml mcp servers codex home", limit=3)
+    finally:
+        os.chdir(old_cwd)
+
+    assert "codex-rs/config/src/lib.rs" in result or "codex-rs/cli/src/mcp_cmd.rs" in result
+    assert ".github/workflows/rust-ci.yml" not in result
+
+
+def test_codex_mcp_queries_prefer_protocol_and_shell_tool_surfaces(tmp_db, mock_embedder, tmp_path: Path):
+    import os
+
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "sandbox.md").write_text("Sandbox and approvals behavior.\n")
+    (tmp_path / "codex-rs" / "protocol" / "src").mkdir(parents=True)
+    (tmp_path / "codex-rs" / "protocol" / "src" / "mcp.rs").write_text(
+        "pub enum McpMessage { Approval }\n"
+    )
+    (tmp_path / "shell-tool-mcp" / "src").mkdir(parents=True)
+    (tmp_path / "shell-tool-mcp" / "src" / "index.ts").write_text(
+        "export function startShellToolMcp() { return 'approval'; }\n"
+    )
+    (tmp_path / "codex-rs" / "app-server" / "tests" / "suite" / "v2").mkdir(parents=True)
+    (tmp_path / "codex-rs" / "app-server" / "tests" / "suite" / "v2" / "turn_start.rs").write_text(
+        "fn turn_start_approval_test() {}\n"
+    )
+
+    old_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        index_project()
+        result = search_code("mcp server interface shell tool mcp sandbox exec policy approvals", limit=4)
+    finally:
+        os.chdir(old_cwd)
+
+    assert "codex-rs/protocol/src/mcp.rs" in result or "shell-tool-mcp/src/index.ts" in result
+    assert "turn_start.rs" not in result
 
 
 def test_load_session_context_bundles_memory_code_and_docs(tmp_db, mock_embedder, tmp_path: Path):
@@ -467,6 +666,8 @@ def test_remember_marks_freeform_memory_metadata(tmp_db, mock_embedder):
 
     assert result["memories"][0]["memory_kind"] == "note"
     assert result["memories"][0]["metadata"]["capture_kind"] == "freeform"
+    assert result["memories"][0]["provenance"]["capture_kind"] == "freeform"
+    assert result["memories"][0]["provenance"]["source_type"] == "freeform"
 
 
 def test_save_session_memory_distills_and_deduplicates(tmp_db, mock_embedder):
@@ -490,6 +691,8 @@ def test_save_session_memory_distills_and_deduplicates(tmp_db, mock_embedder):
     assert first["memory"]["memory_kind"] == "summary"
     assert first["memory"]["metadata"]["capture_kind"] == "session_distillation"
     assert first["memory"]["metadata"]["user_message_id"] == "user-1"
+    assert first["memory"]["provenance"]["capture_kind"] == "session_distillation"
+    assert first["memory"]["provenance"]["source_type"] == "session_distillation"
     assert "Task: figure out auth ownership" in first["memory"]["content"]
     assert second["ok"] is True
     assert second["deduplicated"] is True
@@ -506,6 +709,74 @@ def test_save_session_memory_skips_low_signal_no_memory_response(tmp_db, mock_em
 
     assert result["ok"] is True
     assert result["skipped"] is True
+
+
+def test_save_session_memory_skips_low_signal_auto_memory(tmp_db, mock_embedder):
+    result = save_session_memory(
+        task="hi",
+        response="hello",
+        source_session_id="sess-hi",
+        source_message_id="msg-hi",
+    )
+
+    assert result["ok"] is True
+    assert result["skipped"] is True
+    assert result["reason"] == "low-signal auto memory"
+
+
+def test_save_session_memory_skips_duplicate_auto_memory(tmp_db, mock_embedder):
+    first = save_session_memory(
+        task="Explain the auth fix",
+        response="The auth fix moved token validation to the gateway and kept refresh issuance in the auth service.",
+        source_session_id="sess-auth-1",
+        source_message_id="msg-auth-1",
+    )
+    second = save_session_memory(
+        task="Explain the auth fix",
+        response="The auth fix moved token validation to the gateway and kept refresh issuance in the auth service.",
+        source_session_id="sess-auth-2",
+        source_message_id="msg-auth-2",
+    )
+
+    assert first["ok"] is True
+    assert first["deduplicated"] is False
+    assert second["ok"] is True
+    assert second["deduplicated"] is True
+    assert second["skipped"] is True
+    assert second["reason"] == "duplicate auto memory"
+
+
+def test_save_session_memory_skips_non_durable_auto_memory(tmp_db, mock_embedder):
+    result = save_session_memory(
+        task="Did the smoke tests pass?",
+        response="Yes, all tests passed and everything looks good now.",
+        source_session_id="sess-status",
+        source_message_id="msg-status",
+    )
+
+    assert result["ok"] is True
+    assert result["skipped"] is True
+    assert result["reason"] == "non-durable auto memory"
+
+
+def test_save_session_memory_skips_non_novel_auto_memory(tmp_db, mock_embedder):
+    remember_structured(
+        summary="auth decision",
+        details="Gateway owns auth token validation and the auth service owns refresh issuance.",
+        memory_kind="decision",
+    )
+
+    result = save_session_memory(
+        task="Where should auth validation live?",
+        response="Gateway owns auth token validation and the auth service owns refresh issuance.",
+        source_session_id="sess-novelty",
+        source_message_id="msg-novelty",
+    )
+
+    assert result["ok"] is True
+    assert result["skipped"] is True
+    assert result["reason"] == "non-novel auto memory"
+    assert result["merge_suggestion"]["action"] == "supersede"
 
 
 def test_save_session_summary_rolls_up_many_turns(tmp_db, mock_embedder):
@@ -551,11 +822,14 @@ def test_save_session_summary_rolls_up_many_turns(tmp_db, mock_embedder):
     assert first["memory"]["memory_kind"] == "summary"
     assert first["memory"]["metadata"]["capture_kind"] == "session_rollup"
     assert first["memory"]["metadata"]["latest_message_id"] == "msg-2"
+    assert first["memory"]["provenance"]["capture_kind"] == "session_rollup"
+    assert first["memory"]["provenance"]["source_type"] == "session_rollup"
     assert "Session covered 2 turns." in first["memory"]["content"]
     assert second["ok"] is True
     assert second["deduplicated"] is False
     assert second["memory"]["supersedes"] == first["memory"]["id"]
     assert second["memory"]["metadata"]["latest_message_id"] == "msg-3"
+    assert second["memory"]["provenance"]["is_superseded"] is False
     assert "Session covered 3 turns." in second["memory"]["content"]
 
 
@@ -576,6 +850,112 @@ def test_save_session_summary_skips_low_signal_no_memory_response(
 
     assert result["ok"] is True
     assert result["skipped"] is True
+
+
+def test_save_session_summary_skips_low_signal_auto_memory(tmp_db, mock_embedder):
+    result = save_session_summary(
+        task="hi",
+        turns=[{"user": "hi", "assistant": "hello"}],
+        source_session_id="sess-hi",
+        source_message_id="msg-hi",
+    )
+
+    assert result["ok"] is True
+    assert result["skipped"] is True
+    assert result["reason"] == "low-signal auto memory"
+
+
+def test_save_session_summary_skips_duplicate_auto_memory(tmp_db, mock_embedder):
+    turns = [
+        {
+            "user": "What changed in auth?",
+            "assistant": "Gateway validation now owns token checks and the auth service owns refresh issuance.",
+        },
+        {
+            "user": "What about roles?",
+            "assistant": "Roles are still managed in the identity service.",
+        },
+    ]
+    first = save_session_summary(
+        task="auth summary",
+        turns=turns,
+        source_session_id="sess-rollup-1",
+        source_message_id="msg-rollup-1",
+    )
+    second = save_session_summary(
+        task="auth summary",
+        turns=turns,
+        source_session_id="sess-rollup-2",
+        source_message_id="msg-rollup-2",
+    )
+
+    assert first["ok"] is True
+    assert first["deduplicated"] is False
+    assert second["ok"] is True
+    assert second["deduplicated"] is True
+    assert second["skipped"] is True
+    assert second["reason"] == "duplicate auto memory"
+
+
+def test_save_session_summary_skips_non_durable_auto_memory(tmp_db, mock_embedder):
+    result = save_session_summary(
+        task="check release status",
+        turns=[
+            {
+                "user": "Did the smoke tests pass?",
+                "assistant": "Yes, all tests passed and everything looks good now.",
+            }
+        ],
+        source_session_id="sess-status-rollup",
+        source_message_id="msg-status-rollup",
+    )
+
+    assert result["ok"] is True
+    assert result["skipped"] is True
+    assert result["reason"] == "non-durable auto memory"
+
+
+def test_save_session_memory_inferrs_decision_kind_and_merge_suggestion(tmp_db, mock_embedder):
+    remember_structured(
+        summary="auth decision",
+        details="Gateway owns auth token validation.",
+        memory_kind="decision",
+    )
+
+    result = save_session_memory(
+        task="Who owns auth validation?",
+        response="Gateway owns auth token validation and the auth service owns refresh issuance.",
+        source_session_id="sess-kind",
+        source_message_id="msg-kind",
+    )
+
+    assert result["ok"] is True
+    assert result["memory_kind"] == "decision"
+    assert result["memory"]["memory_kind"] == "decision"
+    assert result["merge_suggestion"]["action"] == "supersede"
+    assert result["merge_suggestion"]["memory_kind"] == "decision"
+
+
+def test_save_session_summary_keeps_summary_kind_for_rollups(tmp_db, mock_embedder):
+    result = save_session_summary(
+        task="pipeline follow-up",
+        turns=[
+            {
+                "user": "What is still open on the warning letter pipeline?",
+                "assistant": "Still need to finish the warning-letter enrichment stage before backfill.",
+            },
+            {
+                "user": "Anything else?",
+                "assistant": "Add retry handling after the enrichment stage lands.",
+            },
+        ],
+        source_session_id="sess-todo",
+        source_message_id="msg-todo",
+    )
+
+    assert result["ok"] is True
+    assert result["memory_kind"] == "summary"
+    assert result["memory"]["memory_kind"] == "summary"
 
 
 def test_search_memory_falls_back_to_user_memory_results(tmp_db, mock_embedder):
@@ -655,18 +1035,34 @@ def test_load_session_context_uses_user_memory_results(tmp_db, mock_embedder, tm
     assert result["memories"][0]["summary"] == "gateway owns auth validation"
     assert result["memories"][0]["metadata"]["source"] == "session"
     assert result["code"][0]["file_path"] == "auth.py"
+    assert result["memories"][0]["provenance"]["is_stale"] is True
+    assert "project_id_mismatch" in result["memories"][0]["provenance"]["stale_reasons"]
 
 
 def test_supersede_memory_marks_replacement(tmp_db, mock_embedder):
-    first = remember_structured(summary="use sqlite for local search", memory_kind="decision")
+    import vibe_rag.server as srv
+
+    first_id = srv._get_user_db().remember_structured(
+        summary="use sqlite for local search",
+        content="use sqlite for local search",
+        embedding=[0.0] * 1024,
+        project_id=srv._ensure_project_id(),
+        memory_kind="decision",
+        metadata={"capture_kind": "manual"},
+    )
+    first = srv._get_user_db().get_memory(first_id)
     replacement = supersede_memory(
-        old_memory_id=first["memory"]["id"],
+        old_memory_id=str(first_id),
         summary="use sqlite for local search and user memory",
         memory_kind="decision",
     )
 
     assert replacement["ok"] is True
-    assert replacement["memory"]["supersedes"] == first["memory"]["id"]
+    assert replacement["memory"]["supersedes"] == str(first_id)
+    refreshed = load_session_context("sqlite local search", memory_limit=3, code_limit=0, docs_limit=0)
+    assert refreshed["memories"][0]["summary"] == "use sqlite for local search and user memory"
+    assert refreshed["memories"][0]["provenance"]["source_type"] == "manual_structured"
+    assert refreshed["memories"][0]["provenance"]["is_superseded"] is False
 
 
 def test_remember_empty_content(tmp_db, mock_embedder):
@@ -719,9 +1115,204 @@ def test_search_memory_prefers_structured_memory_kinds(tmp_db, mock_embedder):
     remember("raw note about deployment")
     remember_structured(summary="deployment constraint", memory_kind="constraint")
 
-    result = load_session_context("deployment", memory_limit=2)
+    result = load_session_context("deployment", memory_limit=4)
 
     assert result["memories"][0]["memory_kind"] == "constraint"
+    assert result["memories"][0]["provenance"]["source_type"] == "manual_structured"
+    assert result["memories"][1]["memory_kind"] == "note"
+    assert result["memories"][1]["provenance"]["source_type"] == "freeform"
+
+
+def test_load_session_context_downranks_low_signal_auto_memory(tmp_db, mock_embedder):
+    saved = save_session_summary(
+        task="hi",
+        turns=[{"user": "hi", "assistant": "hello"}],
+        source_session_id="sess-hi",
+        source_message_id="msg-hi",
+    )
+    remember_structured(
+        summary="deployment constraint",
+        details="Use blue green deployment for the api service.",
+        memory_kind="constraint",
+    )
+
+    result = load_session_context("deployment", memory_limit=4, code_limit=0, docs_limit=0)
+
+    assert saved["skipped"] is True
+    assert result["memories"][0]["memory_kind"] == "constraint"
+    assert result["memories"][0]["provenance"]["source_type"] == "manual_structured"
+    assert all(
+        item["provenance"]["capture_kind"] != "session_rollup"
+        for item in memory_cleanup_report(limit=5)["candidates"]
+    )
+
+
+def test_load_session_context_downranks_cross_project_user_memory(tmp_db, mock_embedder):
+    import vibe_rag.server as srv
+
+    old_project_id = srv._project_id
+    srv._project_id = "sink-repo"
+    try:
+        current_id = srv._get_user_db().remember_structured(
+            summary="auth constraint for sink repo",
+            content="auth constraint for sink repo",
+            embedding=[0.0] * 1024,
+            project_id="sink-repo",
+            memory_kind="constraint",
+            metadata={"capture_kind": "manual"},
+        )
+        other_id = srv._get_user_db().remember_structured(
+            summary="auth constraint for source repo",
+            content="auth constraint for source repo",
+            embedding=[0.0] * 1024,
+            project_id="source-repo",
+            memory_kind="constraint",
+            metadata={"capture_kind": "manual"},
+        )
+        result = load_session_context("auth constraint", memory_limit=4, code_limit=0, docs_limit=0)
+    finally:
+        srv._project_id = old_project_id
+
+    assert [item["id"] for item in result["memories"][:2]] == [str(current_id), str(other_id)]
+    assert result["memories"][0]["provenance"]["is_current_project"] is True
+    assert result["memories"][0]["provenance"]["is_stale"] is False
+    assert result["memories"][1]["provenance"]["is_current_project"] is False
+    assert result["memories"][1]["provenance"]["is_stale"] is True
+    assert "project_id_mismatch" in result["memories"][1]["provenance"]["stale_reasons"]
+
+
+def test_memory_cleanup_report_surfaces_freeform_and_cross_project_candidates(tmp_db, mock_embedder):
+    import vibe_rag.server as srv
+
+    old_project_id = srv._project_id
+    srv._project_id = "sink-repo"
+    try:
+        remember("temporary freeform deployment note")
+        srv._get_user_db().remember_structured(
+            summary="old auth note",
+            content="old auth note",
+            embedding=[0.0] * 1024,
+            project_id="source-repo",
+            memory_kind="note",
+            metadata={"capture_kind": "freeform"},
+        )
+        report = memory_cleanup_report(limit=5)
+    finally:
+        srv._project_id = old_project_id
+
+    assert report["ok"] is True
+    assert report["candidate_total"] >= 2
+    reasons = {reason for item in report["candidates"] for reason in item["cleanup_reasons"]}
+    assert "freeform_note" in reasons
+    assert "cross_project_user_memory" in reasons
+
+
+def test_project_status_includes_memory_cleanup_candidates(tmp_db, mock_embedder):
+    remember("temporary cleanup candidate")
+    status = project_status()
+    assert "Memory cleanup candidates:" in status
+
+
+def test_memory_quality_report_summarizes_provenance_and_cleanup(tmp_db, mock_embedder):
+    import vibe_rag.server as srv
+
+    old_project_id = srv._project_id
+    srv._project_id = "sink-repo"
+    try:
+        remember("temporary freeform deployment note")
+        srv._get_user_db().remember_structured(
+            summary="current project constraint for auth",
+            content="current project constraint for auth",
+            embedding=[0.0] * 1024,
+            project_id="sink-repo",
+            memory_kind="constraint",
+            metadata={"capture_kind": "manual"},
+        )
+        old_id = srv._get_user_db().remember_structured(
+            summary="old auth note",
+            content="old auth note",
+            embedding=[0.0] * 1024,
+            project_id="source-repo",
+            memory_kind="note",
+            metadata={"capture_kind": "freeform"},
+        )
+        supersede_memory(
+            old_memory_id=str(old_id),
+            summary="new auth note",
+            details="new auth note",
+            memory_kind="summary",
+            metadata={"capture_kind": "session_rollup"},
+        )
+        srv._get_user_db().remember_structured(
+            summary="Session summary: reply with only the project id loaded in session context",
+            content="Session covered 1 turns.\n\nTurn 1\nUser: Reply with only the project id loaded in session context.\nAssistant: sink-repo",
+            embedding=[0.0] * 1024,
+            project_id="sink-repo",
+            memory_kind="summary",
+            metadata={"capture_kind": "session_rollup", "task": "Reply with only the project id loaded in session context.", "turn_count": 1},
+        )
+        srv._get_user_db().remember_structured(
+            summary="Session summary: reply with only the project id loaded in session context",
+            content="Session covered 1 turns.\n\nTurn 1\nUser: Reply with only the project id loaded in session context.\nAssistant: sink-repo",
+            embedding=[0.0] * 1024,
+            project_id="sink-repo",
+            memory_kind="summary",
+            metadata={"capture_kind": "session_rollup", "task": "Reply with only the project id loaded in session context.", "turn_count": 1},
+        )
+        report = memory_quality_report(limit=5)
+    finally:
+        srv._project_id = old_project_id
+
+    assert report["ok"] is True
+    assert report["summary"]["total_memories"] >= 4
+    assert report["summary"]["stale_memories"] >= 1
+    assert report["summary"]["superseded_memories"] >= 1
+    assert report["by_source_db"]["user"] >= 3
+    assert report["by_capture_kind"]["freeform"] >= 2
+    assert report["by_source_type"]["manual_structured"] >= 1
+    assert report["stale_reasons"]["project_id_mismatch"] >= 1
+    assert report["cleanup_reasons"]["cross_project_user_memory"] >= 1
+    assert report["cleanup_reasons"]["low_signal_auto_memory"] >= 1
+    assert report["summary"]["duplicate_auto_memory_groups"] >= 1
+    assert report["recommended_actions"]
+    assert any("low-signal auto session summaries" in action for action in report["recommended_actions"])
+    assert any("duplicate auto-captured session memories" in action for action in report["recommended_actions"])
+    assert report["duplicate_auto_memory_groups"]
+    assert report["top_cleanup_candidates"]
+
+
+def test_cleanup_duplicate_auto_memories_reports_and_deletes_duplicates(tmp_db, mock_embedder):
+    import vibe_rag.server as srv
+
+    old_project_id = srv._project_id
+    srv._project_id = "sink-repo"
+    try:
+        for offset in range(2):
+            srv._get_user_db().remember_structured(
+                summary="Session summary: reply with only the project id loaded in session context",
+                content="Session covered 1 turns.\n\nTurn 1\nUser: Reply with only the project id loaded in session context.\nAssistant: sink-repo",
+                embedding=[0.0] * 1024,
+                project_id="sink-repo",
+                memory_kind="summary",
+                metadata={"capture_kind": "session_rollup", "task": "Reply with only the project id loaded in session context.", "turn_count": 1, "order": offset},
+            )
+
+        preview = cleanup_duplicate_auto_memories(limit=5, apply=False)
+        applied = cleanup_duplicate_auto_memories(limit=5, apply=True)
+        report = memory_quality_report(limit=5)
+    finally:
+        srv._project_id = old_project_id
+
+    assert preview["ok"] is True
+    assert preview["group_total"] == 1
+    assert preview["deleted_total"] == 0
+    assert len(preview["groups"][0]["delete_ids"]) == 1
+
+    assert applied["ok"] is True
+    assert applied["group_total"] == 1
+    assert applied["deleted_total"] == 1
+    assert len(applied["groups"][0]["deleted_ids"]) == 1
+    assert report["summary"]["duplicate_auto_memory_groups"] == 0
 
 
 def test_project_status_includes_index_metadata(tmp_db, mock_embedder, tmp_path: Path):

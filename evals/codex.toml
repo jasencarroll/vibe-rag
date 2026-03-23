@@ -1,0 +1,30 @@
+[[repo]]
+name = "codex"
+path = "~/dev/codex"
+
+[[repo.task]]
+query = "install build codex cli config toml mcp servers codex home"
+query_variants = ["codex install build from source configuration and mcp server setup", "config.toml install docs and codex home settings"]
+expected_code = ["codex-rs/config/src/lib.rs"]
+expected_docs = ["docs/install.md", "docs/config.md"]
+unexpected_docs = []
+max_irrelevant_code = 1
+max_irrelevant_docs = 1
+
+[[repo.task]]
+query = "typescript sdk thread run streamed resume input images and python app server thread api"
+query_variants = ["thread runstreamed resume sdk typescript thread ts and python app server api", "codex sdk thread lifecycle run resume events and app server client"]
+expected_code = ["sdk/typescript/src/thread.ts", "sdk/python/src/codex_app_server/api.py"]
+expected_docs = ["sdk/python/docs/getting-started.md", "sdk/typescript/README.md"]
+unexpected_docs = []
+max_irrelevant_code = 1
+max_irrelevant_docs = 1
+
+[[repo.task]]
+query = "mcp server interface shell tool mcp sandbox exec policy approvals"
+query_variants = ["codex mcp server json rpc shell tool mcp sandbox exec policy", "mcp interface approvals sandbox and exec policy docs"]
+expected_code = ["codex-rs/protocol/src/approvals.rs", "codex-rs/core/src/tools/sandboxing.rs", "codex-rs/mcp-server/src/lib.rs"]
+expected_docs = ["codex-rs/docs/codex_mcp_interface.md", "docs/sandbox.md"]
+unexpected_docs = []
+max_irrelevant_code = 1
+max_irrelevant_docs = 1

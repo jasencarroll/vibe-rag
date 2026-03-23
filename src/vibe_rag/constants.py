@@ -17,6 +17,12 @@ DOC_EXTENSIONS = {".md", ".txt", ".rst"}
 SKIP_DIRS = {
     ".git", ".vibe", "node_modules", "__pycache__", ".venv", "venv",
     "dist", "build", ".next", ".nuxt", "target", ".tox", "evals",
+    ".claude", ".codex", ".gemini",
+}
+
+# Individual files to skip during indexing
+SKIP_FILES = {
+    ".mcp.json",
 }
 
 # Mapping from file extensions to language identifiers for syntax-aware chunking

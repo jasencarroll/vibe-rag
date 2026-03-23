@@ -1,0 +1,253 @@
+{
+  "generated_at": "2026-03-23T05:10:15.518072+00:00",
+  "repo_name": "vibe-rag",
+  "repo_path": "/Users/jasen/dev/vibe-rag",
+  "project_id": "vibe-rag-423a85a27f50",
+  "git_head": "69724244cb9b4ebe5597a7bd822892991f56276b",
+  "memory_quality": {
+    "ok": true,
+    "project_id": "vibe-rag-423a85a27f50",
+    "summary": {
+      "total_memories": 7,
+      "current_project_memories": 7,
+      "stale_memories": 0,
+      "superseded_memories": 0,
+      "cleanup_candidate_total": 4,
+      "duplicate_auto_memory_groups": 0
+    },
+    "by_source_db": {
+      "user": 7
+    },
+    "by_memory_kind": {
+      "summary": 7
+    },
+    "by_capture_kind": {
+      "session_rollup": 3,
+      "session_distillation": 4
+    },
+    "by_source_type": {
+      "session_rollup": 3,
+      "session_distillation": 4
+    },
+    "stale_reasons": {},
+    "cleanup_reasons": {
+      "short_summary": 1,
+      "low_signal_auto_memory": 4
+    },
+    "recommended_actions": [
+      "Trim or suppress low-signal auto session summaries like greetings and one-turn rollups.",
+      "Rewrite weak short summaries so future retrieval has better anchors."
+    ],
+    "duplicate_auto_memory_groups": [],
+    "top_cleanup_candidates": [
+      {
+        "id": "2",
+        "source_db": "user",
+        "summary": "Session summary: hi",
+        "content": "Session covered 1 turns.\n\nTurn 1\nUser: hi\nAssistant: I see there's a dimension mismatch error with the embedding vector. Let me investigate the issue.",
+        "score": 1.0,
+        "project_id": "vibe-rag-423a85a27f50",
+        "memory_kind": "summary",
+        "tags": [
+          "session",
+          "summary",
+          "auto"
+        ],
+        "created_at": "2026-03-23 01:05:22",
+        "updated_at": "2026-03-23 01:05:22",
+        "source_session_id": "2d471e2c-f12a-4a28-8280-dfb60be89ead",
+        "source_message_id": "__session_summary__",
+        "supersedes": null,
+        "superseded_by": null,
+        "is_superseded": false,
+        "is_stale": false,
+        "stale_reasons": [],
+        "metadata": {
+          "capture_kind": "session_rollup",
+          "task": "hi",
+          "latest_message_id": "f0bc3fe7-ec92-4c50-98fc-fb08361427cf",
+          "turn_count": 1,
+          "user_message_id": "1ee5f6bd-5c0e-4d4c-a6eb-86f49e3745b2"
+        },
+        "provenance": {
+          "source_db": "user",
+          "project_id": "vibe-rag-423a85a27f50",
+          "memory_kind": "summary",
+          "capture_kind": "session_rollup",
+          "source_type": "session_rollup",
+          "source_session_id": "2d471e2c-f12a-4a28-8280-dfb60be89ead",
+          "source_message_id": "__session_summary__",
+          "created_at": "2026-03-23 01:05:22",
+          "updated_at": "2026-03-23 01:05:22",
+          "is_current_project": true,
+          "is_superseded": false,
+          "is_stale": false,
+          "stale_reasons": [],
+          "supersedes": null,
+          "superseded_by": null
+        },
+        "cleanup_reasons": [
+          "short_summary",
+          "low_signal_auto_memory"
+        ],
+        "cleanup_priority": 3
+      },
+      {
+        "id": "1",
+        "source_db": "user",
+        "summary": "hi: Perfect! Both the memory and code chunks tables in the index database have 1024 dimensions, which matches the embedding dimensions. The iss\u2026",
+        "content": "Task: hi\n\nResponse:\nPerfect! Both the memory and code chunks tables in the index database have 1024 dimensions, which matches the embedding dimensions. The issue has been resolved.\n\n## Summary\n\nThe issue was a dimension mismatch between the database schema and the embeddings produced by the embedding model:\n\n1. **Root Cause**: The database was created with 1536 dimensions (default for codestral-embed model), but the current embedding model (qwen3-embedding:0.6b) produces 1024-dimensional embeddings.\n\n2. **Solution**: Set the `VIBE_RAG_EMBEDDING_DIMENSIONS` environment variable to 1024 and recreate the databases.\n\n3. **Steps Taken**:\n   - Deleted the existing databases (`~/.vibe/memory.db` and `.vibe/index.db`)\n   - Set `VIBE_RAG_EMBEDDING_DIMENSIONS=1024` environment variable\n   - Restarted the server with the correct environment variable\n   - Verified that new databases were created with 1024 dimensions\n   - Tested memory functionality successfully\n\nThe memory tools are now working correctly with the proper dimension alignment between the database schema and the embedding model output.",
+        "score": 1.0,
+        "project_id": "vibe-rag-423a85a27f50",
+        "memory_kind": "summary",
+        "tags": [
+          "session",
+          "auto"
+        ],
+        "created_at": "2026-03-23 01:05:21",
+        "updated_at": "2026-03-23 01:05:21",
+        "source_session_id": "2d471e2c-f12a-4a28-8280-dfb60be89ead",
+        "source_message_id": "f0bc3fe7-ec92-4c50-98fc-fb08361427cf",
+        "supersedes": null,
+        "superseded_by": null,
+        "is_superseded": false,
+        "is_stale": false,
+        "stale_reasons": [],
+        "metadata": {
+          "capture_kind": "session_distillation",
+          "task": "hi",
+          "user_message_id": "1ee5f6bd-5c0e-4d4c-a6eb-86f49e3745b2"
+        },
+        "provenance": {
+          "source_db": "user",
+          "project_id": "vibe-rag-423a85a27f50",
+          "memory_kind": "summary",
+          "capture_kind": "session_distillation",
+          "source_type": "session_distillation",
+          "source_session_id": "2d471e2c-f12a-4a28-8280-dfb60be89ead",
+          "source_message_id": "f0bc3fe7-ec92-4c50-98fc-fb08361427cf",
+          "created_at": "2026-03-23 01:05:21",
+          "updated_at": "2026-03-23 01:05:21",
+          "is_current_project": true,
+          "is_superseded": false,
+          "is_stale": false,
+          "stale_reasons": [],
+          "supersedes": null,
+          "superseded_by": null
+        },
+        "cleanup_reasons": [
+          "low_signal_auto_memory"
+        ],
+        "cleanup_priority": 2
+      },
+      {
+        "id": "8",
+        "source_db": "user",
+        "summary": "Reply with only the project id loaded in session context, or NONE if no session context was loaded.: vibe-rag-423a85a27f50",
+        "content": "Task: Reply with only the project id loaded in session context, or NONE if no session context was loaded.\n\nResponse:\nvibe-rag-423a85a27f50",
+        "score": 1.0,
+        "project_id": "vibe-rag-423a85a27f50",
+        "memory_kind": "summary",
+        "tags": [
+          "session",
+          "auto"
+        ],
+        "created_at": "2026-03-23 03:44:53",
+        "updated_at": "2026-03-23 03:44:53",
+        "source_session_id": "b34f4d5a-df7d-41f6-b6e9-ae9d39535504",
+        "source_message_id": "6331b8a1-1bb8-444e-abcb-71f7974e6bd6",
+        "supersedes": null,
+        "superseded_by": null,
+        "is_superseded": false,
+        "is_stale": false,
+        "stale_reasons": [],
+        "metadata": {
+          "capture_kind": "session_distillation",
+          "task": "Reply with only the project id loaded in session context, or NONE if no session context was loaded.",
+          "user_message_id": "84e9f0bc-f788-4a4a-8a3f-584a0b42998a"
+        },
+        "provenance": {
+          "source_db": "user",
+          "project_id": "vibe-rag-423a85a27f50",
+          "memory_kind": "summary",
+          "capture_kind": "session_distillation",
+          "source_type": "session_distillation",
+          "source_session_id": "b34f4d5a-df7d-41f6-b6e9-ae9d39535504",
+          "source_message_id": "6331b8a1-1bb8-444e-abcb-71f7974e6bd6",
+          "created_at": "2026-03-23 03:44:53",
+          "updated_at": "2026-03-23 03:44:53",
+          "is_current_project": true,
+          "is_superseded": false,
+          "is_stale": false,
+          "stale_reasons": [],
+          "supersedes": null,
+          "superseded_by": null
+        },
+        "cleanup_reasons": [
+          "low_signal_auto_memory"
+        ],
+        "cleanup_priority": 2
+      },
+      {
+        "id": "9",
+        "source_db": "user",
+        "summary": "Session summary: Reply with only the project id loaded in session context, or NONE if no session context was loaded.",
+        "content": "Session covered 1 turns.\n\nTurn 1\nUser: Reply with only the project id loaded in session context, or NONE if no session context was loaded.\nAssistant: vibe-rag-423a85a27f50",
+        "score": 1.0,
+        "project_id": "vibe-rag-423a85a27f50",
+        "memory_kind": "summary",
+        "tags": [
+          "session",
+          "summary",
+          "auto"
+        ],
+        "created_at": "2026-03-23 03:44:53",
+        "updated_at": "2026-03-23 03:44:53",
+        "source_session_id": "b34f4d5a-df7d-41f6-b6e9-ae9d39535504",
+        "source_message_id": "__session_summary__",
+        "supersedes": null,
+        "superseded_by": null,
+        "is_superseded": false,
+        "is_stale": false,
+        "stale_reasons": [],
+        "metadata": {
+          "capture_kind": "session_rollup",
+          "task": "Reply with only the project id loaded in session context, or NONE if no session context was loaded.",
+          "latest_message_id": "6331b8a1-1bb8-444e-abcb-71f7974e6bd6",
+          "turn_count": 1,
+          "user_message_id": "84e9f0bc-f788-4a4a-8a3f-584a0b42998a"
+        },
+        "provenance": {
+          "source_db": "user",
+          "project_id": "vibe-rag-423a85a27f50",
+          "memory_kind": "summary",
+          "capture_kind": "session_rollup",
+          "source_type": "session_rollup",
+          "source_session_id": "b34f4d5a-df7d-41f6-b6e9-ae9d39535504",
+          "source_message_id": "__session_summary__",
+          "created_at": "2026-03-23 03:44:53",
+          "updated_at": "2026-03-23 03:44:53",
+          "is_current_project": true,
+          "is_superseded": false,
+          "is_stale": false,
+          "stale_reasons": [],
+          "supersedes": null,
+          "superseded_by": null
+        },
+        "cleanup_reasons": [
+          "low_signal_auto_memory"
+        ],
+        "cleanup_priority": 2
+      }
+    ]
+  },
+  "previous_artifact": null,
+  "summary": {
+    "total_memories": 7,
+    "current_project_memories": 7,
+    "stale_memories": 0,
+    "superseded_memories": 0,
+    "cleanup_candidate_total": 4,
+    "duplicate_auto_memory_groups": 0
+  }
+}

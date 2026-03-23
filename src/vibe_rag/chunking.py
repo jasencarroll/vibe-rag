@@ -1,7 +1,15 @@
 from __future__ import annotations
 import re
 from pathlib import Path
-from vibe_rag.constants import CODE_EXTENSIONS, DOC_EXTENSIONS, SKIP_DIRS, MAX_FILE_SIZE, DOC_CHUNK_SIZE, DOC_CHUNK_OVERLAP
+from vibe_rag.constants import (
+    CODE_EXTENSIONS,
+    DOC_EXTENSIONS,
+    SKIP_DIRS,
+    SKIP_FILES,
+    MAX_FILE_SIZE,
+    DOC_CHUNK_SIZE,
+    DOC_CHUNK_OVERLAP,
+)
 
 
 def chunk_markdown(text: str, file_path: str) -> list[dict]:
@@ -75,6 +83,8 @@ def _should_include_file(path: Path) -> bool:
     if path.is_symlink():
         return False
     if any(skip in path.parts for skip in SKIP_DIRS):
+        return False
+    if path.name in SKIP_FILES:
         return False
     try:
         if path.stat().st_size > MAX_FILE_SIZE:

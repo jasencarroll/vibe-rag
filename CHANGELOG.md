@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [0.0.20] - 2026-03-23
+
+### Added
+- Five-repo real-eval baseline covering `vibe-rag`, `mistral-vibe`, `fda-platform`, `agent-os`, and `codex`
+- Eval artifact summaries now report per-repo timing, fallback-query usage, and noise counts
+- `memory_quality_report` for inspecting memory mix, stale/superseded state, capture provenance, and cleanup pressure
+- `cleanup_duplicate_auto_memories` for previewing or pruning repeated auto-captured session memories
+- Scenario-based memory usefulness evals for decisions, constraints, todos, supersession, cross-project staleness, and low-signal non-interference
+- GitHub Actions `CI` and `Release` workflows plus a release-prep script that automate version bumps, changelog promotion, build/test checks, commit/push, and GitHub release creation
+- Cross-artifact trend reporting for retrieval and memory-quality drift over time
+- Persistent-memory snapshot and trend reporting for the maintainer repo's real user-memory drift over time
+- Compact release-evidence rendering that combines the latest retrieval and persistent-memory artifact trails
+
+### Changed
+- Eval summaries now backfill computed timing and fallback metrics even for older saved artifacts
+- Eval artifacts now include per-repo memory-quality snapshots, including cleanup pressure and duplicate auto-memory groups
+- Memory ranking and cleanup now treat low-signal auto session summaries as weaker than substantive structured memory
+- Low-signal auto session summaries are now skipped earlier during session capture instead of only being down-ranked later
+- Auto-captured session memory now applies a write-time durability and novelty gate so transient status chatter and non-novel restatements are rejected before they enter the memory corpus
+- One-turn auto session captures now infer stronger memory kinds and surface merge/supersede suggestions when a nearby existing memory looks like the update target
+
+### Fixed
+- Voyage doc embeddings now split and retry on real provider token-cap errors seen in large repos like `codex`
+
 ## [0.0.19] - 2026-03-22
 
 ### Added

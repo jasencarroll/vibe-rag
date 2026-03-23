@@ -26,6 +26,55 @@ MAX_MEMORY_LENGTH = 10_000
 MAX_TAGS_LENGTH = 512
 ALLOWED_MEMORY_KINDS = {"note", "decision", "constraint", "todo", "summary", "fact"}
 INDEX_METADATA_KEY = "project_index_metadata"
+BOILERPLATE_TASK_PATTERNS = (
+    "reply with only",
+    "reply only",
+    "reply with exactly",
+    "respond with only",
+    "respond only",
+    "project id loaded in session context",
+    "session context was loaded",
+)
+DURABLE_MEMORY_TERMS = {
+    "decision",
+    "constraint",
+    "todo",
+    "fact",
+    "must",
+    "should",
+    "always",
+    "never",
+    "owns",
+    "owner",
+    "validate",
+    "validation",
+    "refresh",
+    "deploy",
+    "deployment",
+    "pipeline",
+    "auth",
+    "role",
+    "roles",
+    "gateway",
+}
+DECISION_TERMS = {"decision", "decided", "choose", "chosen", "prefer", "policy", "owns", "owner"}
+CONSTRAINT_TERMS = {"constraint", "must", "cannot", "required", "requires", "never", "always", "limit"}
+TODO_TERMS = {"todo", "follow-up", "followup", "next", "still", "open", "pending", "finish", "add", "implement"}
+FACT_TERMS = {"fact", "lives", "located", "uses", "version", "path", "project", "id"}
+TRANSIENT_STATUS_PATTERNS = (
+    "looks good",
+    "working now",
+    "works now",
+    "passed",
+    "tests passed",
+    "all tests passed",
+    "resolved",
+    "fixed",
+    "issue has been resolved",
+    "completed successfully",
+    "done",
+    "complete",
+)
 STRUCTURED_MEMORY_PRIORITY = {
     "decision": 0,
     "constraint": 1,
@@ -64,6 +113,14 @@ DOC_FOCUSED_QUERY_TERMS = {
     "zed",
     "jetbrains",
     "neovim",
+}
+SANDBOX_QUERY_TERMS = {
+    "sandbox",
+    "exec",
+    "policy",
+    "approval",
+    "approvals",
+    "shell",
 }
 API_QUERY_TERMS = {
     "api",
@@ -252,12 +309,229 @@ def _memory_priority(memory_kind: str | None) -> int:
     return STRUCTURED_MEMORY_PRIORITY.get(memory_kind, len(STRUCTURED_MEMORY_PRIORITY))
 
 
-def _sort_memory_results(results: list[dict]) -> list[dict]:
+def _memory_stale_reasons(result: dict, current_project_id: str | None) -> list[str]:
+    reasons: list[str] = []
+    if result.get("superseded_by") is not None:
+        reasons.append("superseded")
+    result_project_id = result.get("project_id")
+    if current_project_id and result_project_id and result_project_id != current_project_id:
+        reasons.append("project_id_mismatch")
+    return reasons
+
+
+def _memory_state(result: dict, current_project_id: str | None) -> dict:
+    stale_reasons = _memory_stale_reasons(result, current_project_id)
+    result_project_id = result.get("project_id")
+    return {
+        "is_current_project": bool(current_project_id and result_project_id == current_project_id),
+        "is_stale": bool(stale_reasons),
+        "stale_reasons": stale_reasons,
+    }
+
+
+def _is_low_signal_auto_memory(result: dict) -> bool:
+    metadata = result.get("metadata") or {}
+    capture_kind = str(metadata.get("capture_kind") or "").strip()
+    if capture_kind not in {"session_rollup", "session_distillation"}:
+        return False
+    summary = str(result.get("summary") or "").strip()
+    content = str(result.get("content") or "").strip()
+    task = str(metadata.get("task") or "").strip().lower()
+    if len(summary) < 24:
+        return True
+    if metadata.get("turn_count") == 1 and len(content) < 180:
+        return True
+    if task in {"hi", "hello", "hey", "test"}:
+        return True
+    if any(pattern in task for pattern in BOILERPLATE_TASK_PATTERNS):
+        return True
+    return False
+
+
+def _is_low_signal_auto_capture(
+    *,
+    task: str,
+    summary: str,
+    content: str,
+    capture_kind: str,
+    turn_count: int | None = None,
+) -> bool:
+    return _is_low_signal_auto_memory(
+        {
+            "summary": summary,
+            "content": content,
+            "metadata": {
+                "capture_kind": capture_kind,
+                "task": task,
+                "turn_count": turn_count,
+            },
+        }
+    )
+
+
+def _text_term_similarity(left: str, right: str) -> float:
+    left_terms = _query_terms(left)
+    right_terms = _query_terms(right)
+    if not left_terms or not right_terms:
+        return 0.0
+    overlap = len(left_terms & right_terms)
+    union = len(left_terms | right_terms)
+    return overlap / union if union else 0.0
+
+
+def _has_durable_auto_memory_signal(task: str, summary: str, content: str) -> bool:
+    haystack_terms = _query_terms(" ".join((task, summary, content)))
+    return bool(haystack_terms & DURABLE_MEMORY_TERMS)
+
+
+def _is_transient_status_auto_capture(task: str, summary: str, content: str) -> bool:
+    haystack = " ".join((task, summary, content)).lower()
+    if _has_durable_auto_memory_signal(task, summary, content):
+        return False
+    return any(pattern in haystack for pattern in TRANSIENT_STATUS_PATTERNS)
+
+
+def _infer_auto_memory_kind(task: str, summary: str, content: str) -> str:
+    haystack_terms = _query_terms(" ".join((task, summary, content)))
+    if haystack_terms & TODO_TERMS:
+        return "todo"
+    if haystack_terms & CONSTRAINT_TERMS:
+        return "constraint"
+    if haystack_terms & DECISION_TERMS:
+        return "decision"
+    if haystack_terms & FACT_TERMS:
+        return "fact"
+    return "summary"
+
+
+def _find_non_novel_auto_memory(
+    *,
+    project_id: str,
+    summary: str,
+    content: str,
+) -> dict | None:
+    current_project_id = project_id
+    candidates: list[dict] = []
+    project_db = _get_db()
+    user_db = _get_user_db()
+    candidates.extend(project_db.list_memories(limit=max(project_db.memory_count(include_superseded=True) + 10, 20), include_superseded=False, project_id=current_project_id))
+    for item in user_db.list_memories(limit=max(user_db.memory_count(include_superseded=True) + 10, 20), include_superseded=False):
+        if str(item.get("project_id") or "") == current_project_id:
+            item["source_db"] = "user"
+            candidates.append(item)
+    for item in candidates:
+        existing_summary = str(item.get("summary") or "")
+        existing_content = str(item.get("content") or "")
+        if _text_term_similarity(content, existing_content) >= 0.55:
+            return item
+    return None
+
+
+def _find_merge_candidate(
+    *,
+    project_id: str,
+    summary: str,
+    content: str,
+    memory_kind: str,
+) -> dict | None:
+    project_db = _get_db()
+    user_db = _get_user_db()
+    candidates: list[dict] = []
+    candidates.extend(
+        project_db.list_memories(
+            limit=max(project_db.memory_count(include_superseded=True) + 10, 20),
+            include_superseded=False,
+            project_id=project_id,
+        )
+    )
+    for item in user_db.list_memories(limit=max(user_db.memory_count(include_superseded=True) + 10, 20), include_superseded=False):
+        if str(item.get("project_id") or "") == project_id:
+            candidates.append(item)
+    best: tuple[float, dict] | None = None
+    for item in candidates:
+        if str(item.get("memory_kind") or "") != memory_kind:
+            continue
+        similarity = _text_term_similarity(content, str(item.get("content") or ""))
+        if similarity < 0.3:
+            continue
+        if best is None or similarity > best[0]:
+            best = (similarity, item)
+    return best[1] if best else None
+
+
+def _merge_suggestion_payload(candidate: dict | None, project_id: str) -> dict | None:
+    if not candidate:
+        return None
+    payload = _memory_payload(candidate, current_project_id=project_id)
+    return {
+        "action": "supersede",
+        "memory_id": payload["id"],
+        "memory_kind": payload["memory_kind"],
+        "summary": payload["summary"],
+    }
+
+
+def _memory_rank_penalty(result: dict, current_project_id: str | None) -> int:
+    state = _memory_state(result, current_project_id)
+    penalty = 0
+    if not state["is_current_project"] and result.get("source_db") == "user":
+        penalty += 1
+    if state["is_stale"]:
+        penalty += 2
+    if _is_low_signal_auto_memory(result):
+        penalty += 1
+    return penalty
+
+
+def _normalized_auto_memory_key(
+    summary: str,
+    content: str,
+    capture_kind: str,
+    project_id: str | None,
+) -> tuple[str, str, str, str]:
+    return (
+        str(project_id or ""),
+        capture_kind.strip().lower(),
+        _single_line(summary.strip()).lower(),
+        _single_line(content.strip()).lower(),
+    )
+
+
+def _find_duplicate_auto_memory(
+    *,
+    user_db,
+    project_id: str,
+    summary: str,
+    content: str,
+    capture_kind: str,
+) -> dict | None:
+    target = _normalized_auto_memory_key(summary, content, capture_kind, project_id)
+    existing = user_db.list_memories(
+        limit=max(user_db.memory_count(include_superseded=True) + 10, 20),
+        include_superseded=True,
+    )
+    for item in existing:
+        metadata = _metadata_dict(item.get("metadata"))
+        if str(metadata.get("capture_kind") or "").strip() not in {"session_rollup", "session_distillation"}:
+            continue
+        candidate = _normalized_auto_memory_key(
+            str(item.get("summary") or ""),
+            str(item.get("content") or ""),
+            str(metadata.get("capture_kind") or ""),
+            str(item.get("project_id") or ""),
+        )
+        if candidate == target:
+            return item
+    return None
+
+
+def _sort_memory_results(results: list[dict], current_project_id: str | None = None) -> list[dict]:
     return sorted(
         results,
         key=lambda item: (
-            _memory_priority(item.get("memory_kind")),
+            _memory_rank_penalty(item, current_project_id),
             -_score(item),
+            _memory_priority(item.get("memory_kind")),
             str(item.get("updated_at") or ""),
         ),
     )
@@ -287,6 +561,8 @@ def _query_intents(query: str) -> set[str]:
         intents.add("procedural")
     if DOC_FOCUSED_QUERY_TERMS & terms:
         intents.add("docs")
+    if SANDBOX_QUERY_TERMS & terms:
+        intents.add("sandbox")
     if API_QUERY_TERMS & terms:
         intents.add("api")
     if PIPELINE_QUERY_TERMS & terms:
@@ -300,6 +576,8 @@ def _path_intent_boost(query: str, file_path: str) -> float:
     intents = _query_intents(query)
     boost = 0.0
     is_template_path = "/templates/" in path or "/template_bundle/" in path
+    is_release_procedure = bool({"maintainer", "procedure", "steps", "guide"} & terms)
+    is_release_automation = "release" in intents and "workflow" in terms and not is_release_procedure
 
     if "procedural" in intents:
         if path.endswith("agents.md"):
@@ -326,10 +604,22 @@ def _path_intent_boost(query: str, file_path: str) -> float:
     if "release" in intents:
         if ".github/workflows/" in path:
             boost += 0.45
+            if path.endswith("publish.yml"):
+                boost += 3.0
         if path.endswith("changelog.md"):
             boost += 0.35
         if path.endswith("agents.md"):
             boost += 0.25
+        if is_release_automation:
+            if path.endswith("changelog.md"):
+                boost += 0.45
+            if path.endswith("agents.md"):
+                boost -= 0.45
+            if path.startswith("docs/") and "setup" in path:
+                boost -= 0.25
+        if is_release_procedure:
+            if path.endswith("agents.md"):
+                boost += 0.25
         if is_template_path:
             boost -= 0.2
 
@@ -340,8 +630,46 @@ def _path_intent_boost(query: str, file_path: str) -> float:
             boost += 0.25
         if "trust" in path:
             boost += 0.25
-        if path.endswith("agents.md"):
-            boost += 0.15
+        if path == "readme.md":
+            boost += 0.55
+        if path.startswith("docs/") or "/docs/" in path:
+            boost += 0.45
+        if "setup" in path or "acp" in path:
+            boost += 0.45
+        if path.endswith("agents.md") or path.endswith("changelog.md"):
+            boost -= 0.5
+
+    if {"install", "build", "config"} & terms:
+        if path == "codex-rs/config/src/lib.rs":
+            boost += 1.75
+        elif path.startswith("codex-rs/config/src/"):
+            boost += 1.0
+        if path == "codex-rs/cli/src/mcp_cmd.rs":
+            boost += 1.2
+        elif path.startswith("codex-rs/cli/src/"):
+            boost += 0.45
+        if path.startswith(".github/workflows/"):
+            boost -= 0.8
+        if "/tests/" in path or path.startswith("tests/"):
+            boost -= 0.7
+
+    if "mcp" in terms or "sandbox" in intents:
+        if path == "codex-rs/protocol/src/mcp.rs":
+            boost += 1.9
+        elif path.startswith("codex-rs/protocol/src/"):
+            boost += 0.8
+        if path == "shell-tool-mcp/src/index.ts":
+            boost += 1.8
+        elif path.startswith("shell-tool-mcp/src/"):
+            boost += 0.9
+        if path.startswith("codex-rs/mcp-server/src/"):
+            boost += 1.0
+        if "sandbox" in path or "execpolicy" in path:
+            boost += 0.95
+        if path.startswith(".github/workflows/"):
+            boost -= 0.8
+        if "/tests/" in path or path.startswith("tests/"):
+            boost -= 0.75
 
     if "docs" in intents:
         if path == "readme.md":
@@ -373,16 +701,24 @@ def _path_intent_boost(query: str, file_path: str) -> float:
             boost += 0.75
         if path.startswith("backend/app/analytics/") or path.startswith("backend/app/billing/"):
             boost += 0.35
-        if path == "docs/api.md":
+        if path == "docs/api.md" or path.endswith("/docs/api.md"):
             boost += 0.95
         if path == "docs/architecture.md":
             boost += 0.55
+        if "setup" in path:
+            boost -= 0.5
         if path.startswith("spec/") or path == "claude.md":
             boost -= 0.45
         if "changelog" in path or path.endswith("changelog.tsx"):
             boost -= 0.55
         if path.startswith("frontend/"):
             boost -= 0.2
+
+    if "bootstrap" in intents and "mcp" in terms:
+        if "mcp-tools" in path or path.endswith("mcp-tools.md"):
+            boost += 0.8
+        if path.endswith("/readme.md") and "mcp-server/" in path:
+            boost += 0.45
 
     if "pipeline" in intents:
         if path.startswith("backend/app/pipeline/"):
@@ -423,15 +759,41 @@ def _rerank_doc_results(query: str, results: list[dict]) -> list[dict]:
     def doc_bonus(item: dict) -> float:
         path = str(item.get("file_path") or "").lower()
         bonus = 0.0
+        if (
+            path == "claude.md"
+            or path.startswith("spec/")
+            or path.endswith("plan.md")
+            or path.endswith("-plan.md")
+        ):
+            bonus -= 1.0
         if {"resume", "continue"} & terms and path == "readme.md":
             bonus += 2.0
+        if "bootstrap" in intents:
+            if path == "readme.md":
+                bonus += 1.0
+            if "setup" in path or "acp" in path:
+                bonus += 1.1
+            if path.endswith("agents.md") or path.endswith("changelog.md"):
+                bonus -= 1.1
+        if "release" in intents:
+            if path.endswith("changelog.md"):
+                bonus += 0.75
+            if path.endswith("agents.md") and not ({"maintainer", "procedure", "steps", "guide"} & terms):
+                bonus -= 0.6
         if "api" in intents:
-            if path == "docs/api.md":
+            if path == "docs/api.md" or path.endswith("/docs/api.md"):
                 bonus += 2.4
             if path == "docs/architecture.md":
                 bonus += 0.9
+            if "setup" in path:
+                bonus -= 1.0
             if path == "claude.md" or path.startswith("spec/"):
                 bonus -= 1.2
+        if "bootstrap" in intents and "mcp" in terms:
+            if "mcp-tools" in path or path.endswith("mcp-tools.md"):
+                bonus += 1.8
+            if path.endswith("/readme.md") and "mcp-server/" in path:
+                bonus += 0.8
         if "pipeline" in intents:
             if path == "docs/pipeline.md":
                 bonus += 2.4
@@ -470,7 +832,38 @@ def _merge_ranked_results(*result_sets: list[dict], limit: int) -> list[dict]:
     return merged[:limit]
 
 
-def _memory_payload(result: dict) -> dict:
+def _memory_payload(result: dict, current_project_id: str | None = None) -> dict:
+    metadata = result.get("metadata") or {}
+    capture_kind = str(metadata.get("capture_kind") or "").strip() or "unknown"
+    superseded_by = (
+        str(result["superseded_by"]) if result.get("superseded_by") is not None else None
+    )
+    supersedes = str(result["supersedes"]) if result.get("supersedes") is not None else None
+    state = _memory_state(result, current_project_id)
+    provenance = {
+        "source_db": result.get("source_db"),
+        "project_id": result.get("project_id"),
+        "memory_kind": result.get("memory_kind", "note"),
+        "capture_kind": capture_kind,
+        "source_type": "structured" if result.get("memory_kind") != "note" else "freeform",
+        "source_session_id": result.get("source_session_id"),
+        "source_message_id": result.get("source_message_id"),
+        "created_at": str(result.get("created_at")) if result.get("created_at") is not None else None,
+        "updated_at": str(result.get("updated_at")) if result.get("updated_at") is not None else None,
+        "is_current_project": state["is_current_project"],
+        "is_superseded": superseded_by is not None,
+        "is_stale": state["is_stale"],
+        "stale_reasons": state["stale_reasons"],
+        "supersedes": supersedes,
+        "superseded_by": superseded_by,
+    }
+    if capture_kind == "session_distillation":
+        provenance["source_type"] = "session_distillation"
+    elif capture_kind == "session_rollup":
+        provenance["source_type"] = "session_rollup"
+    elif capture_kind == "manual" and result.get("memory_kind") != "note":
+        provenance["source_type"] = "manual_structured"
+
     payload = {
         "id": str(result["id"]),
         "source_db": result.get("source_db"),
@@ -484,24 +877,164 @@ def _memory_payload(result: dict) -> dict:
         "updated_at": str(result.get("updated_at")) if result.get("updated_at") is not None else None,
         "source_session_id": result.get("source_session_id"),
         "source_message_id": result.get("source_message_id"),
-        "supersedes": str(result["supersedes"]) if result.get("supersedes") is not None else None,
-        "superseded_by": str(result["superseded_by"]) if result.get("superseded_by") is not None else None,
-        "metadata": result.get("metadata") or {},
-        "provenance": {
-            "source_db": result.get("source_db"),
-            "project_id": result.get("project_id"),
-            "source_session_id": result.get("source_session_id"),
-            "source_message_id": result.get("source_message_id"),
-            "created_at": str(result.get("created_at")) if result.get("created_at") is not None else None,
-            "updated_at": str(result.get("updated_at")) if result.get("updated_at") is not None else None,
-        },
+        "supersedes": supersedes,
+        "superseded_by": superseded_by,
+        "is_superseded": superseded_by is not None,
+        "is_stale": state["is_stale"],
+        "stale_reasons": state["stale_reasons"],
+        "metadata": metadata,
+        "provenance": provenance,
     }
     if isinstance(payload["tags"], str):
         payload["tags"] = [tag.strip() for tag in payload["tags"].split(",") if tag.strip()]
     return payload
 
 
-def _merge_memory_results(*result_sets: list[dict], limit: int) -> list[dict]:
+def _cleanup_candidate_reasons(result: dict, current_project_id: str | None) -> list[str]:
+    reasons: list[str] = []
+    metadata = result.get("metadata") or {}
+    capture_kind = str(metadata.get("capture_kind") or "").strip()
+    if result.get("memory_kind") == "note":
+        reasons.append("freeform_note")
+    if capture_kind == "freeform":
+        reasons.append("freeform_capture")
+    if result.get("superseded_by") is not None:
+        reasons.append("superseded")
+    if (
+        result.get("source_db") == "user"
+        and current_project_id
+        and result.get("project_id")
+        and result.get("project_id") != current_project_id
+    ):
+        reasons.append("cross_project_user_memory")
+    summary = str(result.get("summary") or "").strip()
+    if len(summary) < 24:
+        reasons.append("short_summary")
+    if _is_low_signal_auto_memory(result):
+        reasons.append("low_signal_auto_memory")
+    return reasons
+
+
+def _cleanup_candidate_score(result: dict, current_project_id: str | None) -> tuple[int, str, str]:
+    reasons = _cleanup_candidate_reasons(result, current_project_id)
+    priority = 0
+    if "superseded" in reasons:
+        priority += 4
+    if "cross_project_user_memory" in reasons:
+        priority += 3
+    if "freeform_note" in reasons or "freeform_capture" in reasons:
+        priority += 2
+    if "short_summary" in reasons:
+        priority += 1
+    if "low_signal_auto_memory" in reasons:
+        priority += 2
+    return priority, str(result.get("updated_at") or ""), str(result.get("id") or "")
+
+
+def _memory_cleanup_candidates(limit: int = 10) -> list[dict]:
+    current_project_id = _ensure_project_id()
+    project_db = _get_db()
+    user_db = _get_user_db()
+    candidates: list[dict] = []
+
+    for result in project_db.list_memories(limit=max(limit * 3, 20), include_superseded=True, project_id=current_project_id):
+        result["source_db"] = "project"
+        candidates.append(result)
+    for result in user_db.list_memories(limit=max(limit * 5, 30), include_superseded=True):
+        result["source_db"] = "user"
+        candidates.append(result)
+
+    ranked = []
+    for result in candidates:
+        reasons = _cleanup_candidate_reasons(result, current_project_id)
+        if not reasons:
+            continue
+        payload = _memory_payload(result, current_project_id=current_project_id)
+        payload["cleanup_reasons"] = reasons
+        payload["cleanup_priority"] = _cleanup_candidate_score(result, current_project_id)[0]
+        ranked.append(payload)
+
+    ranked.sort(
+        key=lambda item: (
+            -int(item.get("cleanup_priority", 0)),
+            str(item.get("updated_at") or ""),
+            str(item.get("id") or ""),
+        )
+    )
+    return ranked[:limit]
+
+
+def _all_memory_payloads() -> list[dict]:
+    current_project_id = _ensure_project_id()
+    project_db = _get_db()
+    user_db = _get_user_db()
+    payloads: list[dict] = []
+
+    for result in project_db.list_memories(limit=max(project_db.memory_count() + 10, 20), include_superseded=True, project_id=current_project_id):
+        result["source_db"] = "project"
+        payloads.append(_memory_payload(result, current_project_id=current_project_id))
+    for result in user_db.list_memories(limit=max(user_db.memory_count() + 10, 20), include_superseded=True):
+        result["source_db"] = "user"
+        payloads.append(_memory_payload(result, current_project_id=current_project_id))
+    return payloads
+
+
+def _duplicate_auto_memory_groups(payloads: list[dict]) -> list[dict]:
+    groups: dict[tuple[str, str, str, str], list[dict]] = {}
+    for item in payloads:
+        provenance = item.get("provenance", {})
+        capture_kind = str(provenance.get("capture_kind") or "").strip()
+        if capture_kind not in {"session_rollup", "session_distillation"}:
+            continue
+        key = _normalized_auto_memory_key(
+            str(item.get("summary") or ""),
+            str(item.get("content") or ""),
+            capture_kind,
+            str(item.get("project_id") or ""),
+        )
+        groups.setdefault(key, []).append(item)
+
+    duplicates: list[dict] = []
+    for (_, capture_kind, _, _), items in groups.items():
+        if len(items) < 2:
+            continue
+        sorted_items = sorted(items, key=lambda item: (str(item.get("updated_at") or ""), str(item.get("id") or "")))
+        duplicates.append(
+            {
+                "count": len(sorted_items),
+                "capture_kind": capture_kind,
+                "project_id": sorted_items[0].get("project_id"),
+                "summary": sorted_items[0].get("summary"),
+                "memory_ids": [str(item.get("id") or "") for item in sorted_items],
+            }
+        )
+    duplicates.sort(key=lambda item: (-int(item["count"]), str(item.get("summary") or "")))
+    return duplicates
+
+
+def _delete_memory_by_source_db(source_db: str, memory_id: str) -> bool:
+    try:
+        sqlite_id = int(memory_id)
+    except (TypeError, ValueError):
+        return False
+    db = _get_db() if source_db == "project" else _get_user_db()
+    deleted = db.forget(sqlite_id)
+    return deleted is not None
+
+
+def _count_by(items: list[dict], key: str) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for item in items:
+        value = str(item.get(key) or "unknown")
+        counts[value] = counts.get(value, 0) + 1
+    return counts
+
+
+def _merge_memory_results(
+    *result_sets: list[dict],
+    limit: int,
+    current_project_id: str | None = None,
+) -> list[dict]:
     seen_ids: set[tuple[str, str]] = set()
     merged: list[dict] = []
     for results in result_sets:
@@ -511,7 +1044,7 @@ def _merge_memory_results(*result_sets: list[dict], limit: int) -> list[dict]:
                 continue
             seen_ids.add(dedupe_key)
             merged.append(result)
-    return _sort_memory_results(merged)[:limit]
+    return _sort_memory_results(merged, current_project_id=current_project_id)[:limit]
 
 
 def _current_git_head(project_root: Path | None = None) -> str | None:
@@ -701,7 +1234,32 @@ def _search_code_results(
 
     raw_results = db.search_code(embeddings[0], limit=max(limit * 5, 10), language=language)
     lexical_results = db.lexical_search_code(sorted(_query_terms(query)), limit=max(limit * 5, 10))
-    reranked = _rerank_results(query, _merge_ranked_results(raw_results, lexical_results, limit=max(limit * 10, 20)))
+    workflow_results: list[dict] = []
+    intent_results: list[dict] = []
+    terms = _query_terms(query)
+    if {"release", "workflow"} <= terms or ({"release", "publish"} <= terms and "tag" in terms):
+        workflow_results = db.lexical_search_code(
+            ["publish.yml", ".github/workflows", "release", "publish"],
+            limit=max(limit * 2, 5),
+        )
+    if {"install", "build", "config"} & terms:
+        intent_results.extend(
+            db.lexical_search_code(
+                ["config/src/lib.rs", "mcp_cmd", "config", "CODEX_HOME", "sqlite_home"],
+                limit=max(limit * 3, 8),
+            )
+        )
+    if "mcp" in terms or {"sandbox", "approval", "approvals", "exec", "policy"} & terms:
+        intent_results.extend(
+            db.lexical_search_code(
+                ["protocol/src/mcp.rs", "shell-tool-mcp", "sandbox", "execpolicy", "approval"],
+                limit=max(limit * 3, 8),
+            )
+        )
+    reranked = _rerank_results(
+        query,
+        _merge_ranked_results(raw_results, lexical_results, workflow_results, intent_results, limit=max(limit * 10, 20)),
+    )
     filtered = [result for result in reranked if _score(result) >= min_score][:limit]
     if not filtered:
         return "No matching code found.", []
@@ -758,7 +1316,12 @@ def _search_memory_results(query: str, limit: int = 10) -> tuple[str | None, lis
         result["source_db"] = "project"
     for result in user_results:
         result["source_db"] = "user"
-    results = _merge_memory_results(project_results, user_results, limit=limit)
+    results = _merge_memory_results(
+        project_results,
+        user_results,
+        limit=limit,
+        current_project_id=current_project_id,
+    )
     if not results:
         return "No matching memories found.", []
     return None, results
@@ -1047,7 +1610,10 @@ def load_session_context(
     if memory_error:
         payload["memory_status"] = memory_error
     else:
-        payload["memories"] = [_memory_payload(result) for result in memory_results]
+        payload["memories"] = [
+            _memory_payload(result, current_project_id=payload["project_id"])
+            for result in memory_results
+        ]
 
     code_error, code_results = _search_code_results(task, limit=code_limit)
     if code_error:
@@ -1140,7 +1706,10 @@ def remember_structured(
     return {
         "ok": True,
         "backend": "project-sqlite",
-        "memory": _memory_payload(stored or {"id": memory_id, "summary": summary, "content": content}),
+        "memory": _memory_payload(
+            stored or {"id": memory_id, "summary": summary, "content": content},
+            current_project_id=_ensure_project_id(),
+        ),
     }
 
 
@@ -1184,6 +1753,16 @@ def save_session_memory(
         enriched_metadata["user_message_id"] = user_message_id.strip()
 
     summary, content = _distill_session_turn(task, response)
+    inferred_memory_kind = memory_kind if memory_kind != "summary" else _infer_auto_memory_kind(task.strip(), summary, content)
+    if _is_transient_status_auto_capture(task.strip(), summary, content):
+        return {"ok": True, "skipped": True, "reason": "non-durable auto memory"}
+    if _is_low_signal_auto_capture(
+        task=task.strip(),
+        summary=summary,
+        content=content,
+        capture_kind="session_distillation",
+    ):
+        return {"ok": True, "skipped": True, "reason": "low-signal auto memory"}
 
     user_db = _get_user_db()
     existing = user_db.get_memory_by_source(
@@ -1194,8 +1773,49 @@ def save_session_memory(
             "ok": True,
             "backend": "user-sqlite",
             "deduplicated": True,
-            "memory": _memory_payload(existing),
+            "memory": _memory_payload(existing, current_project_id=_ensure_project_id()),
         }
+
+    duplicate = _find_duplicate_auto_memory(
+        user_db=user_db,
+        project_id=_ensure_project_id(),
+        summary=summary,
+        content=content,
+        capture_kind="session_distillation",
+    )
+    if duplicate:
+        return {
+            "ok": True,
+            "backend": "user-sqlite",
+            "deduplicated": True,
+            "skipped": True,
+            "reason": "duplicate auto memory",
+            "memory": _memory_payload(duplicate, current_project_id=_ensure_project_id()),
+        }
+
+    non_novel = _find_non_novel_auto_memory(
+        project_id=_ensure_project_id(),
+        summary=summary,
+        content=content,
+    )
+    if non_novel:
+        return {
+            "ok": True,
+            "backend": "user-sqlite",
+            "deduplicated": True,
+            "skipped": True,
+            "reason": "non-novel auto memory",
+            "memory_kind": inferred_memory_kind,
+            "memory": _memory_payload(non_novel, current_project_id=_ensure_project_id()),
+            "merge_suggestion": _merge_suggestion_payload(non_novel, _ensure_project_id()),
+        }
+
+    merge_candidate = _find_merge_candidate(
+        project_id=_ensure_project_id(),
+        summary=summary,
+        content=content,
+        memory_kind=inferred_memory_kind,
+    )
 
     try:
         embedding = _get_embedder().embed_text_sync([content])[0]
@@ -1208,7 +1828,7 @@ def save_session_memory(
         embedding=embedding,
         tags=tags,
         project_id=_ensure_project_id(),
-        memory_kind=memory_kind,
+        memory_kind=inferred_memory_kind,
         metadata=enriched_metadata,
         source_session_id=source_session_id.strip(),
         source_message_id=source_message_id.strip(),
@@ -1218,7 +1838,12 @@ def save_session_memory(
         "ok": True,
         "backend": "user-sqlite",
         "deduplicated": False,
-        "memory": _memory_payload(stored or {"id": memory_id, "summary": summary, "content": content}),
+        "memory_kind": inferred_memory_kind,
+        "merge_suggestion": _merge_suggestion_payload(merge_candidate, _ensure_project_id()),
+        "memory": _memory_payload(
+            stored or {"id": memory_id, "summary": summary, "content": content},
+            current_project_id=_ensure_project_id(),
+        ),
     }
 
 
@@ -1254,6 +1879,17 @@ def save_session_summary(
         summary, content = _distill_session_summary(turns)
     except ValueError as e:
         return {"ok": False, "error": str(e)}
+    inferred_memory_kind = "summary"
+    if _is_transient_status_auto_capture(task.strip(), summary, content):
+        return {"ok": True, "skipped": True, "reason": "non-durable auto memory"}
+    if _is_low_signal_auto_capture(
+        task=task.strip(),
+        summary=summary,
+        content=content,
+        capture_kind="session_rollup",
+        turn_count=len(turns),
+    ):
+        return {"ok": True, "skipped": True, "reason": "low-signal auto memory"}
 
     summary_source_message_id = "__session_summary__"
     enriched_metadata = {
@@ -1280,15 +1916,37 @@ def save_session_summary(
             "ok": True,
             "backend": "user-sqlite",
             "deduplicated": True,
-            "memory": _memory_payload(existing),
+            "memory": _memory_payload(existing, current_project_id=_ensure_project_id()),
         }
+    duplicate = _find_duplicate_auto_memory(
+        user_db=user_db,
+        project_id=_ensure_project_id(),
+        summary=summary,
+        content=content,
+        capture_kind="session_rollup",
+    )
+    if duplicate:
+        return {
+            "ok": True,
+            "backend": "user-sqlite",
+            "deduplicated": True,
+            "skipped": True,
+            "reason": "duplicate auto memory",
+            "memory": _memory_payload(duplicate, current_project_id=_ensure_project_id()),
+        }
+    merge_candidate = _find_merge_candidate(
+        project_id=_ensure_project_id(),
+        summary=summary,
+        content=content,
+        memory_kind=inferred_memory_kind,
+    )
     memory_id = user_db.remember_structured(
         summary=summary,
         content=content,
         embedding=embedding,
         tags=tags,
         project_id=_ensure_project_id(),
-        memory_kind="summary",
+        memory_kind=inferred_memory_kind,
         metadata=enriched_metadata,
         source_session_id=source_session_id.strip(),
         source_message_id=summary_source_message_id,
@@ -1299,7 +1957,12 @@ def save_session_summary(
         "ok": True,
         "backend": "user-sqlite",
         "deduplicated": False,
-        "memory": _memory_payload(stored or {"id": memory_id, "summary": summary, "content": content}),
+        "memory_kind": inferred_memory_kind,
+        "merge_suggestion": _merge_suggestion_payload(merge_candidate, _ensure_project_id()),
+        "memory": _memory_payload(
+            stored or {"id": memory_id, "summary": summary, "content": content},
+            current_project_id=_ensure_project_id(),
+        ),
     }
 
 
@@ -1360,7 +2023,8 @@ def supersede_memory(
                 "summary": summary,
                 "content": content,
                 "supersedes": old_memory_id,
-            }
+            },
+            current_project_id=_ensure_project_id(),
         ),
     }
 
@@ -1415,4 +2079,142 @@ def project_status() -> str:
             f"{language or 'unknown'}={count}" for language, count in sorted(language_stats.items())
         )
         lines.append(f"Languages: {language_summary}")
+    cleanup_candidates = _memory_cleanup_candidates(limit=3)
+    if cleanup_candidates:
+        lines.append(f"Memory cleanup candidates: {len(cleanup_candidates)}")
+        for candidate in cleanup_candidates:
+            lines.append(
+                f"- [{candidate['source_db']}:{candidate['id']}] {candidate['summary']} "
+                f"({', '.join(candidate['cleanup_reasons'])})"
+            )
+    else:
+        lines.append("Memory cleanup candidates: none")
     return "\n".join(lines)
+
+
+@mcp.tool()
+def memory_cleanup_report(limit: int = 10) -> dict:
+    """List low-value or stale memories that are good cleanup candidates."""
+    if limit < 1:
+        return {"ok": False, "error": "Error: limit must be at least 1."}
+    candidates = _memory_cleanup_candidates(limit=limit)
+    return {
+        "ok": True,
+        "project_id": _ensure_project_id(),
+        "candidate_total": len(candidates),
+        "candidates": candidates,
+    }
+
+
+@mcp.tool()
+def memory_quality_report(limit: int = 10) -> dict:
+    """Summarize memory quality, provenance mix, and cleanup pressure."""
+    if limit < 1:
+        return {"ok": False, "error": "Error: limit must be at least 1."}
+
+    payloads = _all_memory_payloads()
+    stale = [item for item in payloads if item.get("is_stale") is True]
+    superseded = [item for item in payloads if item.get("is_superseded") is True]
+    current_project = [item for item in payloads if item.get("provenance", {}).get("is_current_project") is True]
+    cleanup_candidates = _memory_cleanup_candidates(limit=limit)
+    duplicate_groups = _duplicate_auto_memory_groups(payloads)
+
+    capture_kind_counts: dict[str, int] = {}
+    source_type_counts: dict[str, int] = {}
+    stale_reason_counts: dict[str, int] = {}
+    cleanup_reason_counts: dict[str, int] = {}
+    for item in payloads:
+        provenance = item.get("provenance", {})
+        capture_kind = str(provenance.get("capture_kind") or "unknown")
+        source_type = str(provenance.get("source_type") or "unknown")
+        capture_kind_counts[capture_kind] = capture_kind_counts.get(capture_kind, 0) + 1
+        source_type_counts[source_type] = source_type_counts.get(source_type, 0) + 1
+        for reason in item.get("stale_reasons") or []:
+            stale_reason_counts[reason] = stale_reason_counts.get(reason, 0) + 1
+    for candidate in cleanup_candidates:
+        for reason in candidate.get("cleanup_reasons") or []:
+            cleanup_reason_counts[reason] = cleanup_reason_counts.get(reason, 0) + 1
+
+    recommended_actions: list[str] = []
+    if stale:
+        recommended_actions.append("Supersede or delete stale cross-project memories that no longer apply.")
+    if superseded:
+        recommended_actions.append("Prune superseded memories or confirm the replacement memory is still current.")
+    if cleanup_reason_counts.get("freeform_note", 0) or cleanup_reason_counts.get("freeform_capture", 0):
+        recommended_actions.append("Convert recurring freeform notes into structured memories with decision/constraint/todo kinds.")
+    if cleanup_reason_counts.get("low_signal_auto_memory", 0):
+        recommended_actions.append("Trim or suppress low-signal auto session summaries like greetings and one-turn rollups.")
+    if cleanup_reason_counts.get("short_summary", 0):
+        recommended_actions.append("Rewrite weak short summaries so future retrieval has better anchors.")
+    if duplicate_groups:
+        recommended_actions.append("Prune duplicate auto-captured session memories or keep only the newest copy per repeated probe.")
+    if not recommended_actions:
+        recommended_actions.append("Memory quality looks healthy; keep superseding stale decisions instead of appending duplicates.")
+
+    return {
+        "ok": True,
+        "project_id": _ensure_project_id(),
+        "summary": {
+            "total_memories": len(payloads),
+            "current_project_memories": len(current_project),
+            "stale_memories": len(stale),
+            "superseded_memories": len(superseded),
+            "cleanup_candidate_total": len(cleanup_candidates),
+            "duplicate_auto_memory_groups": len(duplicate_groups),
+        },
+        "by_source_db": _count_by(payloads, "source_db"),
+        "by_memory_kind": _count_by(payloads, "memory_kind"),
+        "by_capture_kind": capture_kind_counts,
+        "by_source_type": source_type_counts,
+        "stale_reasons": stale_reason_counts,
+        "cleanup_reasons": cleanup_reason_counts,
+        "recommended_actions": recommended_actions,
+        "duplicate_auto_memory_groups": duplicate_groups[:limit],
+        "top_cleanup_candidates": cleanup_candidates[:limit],
+    }
+
+
+@mcp.tool()
+def cleanup_duplicate_auto_memories(limit: int = 20, apply: bool = False) -> dict:
+    """Report or prune duplicate auto-captured memories, keeping the newest copy in each group."""
+    if limit < 1:
+        return {"ok": False, "error": "Error: limit must be at least 1."}
+
+    groups = _duplicate_auto_memory_groups(_all_memory_payloads())[:limit]
+    results: list[dict] = []
+    deleted_total = 0
+    for group in groups:
+        memory_ids = list(group.get("memory_ids") or [])
+        if len(memory_ids) < 2:
+            continue
+        keep_id = memory_ids[-1]
+        delete_ids = memory_ids[:-1]
+        deleted_ids: list[str] = []
+        for memory_id in delete_ids:
+            if not apply:
+                continue
+            source_db = "user"
+            for item in _all_memory_payloads():
+                if str(item.get("id") or "") == memory_id:
+                    source_db = str(item.get("source_db") or "user")
+                    break
+            if _delete_memory_by_source_db(source_db, memory_id):
+                deleted_ids.append(memory_id)
+        deleted_total += len(deleted_ids)
+        results.append(
+            {
+                **group,
+                "keep_id": keep_id,
+                "delete_ids": delete_ids,
+                "deleted_ids": deleted_ids,
+            }
+        )
+
+    return {
+        "ok": True,
+        "project_id": _ensure_project_id(),
+        "apply": apply,
+        "group_total": len(results),
+        "deleted_total": deleted_total,
+        "groups": results,
+    }

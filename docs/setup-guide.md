@@ -243,3 +243,57 @@ uv run python scripts/run_retrieval_eval.py evals/local_repos.toml
 ```
 
 The script creates temporary project/user sqlite DBs for each repo under test.
+
+To inspect the latest saved artifact summary later without rerunning the eval:
+
+```bash
+uv run python scripts/run_retrieval_eval.py evals/local_repos.toml --summary
+```
+
+To inspect the recent trend line for a manifest:
+
+```bash
+uv run python scripts/run_retrieval_eval.py evals/core_repos.toml --trends --trend-limit 5
+```
+
+To snapshot and trend the maintainer repo's real persistent memory:
+
+```bash
+uv run python scripts/run_retrieval_eval.py --persistent-memory --repo-path .
+uv run python scripts/run_retrieval_eval.py --persistent-memory-summary --repo-path .
+uv run python scripts/run_retrieval_eval.py --persistent-memory-trends --repo-path . --trend-limit 5
+```
+
+To render a cut-ready release-evidence report from the latest retrieval and maintainer-memory artifacts:
+
+```bash
+uv run python scripts/run_retrieval_eval.py evals/core_repos.toml --release-evidence --repo-path . --trend-limit 3
+```
+
+The saved summary now shows:
+
+- repo and task pass counts
+- per-repo index timing
+- fallback-query usage
+- irrelevant-hit noise totals
+- memory cleanup and duplicate-auto-memory totals
+- whether the artifact is stale relative to the repo's current git `HEAD`
+
+The trend view rolls those metrics across multiple saved artifacts so you can see whether retrieval quality and memory hygiene are improving or drifting over time.
+The persistent-memory snapshot path uses the real repo and `~/.vibe/memory.db`, so it gives you a separate maintainer-memory history instead of eval-local temp DB numbers.
+One-turn auto session captures now also infer stronger memory kinds and can surface merge/supersede suggestions when a new capture looks like an update to an existing durable memory.
+
+To inspect memory hygiene in the current repo after a session-heavy run, call:
+
+```text
+memory_quality_report
+```
+
+To preview or apply duplicate-auto-memory cleanup:
+
+```text
+cleanup_duplicate_auto_memories
+cleanup_duplicate_auto_memories apply=true
+```
+
+Low-signal auto session summaries are now skipped earlier during capture, so the report should stay focused on more durable memories.

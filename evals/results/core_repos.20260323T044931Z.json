@@ -1,0 +1,934 @@
+{
+  "ok": true,
+  "repos": [
+    {
+      "name": "vibe-rag",
+      "path": "/Users/jasen/dev/vibe-rag",
+      "ok": true,
+      "index_result": "Indexed 33 code files (164 chunks, 0 unchanged), 11 docs (80 chunks, 0 unchanged) in 5.9s",
+      "tasks": [
+        {
+          "task_query": "release automation github workflow publish tag",
+          "query": "release automation github workflow publish tag",
+          "ok": true,
+          "project_id": "vibe-rag-423a85a27f50",
+          "expected_code_found": [
+            ".github/workflows/publish.yml"
+          ],
+          "expected_docs_found": [
+            "CHANGELOG.md"
+          ],
+          "irrelevant_code": [],
+          "irrelevant_docs": [],
+          "code_hits": [
+            ".github/workflows/publish.yml",
+            "src/vibe_rag/tools.py",
+            "tests/test_retrieval_eval.py"
+          ],
+          "doc_hits": [
+            "CHANGELOG.md"
+          ],
+          "stale": {
+            "is_stale": false,
+            "warnings": [],
+            "metadata": {
+              "project_id": "vibe-rag-423a85a27f50",
+              "project_root": "/Users/jasen/dev/vibe-rag",
+              "indexed_at": "2026-03-23T04:45:56Z",
+              "git_head": "69724244cb9b4ebe5597a7bd822892991f56276b",
+              "code_file_count": 33,
+              "doc_file_count": 11,
+              "code_chunk_count": 164,
+              "doc_chunk_count": 80
+            }
+          },
+          "attempt_count": 1
+        },
+        {
+          "task_query": "release procedure and maintainer steps for changelog publish tag workflow",
+          "query": "release procedure and maintainer steps for changelog publish tag workflow",
+          "ok": true,
+          "project_id": "vibe-rag-423a85a27f50",
+          "expected_code_found": [],
+          "expected_docs_found": [
+            "CHANGELOG.md"
+          ],
+          "irrelevant_code": [],
+          "irrelevant_docs": [],
+          "code_hits": [
+            "src/vibe_rag/db/sqlite.py",
+            "src/vibe_rag/tools.py",
+            "tests/test_tools.py"
+          ],
+          "doc_hits": [
+            "CHANGELOG.md"
+          ],
+          "stale": {
+            "is_stale": false,
+            "warnings": [],
+            "metadata": {
+              "project_id": "vibe-rag-423a85a27f50",
+              "project_root": "/Users/jasen/dev/vibe-rag",
+              "indexed_at": "2026-03-23T04:45:56Z",
+              "git_head": "69724244cb9b4ebe5597a7bd822892991f56276b",
+              "code_file_count": 33,
+              "doc_file_count": 11,
+              "code_chunk_count": 164,
+              "doc_chunk_count": 80
+            }
+          },
+          "attempt_count": 1
+        },
+        {
+          "task_query": "session bootstrap hook for codex and mcp startup",
+          "query": "session bootstrap hook for codex and mcp startup",
+          "ok": true,
+          "project_id": "vibe-rag-423a85a27f50",
+          "expected_code_found": [
+            "src/vibe_rag/cli.py"
+          ],
+          "expected_docs_found": [
+            "docs/setup-guide.md"
+          ],
+          "irrelevant_code": [],
+          "irrelevant_docs": [],
+          "code_hits": [
+            "src/vibe_rag/cli.py",
+            "src/vibe_rag/tools.py"
+          ],
+          "doc_hits": [
+            "docs/setup-guide.md"
+          ],
+          "stale": {
+            "is_stale": false,
+            "warnings": [],
+            "metadata": {
+              "project_id": "vibe-rag-423a85a27f50",
+              "project_root": "/Users/jasen/dev/vibe-rag",
+              "indexed_at": "2026-03-23T04:45:56Z",
+              "git_head": "69724244cb9b4ebe5597a7bd822892991f56276b",
+              "code_file_count": 33,
+              "doc_file_count": 11,
+              "code_chunk_count": 164,
+              "doc_chunk_count": 80
+            }
+          },
+          "attempt_count": 1
+        }
+      ]
+    },
+    {
+      "name": "mistral-vibe",
+      "path": "/Users/jasen/dev/mistral-vibe",
+      "ok": true,
+      "index_result": "Indexed 362 code files (1109 chunks, 0 unchanged), 28 docs (128 chunks, 0 unchanged) in 21.4s",
+      "tasks": [
+        {
+          "task_query": "background mcp hook acp session bootstrap trusted folder config",
+          "query": "background mcp hook acp session bootstrap trusted folder config",
+          "ok": true,
+          "project_id": "mistral-vibe-330cf7ed2261",
+          "expected_code_found": [
+            "vibe/core/config/_settings.py"
+          ],
+          "expected_docs_found": [
+            "README.md",
+            "docs/acp-setup.md"
+          ],
+          "irrelevant_code": [],
+          "irrelevant_docs": [],
+          "code_hits": [
+            "vibe/core/agent_loop.py",
+            "vibe/core/config/__init__.py",
+            "vibe/core/config/_settings.py"
+          ],
+          "doc_hits": [
+            "README.md",
+            "docs/acp-setup.md"
+          ],
+          "stale": {
+            "is_stale": false,
+            "warnings": [],
+            "metadata": {
+              "project_id": "mistral-vibe-330cf7ed2261",
+              "project_root": "/Users/jasen/dev/mistral-vibe",
+              "indexed_at": "2026-03-23T04:46:18Z",
+              "git_head": "37fd8e9803c06b0c560ea24b5d2df0f02fd92214",
+              "code_file_count": 362,
+              "doc_file_count": 28,
+              "code_chunk_count": 1109,
+              "doc_chunk_count": 128
+            }
+          },
+          "attempt_count": 1
+        },
+        {
+          "task_query": "session logging and session loading behavior",
+          "query": "session logger and session loader behavior",
+          "ok": true,
+          "project_id": "mistral-vibe-330cf7ed2261",
+          "expected_code_found": [
+            "vibe/acp/acp_agent_loop.py",
+            "vibe/core/session/session_logger.py"
+          ],
+          "expected_docs_found": [
+            "README.md"
+          ],
+          "irrelevant_code": [],
+          "irrelevant_docs": [],
+          "code_hits": [
+            "vibe/acp/acp_agent_loop.py",
+            "vibe/cli/cli.py",
+            "vibe/cli/textual_ui/app.py",
+            "vibe/core/session/session_logger.py"
+          ],
+          "doc_hits": [
+            "README.md"
+          ],
+          "stale": {
+            "is_stale": false,
+            "warnings": [],
+            "metadata": {
+              "project_id": "mistral-vibe-330cf7ed2261",
+              "project_root": "/Users/jasen/dev/mistral-vibe",
+              "indexed_at": "2026-03-23T04:46:18Z",
+              "git_head": "37fd8e9803c06b0c560ea24b5d2df0f02fd92214",
+              "code_file_count": 362,
+              "doc_file_count": 28,
+              "code_chunk_count": 1109,
+              "doc_chunk_count": 128
+            }
+          },
+          "attempt_count": 2,
+          "attempts": [
+            {
+              "task_query": "session logging and session loading behavior",
+              "query": "session logging and session loading behavior",
+              "ok": false,
+              "project_id": "mistral-vibe-330cf7ed2261",
+              "expected_code_found": [],
+              "expected_docs_found": [
+                "README.md"
+              ],
+              "irrelevant_code": [],
+              "irrelevant_docs": [],
+              "code_hits": [
+                ".github/workflows/upstream-release-sync.yml",
+                "scripts/bump_version.py",
+                "tests/acp/test_acp.py",
+                "tests/session/test_session_loader.py",
+                "vibe/cli/textual_ui/app.py"
+              ],
+              "doc_hits": [
+                "README.md"
+              ],
+              "stale": {
+                "is_stale": false,
+                "warnings": [],
+                "metadata": {
+                  "project_id": "mistral-vibe-330cf7ed2261",
+                  "project_root": "/Users/jasen/dev/mistral-vibe",
+                  "indexed_at": "2026-03-23T04:46:18Z",
+                  "git_head": "37fd8e9803c06b0c560ea24b5d2df0f02fd92214",
+                  "code_file_count": 362,
+                  "doc_file_count": 28,
+                  "code_chunk_count": 1109,
+                  "doc_chunk_count": 128
+                }
+              }
+            },
+            {
+              "task_query": "session logging and session loading behavior",
+              "query": "session logger and session loader behavior",
+              "ok": true,
+              "project_id": "mistral-vibe-330cf7ed2261",
+              "expected_code_found": [
+                "vibe/acp/acp_agent_loop.py",
+                "vibe/core/session/session_logger.py"
+              ],
+              "expected_docs_found": [
+                "README.md"
+              ],
+              "irrelevant_code": [],
+              "irrelevant_docs": [],
+              "code_hits": [
+                "vibe/acp/acp_agent_loop.py",
+                "vibe/cli/cli.py",
+                "vibe/cli/textual_ui/app.py",
+                "vibe/core/session/session_logger.py"
+              ],
+              "doc_hits": [
+                "README.md"
+              ],
+              "stale": {
+                "is_stale": false,
+                "warnings": [],
+                "metadata": {
+                  "project_id": "mistral-vibe-330cf7ed2261",
+                  "project_root": "/Users/jasen/dev/mistral-vibe",
+                  "indexed_at": "2026-03-23T04:46:18Z",
+                  "git_head": "37fd8e9803c06b0c560ea24b5d2df0f02fd92214",
+                  "code_file_count": 362,
+                  "doc_file_count": 28,
+                  "code_chunk_count": 1109,
+                  "doc_chunk_count": 128
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "fda-platform",
+      "path": "/Users/jasen/dev/fda-platform",
+      "ok": true,
+      "index_result": "Indexed 193 code files (710 chunks, 0 unchanged), 36 docs (290 chunks, 0 unchanged) in 16.2s",
+      "tasks": [
+        {
+          "task_query": "backend api auth letters analytics engines billing health endpoints",
+          "query": "backend api auth letters analytics engines billing health endpoints",
+          "ok": true,
+          "project_id": "fda-platform-92c893200009",
+          "expected_code_found": [
+            "backend/app/main.py"
+          ],
+          "expected_docs_found": [
+            "docs/API.md"
+          ],
+          "irrelevant_code": [],
+          "irrelevant_docs": [],
+          "code_hits": [
+            "backend/app/main.py",
+            "backend/app/routes/analytics.py",
+            "backend/app/routes/auth.py",
+            "backend/app/routes/engines.py"
+          ],
+          "doc_hits": [
+            "docs/API.md"
+          ],
+          "stale": {
+            "is_stale": false,
+            "warnings": [],
+            "metadata": {
+              "project_id": "fda-platform-92c893200009",
+              "project_root": "/Users/jasen/dev/fda-platform",
+              "indexed_at": "2026-03-23T04:46:36Z",
+              "git_head": "9bf7cf318a2ad8d862ad30328d5b5c56ae985b8a",
+              "code_file_count": 193,
+              "doc_file_count": 36,
+              "code_chunk_count": 710,
+              "doc_chunk_count": 290
+            }
+          },
+          "attempt_count": 1
+        },
+        {
+          "task_query": "warning letter scrape parse classify enrich 483 observation pipeline",
+          "query": "warning letter scrape parse classify enrich 483 observation pipeline",
+          "ok": true,
+          "project_id": "fda-platform-92c893200009",
+          "expected_code_found": [
+            "backend/app/pipeline/cli.py"
+          ],
+          "expected_docs_found": [
+            "docs/PIPELINE.md"
+          ],
+          "irrelevant_code": [],
+          "irrelevant_docs": [],
+          "code_hits": [
+            "backend/app/pipeline/cli.py",
+            "backend/app/pipeline/csa_enrichment.py",
+            "backend/app/pipeline/decree_scraper.py",
+            "backend/app/pipeline/parser.py"
+          ],
+          "doc_hits": [
+            "docs/PIPELINE.md"
+          ],
+          "stale": {
+            "is_stale": false,
+            "warnings": [],
+            "metadata": {
+              "project_id": "fda-platform-92c893200009",
+              "project_root": "/Users/jasen/dev/fda-platform",
+              "indexed_at": "2026-03-23T04:46:36Z",
+              "git_head": "9bf7cf318a2ad8d862ad30328d5b5c56ae985b8a",
+              "code_file_count": 193,
+              "doc_file_count": 36,
+              "code_chunk_count": 710,
+              "doc_chunk_count": 290
+            }
+          },
+          "attempt_count": 1
+        },
+        {
+          "task_query": "mcp tools server typescript route integrations and available tool docs",
+          "query": "mcp tools server typescript route integrations and available tool docs",
+          "ok": true,
+          "project_id": "fda-platform-92c893200009",
+          "expected_code_found": [
+            "mcp-server/src/index.ts"
+          ],
+          "expected_docs_found": [
+            "docs/MCP-TOOLS.md"
+          ],
+          "irrelevant_code": [],
+          "irrelevant_docs": [],
+          "code_hits": [
+            "mcp-server/package.json",
+            "mcp-server/src/index.ts",
+            "mcp-server/src/platform-client.ts"
+          ],
+          "doc_hits": [
+            "docs/ARCHITECTURE.md",
+            "docs/MCP-TOOLS.md"
+          ],
+          "stale": {
+            "is_stale": false,
+            "warnings": [],
+            "metadata": {
+              "project_id": "fda-platform-92c893200009",
+              "project_root": "/Users/jasen/dev/fda-platform",
+              "indexed_at": "2026-03-23T04:46:36Z",
+              "git_head": "9bf7cf318a2ad8d862ad30328d5b5c56ae985b8a",
+              "code_file_count": 193,
+              "doc_file_count": 36,
+              "code_chunk_count": 710,
+              "doc_chunk_count": 290
+            }
+          },
+          "attempt_count": 1
+        }
+      ]
+    },
+    {
+      "name": "agent-os",
+      "path": "/Users/jasen/dev/agent-os",
+      "ok": true,
+      "index_result": "Indexed 177 code files (441 chunks, 0 unchanged), 122 docs (711 chunks, 0 unchanged) in 10.3s",
+      "tasks": [
+        {
+          "task_query": "magic link session auth api routes and cookie login flow",
+          "query": "magic link session auth api routes and cookie login flow",
+          "ok": true,
+          "project_id": "agent-os-cd974ffe96a5",
+          "expected_code_found": [
+            "backend/app/routes/auth_routes.py"
+          ],
+          "expected_docs_found": [
+            "docs/docs/api.md"
+          ],
+          "irrelevant_code": [],
+          "irrelevant_docs": [],
+          "code_hits": [
+            "backend/app/routes/auth_routes.py",
+            "backend/app/routes/drafts.py",
+            "backend/app/routes/jobs.py",
+            "backend/app/routes/mcp.py",
+            "backend/app/routes/resumes.py"
+          ],
+          "doc_hits": [
+            "docs/docs/api.md"
+          ],
+          "stale": {
+            "is_stale": false,
+            "warnings": [],
+            "metadata": {
+              "project_id": "agent-os-cd974ffe96a5",
+              "project_root": "/Users/jasen/dev/agent-os",
+              "indexed_at": "2026-03-23T04:46:49Z",
+              "git_head": "46f8c65a276f9b6c4a2a69b10f7a2c0c37973a31",
+              "code_file_count": 177,
+              "doc_file_count": 122,
+              "code_chunk_count": 441,
+              "doc_chunk_count": 711
+            }
+          },
+          "attempt_count": 1
+        },
+        {
+          "task_query": "signal bus architecture immutable signals decisions and context injection",
+          "query": "signal bus architecture immutable signals decisions and context injection",
+          "ok": true,
+          "project_id": "agent-os-cd974ffe96a5",
+          "expected_code_found": [
+            "backend/app/runner/engine.py"
+          ],
+          "expected_docs_found": [
+            "docs/docs/signal-bus.md"
+          ],
+          "irrelevant_code": [],
+          "irrelevant_docs": [],
+          "code_hits": [
+            "backend/alembic/versions/004_immutable_signals.py",
+            "backend/app/app.py",
+            "backend/app/runner/engine.py",
+            "backend/tests/test_signal_context.py"
+          ],
+          "doc_hits": [
+            "docs/docs/architecture.md",
+            "docs/docs/signal-bus.md"
+          ],
+          "stale": {
+            "is_stale": false,
+            "warnings": [],
+            "metadata": {
+              "project_id": "agent-os-cd974ffe96a5",
+              "project_root": "/Users/jasen/dev/agent-os",
+              "indexed_at": "2026-03-23T04:46:49Z",
+              "git_head": "46f8c65a276f9b6c4a2a69b10f7a2c0c37973a31",
+              "code_file_count": 177,
+              "doc_file_count": 122,
+              "code_chunk_count": 441,
+              "doc_chunk_count": 711
+            }
+          },
+          "attempt_count": 1
+        },
+        {
+          "task_query": "mcp server lifecycle config availability and test endpoint",
+          "query": "mcp server lifecycle config availability and test endpoint",
+          "ok": true,
+          "project_id": "agent-os-cd974ffe96a5",
+          "expected_code_found": [
+            "backend/app/routes/mcp.py",
+            "backend/app/runner/mcp.py"
+          ],
+          "expected_docs_found": [
+            "docs/docs/mcp-troubleshooting.md"
+          ],
+          "irrelevant_code": [],
+          "irrelevant_docs": [],
+          "code_hits": [
+            "backend/app/routes/mcp.py",
+            "backend/app/runner/mcp.py",
+            "backend/scripts/seed_audit_signals.py"
+          ],
+          "doc_hits": [
+            "docs/docs/api.md",
+            "docs/docs/mcp-troubleshooting.md"
+          ],
+          "stale": {
+            "is_stale": false,
+            "warnings": [],
+            "metadata": {
+              "project_id": "agent-os-cd974ffe96a5",
+              "project_root": "/Users/jasen/dev/agent-os",
+              "indexed_at": "2026-03-23T04:46:49Z",
+              "git_head": "46f8c65a276f9b6c4a2a69b10f7a2c0c37973a31",
+              "code_file_count": 177,
+              "doc_file_count": 122,
+              "code_chunk_count": 441,
+              "doc_chunk_count": 711
+            }
+          },
+          "attempt_count": 1
+        }
+      ]
+    },
+    {
+      "name": "codex",
+      "path": "/Users/jasen/dev/codex",
+      "ok": true,
+      "index_result": "Indexed 2313 code files (11474 chunks, 0 unchanged), 948 docs (1593 chunks, 0 unchanged) in 157.8s",
+      "tasks": [
+        {
+          "task_query": "install build codex cli config toml mcp servers codex home",
+          "query": "codex install build from source configuration and mcp server setup",
+          "ok": true,
+          "project_id": "codex-4b9380aa3d04",
+          "expected_code_found": [
+            "codex-rs/config/src/lib.rs"
+          ],
+          "expected_docs_found": [
+            "docs/config.md"
+          ],
+          "irrelevant_code": [],
+          "irrelevant_docs": [],
+          "code_hits": [
+            "codex-rs/cli/src/mcp_cmd.rs",
+            "codex-rs/config/src/lib.rs",
+            "codex-rs/core/src/config_loader/mod.rs",
+            "codex-rs/core/src/mcp/mod.rs",
+            "codex-rs/core/src/mcp/skill_dependencies_tests.rs"
+          ],
+          "doc_hits": [
+            "codex-rs/docs/codex_mcp_interface.md",
+            "docs/config.md",
+            "shell-tool-mcp/README.md"
+          ],
+          "stale": {
+            "is_stale": false,
+            "warnings": [],
+            "metadata": {
+              "project_id": "codex-4b9380aa3d04",
+              "project_root": "/Users/jasen/dev/codex",
+              "indexed_at": "2026-03-23T04:49:29Z",
+              "git_head": "85065ea1b83d86220c905b00ca9c9597f623957e",
+              "code_file_count": 2313,
+              "doc_file_count": 948,
+              "code_chunk_count": 11474,
+              "doc_chunk_count": 1593
+            }
+          },
+          "attempt_count": 2,
+          "attempts": [
+            {
+              "task_query": "install build codex cli config toml mcp servers codex home",
+              "query": "install build codex cli config toml mcp servers codex home",
+              "ok": false,
+              "project_id": "codex-4b9380aa3d04",
+              "expected_code_found": [],
+              "expected_docs_found": [
+                "docs/config.md",
+                "docs/install.md"
+              ],
+              "irrelevant_code": [],
+              "irrelevant_docs": [],
+              "code_hits": [
+                "codex-rs/cli/src/mcp_cmd.rs"
+              ],
+              "doc_hits": [
+                "docs/config.md",
+                "docs/install.md"
+              ],
+              "stale": {
+                "is_stale": false,
+                "warnings": [],
+                "metadata": {
+                  "project_id": "codex-4b9380aa3d04",
+                  "project_root": "/Users/jasen/dev/codex",
+                  "indexed_at": "2026-03-23T04:49:29Z",
+                  "git_head": "85065ea1b83d86220c905b00ca9c9597f623957e",
+                  "code_file_count": 2313,
+                  "doc_file_count": 948,
+                  "code_chunk_count": 11474,
+                  "doc_chunk_count": 1593
+                }
+              }
+            },
+            {
+              "task_query": "install build codex cli config toml mcp servers codex home",
+              "query": "codex install build from source configuration and mcp server setup",
+              "ok": true,
+              "project_id": "codex-4b9380aa3d04",
+              "expected_code_found": [
+                "codex-rs/config/src/lib.rs"
+              ],
+              "expected_docs_found": [
+                "docs/config.md"
+              ],
+              "irrelevant_code": [],
+              "irrelevant_docs": [],
+              "code_hits": [
+                "codex-rs/cli/src/mcp_cmd.rs",
+                "codex-rs/config/src/lib.rs",
+                "codex-rs/core/src/config_loader/mod.rs",
+                "codex-rs/core/src/mcp/mod.rs",
+                "codex-rs/core/src/mcp/skill_dependencies_tests.rs"
+              ],
+              "doc_hits": [
+                "codex-rs/docs/codex_mcp_interface.md",
+                "docs/config.md",
+                "shell-tool-mcp/README.md"
+              ],
+              "stale": {
+                "is_stale": false,
+                "warnings": [],
+                "metadata": {
+                  "project_id": "codex-4b9380aa3d04",
+                  "project_root": "/Users/jasen/dev/codex",
+                  "indexed_at": "2026-03-23T04:49:29Z",
+                  "git_head": "85065ea1b83d86220c905b00ca9c9597f623957e",
+                  "code_file_count": 2313,
+                  "doc_file_count": 948,
+                  "code_chunk_count": 11474,
+                  "doc_chunk_count": 1593
+                }
+              }
+            }
+          ]
+        },
+        {
+          "task_query": "typescript sdk thread run streamed resume input images and python app server thread api",
+          "query": "typescript sdk thread run streamed resume input images and python app server thread api",
+          "ok": true,
+          "project_id": "codex-4b9380aa3d04",
+          "expected_code_found": [
+            "sdk/python/src/codex_app_server/api.py"
+          ],
+          "expected_docs_found": [
+            "sdk/typescript/README.md"
+          ],
+          "irrelevant_code": [],
+          "irrelevant_docs": [],
+          "code_hits": [
+            "sdk/python/scripts/update_sdk_artifacts.py",
+            "sdk/python/src/codex_app_server/api.py",
+            "sdk/python/tests/test_real_app_server_integration.py"
+          ],
+          "doc_hits": [
+            "codex-rs/app-server/README.md",
+            "sdk/typescript/README.md"
+          ],
+          "stale": {
+            "is_stale": false,
+            "warnings": [],
+            "metadata": {
+              "project_id": "codex-4b9380aa3d04",
+              "project_root": "/Users/jasen/dev/codex",
+              "indexed_at": "2026-03-23T04:49:29Z",
+              "git_head": "85065ea1b83d86220c905b00ca9c9597f623957e",
+              "code_file_count": 2313,
+              "doc_file_count": 948,
+              "code_chunk_count": 11474,
+              "doc_chunk_count": 1593
+            }
+          },
+          "attempt_count": 1
+        },
+        {
+          "task_query": "mcp server interface shell tool mcp sandbox exec policy approvals",
+          "query": "mcp server interface shell tool mcp sandbox exec policy approvals",
+          "ok": true,
+          "project_id": "codex-4b9380aa3d04",
+          "expected_code_found": [
+            "codex-rs/core/src/tools/sandboxing.rs",
+            "codex-rs/protocol/src/approvals.rs"
+          ],
+          "expected_docs_found": [
+            "docs/sandbox.md"
+          ],
+          "irrelevant_code": [],
+          "irrelevant_docs": [],
+          "code_hits": [
+            "codex-rs/core/src/tools/sandboxing.rs",
+            "codex-rs/core/src/tools/sandboxing_tests.rs",
+            "codex-rs/hooks/src/types.rs",
+            "codex-rs/protocol/src/approvals.rs"
+          ],
+          "doc_hits": [
+            "codex-rs/execpolicy/README.md",
+            "codex-rs/protocol/src/prompts/permissions/sandbox_mode/danger_full_access.md",
+            "docs/sandbox.md"
+          ],
+          "stale": {
+            "is_stale": false,
+            "warnings": [],
+            "metadata": {
+              "project_id": "codex-4b9380aa3d04",
+              "project_root": "/Users/jasen/dev/codex",
+              "indexed_at": "2026-03-23T04:49:29Z",
+              "git_head": "85065ea1b83d86220c905b00ca9c9597f623957e",
+              "code_file_count": 2313,
+              "doc_file_count": 948,
+              "code_chunk_count": 11474,
+              "doc_chunk_count": 1593
+            }
+          },
+          "attempt_count": 1
+        }
+      ]
+    }
+  ],
+  "generated_at": "2026-03-23T04:49:31.849041+00:00",
+  "manifest": "/Users/jasen/dev/vibe-rag/evals/core_repos.toml",
+  "embedding_provider": "voyage",
+  "embedding_model": "voyage-code-3",
+  "code_embedding_model": "",
+  "summary": {
+    "ok": true,
+    "repo_total": 5,
+    "passed_repo_total": 5,
+    "failed_repo_total": 0,
+    "task_total": 14,
+    "passed_task_total": 14,
+    "failed_task_total": 0,
+    "fallback_task_total": 2,
+    "noisy_task_total": 0,
+    "irrelevant_code_total": 0,
+    "irrelevant_docs_total": 0,
+    "total_index_seconds": 211.6,
+    "repos": [
+      {
+        "name": "vibe-rag",
+        "path": "/Users/jasen/dev/vibe-rag",
+        "ok": true,
+        "index_seconds": 5.9,
+        "task_total": 3,
+        "passed_task_total": 3,
+        "failed_task_total": 0,
+        "fallback_task_total": 0,
+        "noisy_task_total": 0,
+        "irrelevant_code_total": 0,
+        "irrelevant_docs_total": 0,
+        "passed_queries": [
+          "release automation github workflow publish tag",
+          "release procedure and maintainer steps for changelog publish tag workflow",
+          "session bootstrap hook for codex and mcp startup"
+        ],
+        "failed_queries": [],
+        "fallback_queries": []
+      },
+      {
+        "name": "mistral-vibe",
+        "path": "/Users/jasen/dev/mistral-vibe",
+        "ok": true,
+        "index_seconds": 21.4,
+        "task_total": 2,
+        "passed_task_total": 2,
+        "failed_task_total": 0,
+        "fallback_task_total": 1,
+        "noisy_task_total": 0,
+        "irrelevant_code_total": 0,
+        "irrelevant_docs_total": 0,
+        "passed_queries": [
+          "background mcp hook acp session bootstrap trusted folder config",
+          "session logging and session loading behavior"
+        ],
+        "failed_queries": [],
+        "fallback_queries": [
+          "session logging and session loading behavior"
+        ]
+      },
+      {
+        "name": "fda-platform",
+        "path": "/Users/jasen/dev/fda-platform",
+        "ok": true,
+        "index_seconds": 16.2,
+        "task_total": 3,
+        "passed_task_total": 3,
+        "failed_task_total": 0,
+        "fallback_task_total": 0,
+        "noisy_task_total": 0,
+        "irrelevant_code_total": 0,
+        "irrelevant_docs_total": 0,
+        "passed_queries": [
+          "backend api auth letters analytics engines billing health endpoints",
+          "warning letter scrape parse classify enrich 483 observation pipeline",
+          "mcp tools server typescript route integrations and available tool docs"
+        ],
+        "failed_queries": [],
+        "fallback_queries": []
+      },
+      {
+        "name": "agent-os",
+        "path": "/Users/jasen/dev/agent-os",
+        "ok": true,
+        "index_seconds": 10.3,
+        "task_total": 3,
+        "passed_task_total": 3,
+        "failed_task_total": 0,
+        "fallback_task_total": 0,
+        "noisy_task_total": 0,
+        "irrelevant_code_total": 0,
+        "irrelevant_docs_total": 0,
+        "passed_queries": [
+          "magic link session auth api routes and cookie login flow",
+          "signal bus architecture immutable signals decisions and context injection",
+          "mcp server lifecycle config availability and test endpoint"
+        ],
+        "failed_queries": [],
+        "fallback_queries": []
+      },
+      {
+        "name": "codex",
+        "path": "/Users/jasen/dev/codex",
+        "ok": true,
+        "index_seconds": 157.8,
+        "task_total": 3,
+        "passed_task_total": 3,
+        "failed_task_total": 0,
+        "fallback_task_total": 1,
+        "noisy_task_total": 0,
+        "irrelevant_code_total": 0,
+        "irrelevant_docs_total": 0,
+        "passed_queries": [
+          "install build codex cli config toml mcp servers codex home",
+          "typescript sdk thread run streamed resume input images and python app server thread api",
+          "mcp server interface shell tool mcp sandbox exec policy approvals"
+        ],
+        "failed_queries": [],
+        "fallback_queries": [
+          "install build codex cli config toml mcp servers codex home"
+        ]
+      }
+    ]
+  },
+  "previous_artifact": "/Users/jasen/dev/vibe-rag/evals/results/core_repos.20260323T043745Z.json",
+  "comparison": {
+    "previous_ok": true,
+    "current_ok": true,
+    "newly_passing": [],
+    "newly_failing": [],
+    "unchanged_passing": [
+      {
+        "repo": "agent-os",
+        "query": "magic link session auth api routes and cookie login flow"
+      },
+      {
+        "repo": "agent-os",
+        "query": "mcp server lifecycle config availability and test endpoint"
+      },
+      {
+        "repo": "agent-os",
+        "query": "signal bus architecture immutable signals decisions and context injection"
+      },
+      {
+        "repo": "codex",
+        "query": "install build codex cli config toml mcp servers codex home"
+      },
+      {
+        "repo": "codex",
+        "query": "mcp server interface shell tool mcp sandbox exec policy approvals"
+      },
+      {
+        "repo": "codex",
+        "query": "typescript sdk thread run streamed resume input images and python app server thread api"
+      },
+      {
+        "repo": "fda-platform",
+        "query": "backend api auth letters analytics engines billing health endpoints"
+      },
+      {
+        "repo": "fda-platform",
+        "query": "mcp tools server typescript route integrations and available tool docs"
+      },
+      {
+        "repo": "fda-platform",
+        "query": "warning letter scrape parse classify enrich 483 observation pipeline"
+      },
+      {
+        "repo": "mistral-vibe",
+        "query": "background mcp hook acp session bootstrap trusted folder config"
+      },
+      {
+        "repo": "mistral-vibe",
+        "query": "session logging and session loading behavior"
+      },
+      {
+        "repo": "vibe-rag",
+        "query": "release automation github workflow publish tag"
+      },
+      {
+        "repo": "vibe-rag",
+        "query": "release procedure and maintainer steps for changelog publish tag workflow"
+      },
+      {
+        "repo": "vibe-rag",
+        "query": "session bootstrap hook for codex and mcp startup"
+      }
+    ],
+    "unchanged_failing": [],
+    "new_tasks": [],
+    "removed_tasks": [],
+    "counts": {
+      "newly_passing": 0,
+      "newly_failing": 0,
+      "unchanged_passing": 14,
+      "unchanged_failing": 0,
+      "new_tasks": 0,
+      "removed_tasks": 0
+    }
+  }
+}

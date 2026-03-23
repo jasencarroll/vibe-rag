@@ -118,6 +118,18 @@ class TestCollectFiles:
         code, _ = collect_files([tmp_path])
         assert len(code) == 0
 
+    def test_skips_local_agent_config_dirs_and_files(self, tmp_path: Path):
+        codex_dir = tmp_path / ".codex"
+        codex_dir.mkdir()
+        (codex_dir / "hooks.json").write_text("{}")
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir()
+        (claude_dir / "settings.json").write_text("{}")
+        (tmp_path / ".mcp.json").write_text("{}")
+        code, docs = collect_files([tmp_path])
+        assert code == []
+        assert docs == []
+
     def test_empty_directory(self, tmp_path: Path):
         code, docs = collect_files([tmp_path])
         assert code == []
@@ -154,6 +166,11 @@ class TestShouldIncludeFile:
         venv.mkdir()
         f = venv / "lib.py"
         f.write_text("import os")
+        assert _should_include_file(f) is False
+
+    def test_skip_file_name(self, tmp_path: Path):
+        f = tmp_path / ".mcp.json"
+        f.write_text("{}")
         assert _should_include_file(f) is False
 
     def test_symlink_rejected(self, tmp_path: Path):

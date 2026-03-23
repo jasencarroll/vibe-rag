@@ -68,8 +68,10 @@ vibe-rag --version
 Pinned release:
 
 ```bash
-uv tool install vibe-rag@0.0.19
+uv tool install vibe-rag@0.0.20
 ```
+
+CI runs `pytest` and `uv build` on pushes and pull requests, and the `Release` workflow can perform the version bump, changelog promotion, commit, push, and GitHub release creation from `main`.
 
 If your machine defaults `uv` tools to Python 3.13:
 
@@ -229,6 +231,69 @@ uv run python scripts/run_retrieval_eval.py evals/local_repos.toml
 ```
 
 The runner uses temporary sqlite DBs so it does not overwrite a repo's normal `.vibe/index.db`.
+
+To inspect the latest saved artifact for a manifest without rerunning embeddings:
+
+```bash
+uv run python scripts/run_retrieval_eval.py evals/local_repos.toml --summary
+```
+
+To inspect trends across the latest matching artifacts for a manifest:
+
+```bash
+uv run python scripts/run_retrieval_eval.py evals/core_repos.toml --trends --trend-limit 5
+```
+
+To snapshot the maintainer repo's real persistent memory and inspect its own trend line:
+
+```bash
+uv run python scripts/run_retrieval_eval.py --persistent-memory --repo-path .
+uv run python scripts/run_retrieval_eval.py --persistent-memory-summary --repo-path .
+uv run python scripts/run_retrieval_eval.py --persistent-memory-trends --repo-path . --trend-limit 5
+```
+
+To render a compact release-evidence report from the latest retrieval and persistent-memory artifacts:
+
+```bash
+uv run python scripts/run_retrieval_eval.py evals/core_repos.toml --release-evidence --repo-path . --trend-limit 3
+```
+
+Current artifact summaries include:
+
+- per-repo index timing
+- fallback query counts
+- irrelevant-hit noise counts
+- per-repo memory cleanup and duplicate-auto-memory totals
+- stale/current artifact status against live git `HEAD`
+
+Trend summaries additionally show retrieval, fallback, noise, index-time, and memory-quality drift across the selected artifact window.
+Persistent-memory snapshots use the real repo and user DB instead of the eval runner's temporary sqlite DBs, so they capture maintainer-memory drift over time.
+
+For memory hygiene and provenance mix in the current repo, call the MCP tool:
+
+```text
+memory_quality_report
+```
+
+To preview or prune duplicate auto-captured memories:
+
+```text
+cleanup_duplicate_auto_memories
+cleanup_duplicate_auto_memories apply=true
+```
+
+It reports:
+
+- total/current/stale/superseded memories
+- memory kind and capture kind mix
+- source DB and source type mix
+- duplicate auto-memory groups
+- cleanup-reason totals, recommended actions, and top cleanup candidates
+
+The test suite also now includes scenario-based memory usefulness evals, so `load_session_context()` is covered for real later-task memory retrieval, not just storage and cleanup behavior.
+
+Auto-captured session memory is also more selective at write time now: transient status updates and non-novel restatements are skipped before they become durable memory.
+When a one-turn auto capture is worth keeping, `vibe-rag` now infers a stronger memory kind such as `decision`, `constraint`, `todo`, or `fact` instead of defaulting everything to `summary`, and it can suggest superseding a nearby existing memory when the new capture looks like an update.
 
 ## Docs
 

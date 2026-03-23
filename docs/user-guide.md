@@ -83,6 +83,41 @@ Bootstrap results now include:
 - provenance for memory, code, and docs hits
 - index staleness warnings when git head or indexed files drift
 - stronger bias toward structured memory kinds like `decision`, `constraint`, `summary`, and `todo`
+- down-ranking for low-signal auto session summaries when stronger memory exists
+
+For memory hygiene inspection:
+
+```text
+memory_quality_report
+```
+
+Useful things to watch there:
+
+- stale or cross-project user memories
+- superseded memory accumulation
+- too many freeform notes
+- duplicate auto-captured session probes
+- low-signal auto session summaries that should be cleaned up or superseded
+
+Very low-signal auto session summaries such as one-turn greetings are now skipped during capture instead of being stored and cleaned up later.
+
+If you want to preview or prune repeated auto-captured session probes, use:
+
+```text
+cleanup_duplicate_auto_memories
+cleanup_duplicate_auto_memories apply=true
+```
+
+Memory usefulness is also now covered by scenario tests around `load_session_context()`, including structured decision retrieval, todo/constraint recall, supersession, and non-interference from low-signal auto memories.
+
+For longer-running eval work, the retrieval eval runner can now summarize cross-artifact trends so you can track fallback usage, noise, index timing, and memory cleanup pressure over time instead of inspecting one JSON file at a time.
+
+Auto-captured session memories also go through a write-time durability/novelty gate now, so transient status chatter and repetitive restatements are more likely to be skipped instead of stored and cleaned up later.
+
+If you want the same style of evidence for the maintainer repo's real persistent memory, use the `--persistent-memory`, `--persistent-memory-summary`, and `--persistent-memory-trends` modes in the eval runner. Those snapshots track the actual repo/user memory state over time rather than the eval runner's temporary DBs.
+For release prep, `--release-evidence` combines the latest retrieval snapshot, retrieval trends, persistent-memory snapshot, and persistent-memory trends into one compact report.
+
+One-turn auto session captures now infer stronger kinds such as `decision`, `constraint`, `todo`, or `fact` when the content supports it, and the save result can include a merge/supersede suggestion when the new capture looks like an update to an existing memory.
 
 ## Other Clients
 
