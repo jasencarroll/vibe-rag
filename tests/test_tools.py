@@ -26,6 +26,7 @@ from vibe_rag.tools import (
     search_docs,
     search_memory,
     supersede_memory,
+    update_memory,
 )
 
 
@@ -2437,3 +2438,183 @@ def test_index_project_detects_changed_file(tmp_db, mock_embedder, tmp_path: Pat
         assert "0 unchanged" in result2["summary"]  # changed file should not be skipped
     finally:
         os.chdir(old_cwd)
+
+
+# --- Unified remember: scope tests ---
+
+
+def test_remember_scope_user_writes_to_user_db(tmp_db, mock_embedder):
+    import vibe_rag.server as srv
+
+    result = remember("cross-project pattern: always use UTC timestamps", scope="user")
+    assert result["ok"] is True
+    assert result["backend"] == "user-sqlite"
+    assert result["memory"]["source_db"] == "user"
+
+    # Verify it's in user DB
+    user_db = srv._get_user_db()
+    mem = user_db.get_memory(result["memory"]["id"])
+    assert mem is not None
+    assert "UTC" in mem["content"]
+
+
+def test_remember_scope_project_is_default(tmp_db, mock_embedder):
+    result = remember("project-specific fact")
+    assert result["ok"] is True
+    assert result["backend"] == "project-sqlite"
+    assert result["memory"]["source_db"] == "project"
+
+
+def test_remember_scope_invalid_returns_error(tmp_db, mock_embedder):
+    result = remember("some content", scope="global")
+    assert result["ok"] is False
+    assert "scope" in result["error"]["message"]
+
+
+def test_remember_structured_via_summary_kwarg(tmp_db, mock_embedder):
+    result = remember(
+        content="",
+        summary="gateway validates tokens",
+        details="JWT tokens are validated at the gateway.",
+        memory_kind="decision",
+        tags="auth",
+    )
+    assert result["ok"] is True
+    assert result["memory"]["summary"] == "gateway validates tokens"
+    assert result["memory"]["memory_kind"] == "decision"
+    assert result["memory"]["metadata"]["capture_kind"] == "manual"
+
+
+def test_remember_structured_user_scope(tmp_db, mock_embedder):
+    import vibe_rag.server as srv
+
+    result = remember(
+        content="",
+        summary="personal preference: dark mode",
+        memory_kind="note",
+        scope="user",
+    )
+    assert result["ok"] is True
+    assert result["backend"] == "user-sqlite"
+    user_mem = srv._get_user_db().get_memory(result["memory"]["id"])
+    assert user_mem is not None
+
+
+def test_remember_structured_compat_wrapper(tmp_db, mock_embedder):
+    """The old remember_structured function still works as a compatibility wrapper."""
+    result = remember_structured(
+        summary="compat test",
+        memory_kind="fact",
+    )
+    assert result["ok"] is True
+    assert result["memory"]["summary"] == "compat test"
+    assert result["memory"]["memory_kind"] == "fact"
+    assert result["memory"]["metadata"]["capture_kind"] == "manual"
+
+
+# --- update_memory tests ---
+
+
+def test_update_memory_changes_content(tmp_db, mock_embedder):
+    create = remember("original content", tags="v1")
+    assert create["ok"] is True
+    mid = create["memory"]["id"]
+
+    result = update_memory(memory_id=str(mid), content="updated content")
+    assert result["ok"] is True
+    assert result["memory"]["content"] == "updated content"
+    assert "updated content" in result["memory"]["summary"]
+
+
+def test_update_memory_changes_tags(tmp_db, mock_embedder):
+    create = remember("tagged memory", tags="old")
+    mid = create["memory"]["id"]
+
+    result = update_memory(memory_id=str(mid), tags="new,shiny")
+    assert result["ok"] is True
+    assert result["memory"]["tags"] == ["new", "shiny"]
+
+
+def test_update_memory_changes_kind(tmp_db, mock_embedder):
+    create = remember("some fact", tags="info")
+    mid = create["memory"]["id"]
+
+    result = update_memory(memory_id=str(mid), memory_kind="decision")
+    assert result["ok"] is True
+    assert result["memory"]["memory_kind"] == "decision"
+
+
+def test_update_memory_changes_summary_and_details(tmp_db, mock_embedder):
+    create = remember(
+        content="",
+        summary="original summary",
+        details="original details",
+        memory_kind="decision",
+    )
+    mid = create["memory"]["id"]
+
+    result = update_memory(memory_id=str(mid), summary="new summary", details="new details")
+    assert result["ok"] is True
+    assert result["memory"]["summary"] == "new summary"
+    assert "new summary" in result["memory"]["content"]
+    assert "new details" in result["memory"]["content"]
+
+
+def test_update_memory_not_found(tmp_db, mock_embedder):
+    result = update_memory(memory_id="999", content="nope")
+    assert result["ok"] is False
+    assert "not found" in result["error"]["message"]
+
+
+def test_update_memory_invalid_id(tmp_db, mock_embedder):
+    result = update_memory(memory_id="abc", content="nope")
+    assert result["ok"] is False
+    assert result["error"]["code"] == "invalid_memory_id"
+
+
+def test_update_memory_with_source_prefix(tmp_db, mock_embedder):
+    create = remember("project memory")
+    mid = create["memory"]["id"]
+
+    result = update_memory(memory_id=f"project:{mid}", content="revised project memory")
+    assert result["ok"] is True
+    assert result["memory"]["content"] == "revised project memory"
+
+
+def test_update_memory_user_db(tmp_db, mock_embedder):
+    import vibe_rag.server as srv
+
+    create = remember("user-scope memory", scope="user")
+    mid = create["memory"]["id"]
+
+    result = update_memory(memory_id=f"user:{mid}", content="revised user memory")
+    assert result["ok"] is True
+    assert result["backend"] == "user-sqlite"
+    assert result["memory"]["content"] == "revised user memory"
+
+    user_mem = srv._get_user_db().get_memory(mid)
+    assert user_mem["content"] == "revised user memory"
+
+
+def test_update_memory_merges_metadata(tmp_db, mock_embedder):
+    create = remember(
+        content="",
+        summary="meta test",
+        memory_kind="fact",
+        metadata={"confidence": "high"},
+    )
+    mid = create["memory"]["id"]
+
+    result = update_memory(memory_id=str(mid), metadata={"reviewed": True})
+    assert result["ok"] is True
+    assert result["memory"]["metadata"]["confidence"] == "high"
+    assert result["memory"]["metadata"]["reviewed"] is True
+
+
+def test_update_memory_invalid_kind(tmp_db, mock_embedder):
+    create = remember("some content")
+    mid = create["memory"]["id"]
+
+    result = update_memory(memory_id=str(mid), memory_kind="bogus")
+    assert result["ok"] is False
+    assert result["error"]["code"] == "invalid_memory_kind"

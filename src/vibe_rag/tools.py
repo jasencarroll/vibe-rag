@@ -2172,12 +2172,72 @@ def search_docs(query: str, limit: int = 10) -> dict:
 
 
 @mcp.tool()
-def remember(content: str, tags: str = "") -> dict:
-    """Store durable project memory. Do not store secrets."""
+def remember(
+    content: str,
+    summary: str = "",
+    details: str = "",
+    memory_kind: MemoryKind = "",  # type: ignore[assignment]  # empty = auto-infer
+    tags: str = "",
+    scope: str = "project",
+    source_session_id: str = "",
+    source_message_id: str = "",
+    metadata: dict | None = None,
+) -> dict:
+    """Store a durable memory. Pass just content for quick notes, or summary+details+memory_kind for structured memories. Use scope='user' for cross-project knowledge."""
+    if scope not in ("project", "user"):
+        return _failure("invalid_scope", "scope must be 'project' or 'user'")
+
+    # --- Structured path: summary is provided ---
+    if summary.strip():
+        error = _validate_memory_content(summary)
+        if error:
+            return _failure_from_error(error)
+        details_error = _validate_memory_content(details) if details else None
+        if details_error:
+            return _failure_from_error(details_error)
+        tags_error = _validate_tags(tags)
+        if tags_error:
+            return _failure_from_error(tags_error)
+        resolved_kind = memory_kind if memory_kind else "decision"
+        kind_error = _validate_memory_kind(resolved_kind)
+        if kind_error:
+            return _failure_from_error(kind_error)
+
+        body = summary if not details else f"{summary}\n\n{details}"
+        try:
+            embeddings = _get_embedder().embed_text_sync([body])
+        except RuntimeError as e:
+            return _failure("embedding_failed", f"embedding failed: {e}")
+
+        db = _get_db() if scope == "project" else _get_user_db()
+        source_db_label: SourceDB = "project" if scope == "project" else "user"
+        mid = db.remember_structured(
+            summary=summary,
+            content=body,
+            embedding=embeddings[0],
+            tags=tags,
+            project_id=_ensure_project_id(),
+            memory_kind=resolved_kind,
+            metadata={"capture_kind": "manual", **(metadata or {})},
+            source_session_id=source_session_id or None,
+            source_message_id=source_message_id or None,
+        )
+        stored = db.get_memory(mid)
+        return _success(
+            backend=f"{source_db_label}-sqlite",
+            memory=_memory_payload(
+                _with_source_db(
+                    stored or {"id": mid, "summary": summary, "content": body},
+                    source_db_label,
+                ),
+                current_project_id=_ensure_project_id(),
+            ),
+        )
+
+    # --- Freeform path: content only ---
     error = _validate_memory_content(content)
     if error:
         return _failure_from_error(error)
-
     tags_error = _validate_tags(tags)
     if tags_error:
         return _failure_from_error(tags_error)
@@ -2188,32 +2248,40 @@ def remember(content: str, tags: str = "") -> dict:
         return _failure("embedding_failed", f"embedding failed: {e}")
 
     inferred_kind = _infer_auto_memory_kind("", content, content)
-    memory_kind = inferred_kind if inferred_kind != "summary" else "note"
+    resolved_kind = inferred_kind if inferred_kind != "summary" else "note"
+    if memory_kind:
+        kind_error = _validate_memory_kind(memory_kind)
+        if kind_error:
+            return _failure_from_error(kind_error)
+        resolved_kind = memory_kind
 
-    db = _get_db()
-    memory_id = db.remember_structured(
+    db = _get_db() if scope == "project" else _get_user_db()
+    source_db_label = "project" if scope == "project" else "user"
+    mid = db.remember_structured(
         summary=_truncate(_single_line(content), 200),
         content=content,
         embedding=embeddings[0],
         tags=tags,
         project_id=_ensure_project_id(),
-        memory_kind=memory_kind,
-        metadata={"capture_kind": "freeform"},
+        memory_kind=resolved_kind,
+        metadata={"capture_kind": "freeform", **(metadata or {})},
+        source_session_id=source_session_id or None,
+        source_message_id=source_message_id or None,
     )
-    stored = db.get_memory(memory_id)
+    stored = db.get_memory(mid)
     return _success(
-        backend="project-sqlite",
+        backend=f"{source_db_label}-sqlite",
         memory=_memory_payload(
             _with_source_db(
                 stored
                 or {
-                    "id": memory_id,
+                    "id": mid,
                     "summary": _truncate(_single_line(content), 200),
                     "content": content,
-                    "memory_kind": memory_kind,
+                    "memory_kind": resolved_kind,
                     "metadata": {"capture_kind": "freeform"},
                 },
-                "project",
+                source_db_label,
             ),
             current_project_id=_ensure_project_id(),
         ),
@@ -2321,7 +2389,6 @@ def load_session_context(
     return payload
 
 
-@mcp.tool()
 def remember_structured(
     summary: str,
     details: str = "",
@@ -2331,46 +2398,137 @@ def remember_structured(
     source_message_id: str = "",
     metadata: dict | None = None,
 ) -> dict:
-    """Store a structured durable memory for later automatic retrieval."""
-    error = _validate_memory_content(summary)
-    if error:
-        return _failure_from_error(error)
-    details_error = _validate_memory_content(details) if details else None
-    if details_error:
-        return _failure_from_error(details_error)
-    tags_error = _validate_tags(tags)
-    if tags_error:
-        return _failure_from_error(tags_error)
-    kind_error = _validate_memory_kind(memory_kind)
-    if kind_error:
-        return _failure_from_error(kind_error)
-
-    content = summary if not details else f"{summary}\n\n{details}"
-    try:
-        embeddings = _get_embedder().embed_text_sync([content])
-    except RuntimeError as e:
-        return _failure("embedding_failed", f"embedding failed: {e}")
-
-    db = _get_db()
-    memory_id = db.remember_structured(
+    """Compatibility wrapper — delegates to the unified ``remember`` tool."""
+    return remember(
+        content="",
         summary=summary,
-        content=content,
-        embedding=embeddings[0],
-        tags=tags,
-        project_id=_ensure_project_id(),
+        details=details,
         memory_kind=memory_kind,
-        metadata={"capture_kind": "manual", **(metadata or {})},
-        source_session_id=source_session_id or None,
-        source_message_id=source_message_id or None,
+        tags=tags,
+        scope="project",
+        source_session_id=source_session_id,
+        source_message_id=source_message_id,
+        metadata=metadata,
     )
-    stored = db.get_memory(memory_id)
+
+
+@mcp.tool()
+def update_memory(
+    memory_id: str,
+    content: str = "",
+    summary: str = "",
+    details: str = "",
+    memory_kind: MemoryKind = "",  # type: ignore[assignment]  # empty = unchanged
+    tags: str = "",
+    metadata: dict | None = None,
+) -> dict:
+    """Update an existing memory in place. Only provided fields are changed."""
+    parsed = _parse_memory_locator(
+        memory_id,
+        error_code="invalid_memory_id",
+        error_field="memory_id",
+        error_message="memory_id must be an integer, optionally prefixed with 'project:' or 'user:'",
+    )
+    if isinstance(parsed, dict):
+        return _failure_from_error(parsed)
+    source_db, sqlite_id = parsed
+
+    # Resolve DB
+    if source_db == "user":
+        db = _get_user_db()
+        source_db_label: SourceDB = "user"
+    elif source_db == "project":
+        db = _get_db()
+        source_db_label = "project"
+    else:
+        # Default to project, fall back to user
+        db = _get_db()
+        source_db_label = "project"
+        existing = db.get_memory(sqlite_id)
+        if not existing:
+            db = _get_user_db()
+            source_db_label = "user"
+
+    existing = db.get_memory(sqlite_id)
+    if not existing:
+        return _failure("memory_not_found", f"memory {sqlite_id} not found")
+
+    # Validate non-empty fields
+    new_content = content if content.strip() else None
+    new_summary = summary if summary.strip() else None
+    new_details = details if details.strip() else None
+    new_tags = tags if tags else None
+    new_kind = memory_kind if memory_kind else None
+    new_metadata = metadata
+
+    if new_content:
+        error = _validate_memory_content(new_content)
+        if error:
+            return _failure_from_error(error)
+    if new_summary:
+        error = _validate_memory_content(new_summary)
+        if error:
+            return _failure_from_error(error)
+    if new_details:
+        error = _validate_memory_content(new_details)
+        if error:
+            return _failure_from_error(error)
+    if new_tags:
+        tags_error = _validate_tags(new_tags)
+        if tags_error:
+            return _failure_from_error(tags_error)
+    if new_kind:
+        kind_error = _validate_memory_kind(new_kind)
+        if kind_error:
+            return _failure_from_error(kind_error)
+
+    # Build the final content for embedding when text fields change
+    needs_reembed = bool(new_content or new_summary or new_details)
+    embedding: list[float] | None = None
+    # Determine effective content for DB update
+    db_content: str | None = None
+    db_summary: str | None = new_summary
+
+    if new_content:
+        # Freeform-style update: content drives the body
+        db_content = new_content
+        if not db_summary:
+            db_summary = _truncate(_single_line(new_content), 200)
+    elif new_summary or new_details:
+        # Structured-style: rebuild content from summary + details
+        eff_summary = new_summary or existing.get("summary") or ""
+        eff_details = new_details or ""
+        db_content = eff_summary if not eff_details else f"{eff_summary}\n\n{eff_details}"
+
+    if needs_reembed:
+        embed_text = db_content or existing.get("content", "")
+        try:
+            embeddings = _get_embedder().embed_text_sync([embed_text])
+            embedding = embeddings[0]
+        except RuntimeError as e:
+            return _failure("embedding_failed", f"embedding failed: {e}")
+
+    # Merge metadata
+    final_metadata: dict | None = None
+    if new_metadata is not None:
+        old_meta = existing.get("metadata") or {}
+        final_metadata = {**old_meta, **new_metadata}
+
+    db.update_memory(
+        sqlite_id,
+        embedding=embedding,
+        content=db_content,
+        summary=db_summary,
+        tags=new_tags,
+        memory_kind=new_kind,
+        metadata=final_metadata,
+    )
+
+    updated = db.get_memory(sqlite_id)
     return _success(
-        backend="project-sqlite",
+        backend=f"{source_db_label}-sqlite",
         memory=_memory_payload(
-            _with_source_db(
-                stored or {"id": memory_id, "summary": summary, "content": content},
-                "project",
-            ),
+            _with_source_db(updated or existing, source_db_label),
             current_project_id=_ensure_project_id(),
         ),
     )

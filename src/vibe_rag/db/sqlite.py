@@ -481,6 +481,67 @@ class SqliteVecDB:
             results.append(self._row_to_memory(row))
         return results
 
+    def update_memory(
+        self,
+        memory_id: int,
+        embedding: list[float] | None = None,
+        content: str | None = None,
+        summary: str | None = None,
+        tags: str | None = None,
+        memory_kind: str | None = None,
+        metadata: dict | None = None,
+        source_session_id: str | None = ...,  # type: ignore[assignment]
+        source_message_id: str | None = ...,  # type: ignore[assignment]
+    ) -> bool:
+        """Update an existing memory in place. Only non-sentinel fields are changed."""
+        conn = self._get_conn()
+        row = conn.execute("SELECT id FROM memories WHERE id = ?", (memory_id,)).fetchone()
+        if not row:
+            return False
+
+        sets: list[str] = []
+        params: list[object] = []
+
+        if content is not None:
+            sets.append("content = ?")
+            params.append(content)
+        if summary is not None:
+            sets.append("summary = ?")
+            params.append(summary)
+        if tags is not None:
+            sets.append("tags = ?")
+            params.append(tags)
+        if memory_kind is not None:
+            sets.append("memory_kind = ?")
+            params.append(memory_kind)
+        if metadata is not None:
+            sets.append("metadata_json = ?")
+            params.append(json.dumps(metadata))
+        if source_session_id is not ...:
+            sets.append("source_session_id = ?")
+            params.append(source_session_id)
+        if source_message_id is not ...:
+            sets.append("source_message_id = ?")
+            params.append(source_message_id)
+
+        if sets:
+            sets.append("updated_at = datetime('now')")
+            params.append(memory_id)
+            conn.execute(
+                f"UPDATE memories SET {', '.join(sets)} WHERE id = ?",
+                params,
+            )
+
+        if embedding is not None:
+            conn.execute("DELETE FROM memories_vec WHERE id = ?", (memory_id,))
+            conn.execute(
+                "INSERT INTO memories_vec (id, embedding) VALUES (?, ?)",
+                (memory_id, sqlite_vec.serialize_float32(embedding)),
+            )
+
+        conn.commit()
+        return True
+
     # --- Docs ---
 
     def upsert_docs(self, chunks: list[DocChunk], embeddings: list[list[float]]) -> None:
