@@ -143,7 +143,7 @@ def test_memory_eval_superseded_memory_stays_out_of_the_way(tmp_db):
         srv._project_id = old_project_id
 
     summaries = _memory_summaries(payload)
-    assert payload["memories"][0]["provenance"]["is_superseded"] is False
+    assert payload["memories"][0]["is_superseded"] is False
     assert "Gateway validates API tokens" in payload["memories"][0]["content"]
     assert summaries.count("auth decision") == 1
 
@@ -178,7 +178,7 @@ def test_memory_eval_current_project_memory_beats_cross_project_memory(tmp_db):
         srv._project_id = old_project_id
 
     assert payload["memories"][0]["provenance"]["is_current_project"] is True
-    assert payload["memories"][0]["provenance"]["is_stale"] is False
+    assert payload["memories"][0]["is_stale"] is False
     assert len(payload["memories"]) == 1
 
 

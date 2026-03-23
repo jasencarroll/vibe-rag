@@ -7,7 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "vibe-rag hook-session-start --format claude"
+            "command": "scripts/run-vibe-rag hook-session-start --format claude"
           }
         ]
       }

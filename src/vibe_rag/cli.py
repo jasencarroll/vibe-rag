@@ -324,7 +324,6 @@ def init(name: str | None):
     # AGENTS.md
     shutil.copy2(templates_dir / "AGENTS.md", target / "AGENTS.md")
 
-    vibe_rag_bin = shutil.which("vibe-rag") or "vibe-rag"
     bundle_mappings = {
         "vibe": ".vibe",
         "codex": ".codex",
@@ -341,17 +340,23 @@ def init(name: str | None):
     if mcp_json_template.exists():
         shutil.copy2(mcp_json_template, target / ".mcp.json")
 
-    _replace_placeholder_in_files(_generated_config_files(target), "__VIBE_RAG_BIN__", vibe_rag_bin)
     _initialize_git_repo(target)
 
     # .gitignore
     gitignore = target / ".gitignore"
+    ignore_lines = [
+        ".vibe/index.db",
+        ".vibe/index.db-shm",
+        ".vibe/index.db-wal",
+        ".vibe/backups/",
+    ]
     if gitignore.exists():
         text = gitignore.read_text()
-        if ".vibe/index.db" not in text:
-            gitignore.write_text(text.rstrip() + "\n.vibe/index.db\n")
+        additions = [line for line in ignore_lines if line not in text]
+        if additions:
+            gitignore.write_text(text.rstrip() + "\n" + "\n".join(additions) + "\n")
     else:
-        gitignore.write_text(".vibe/index.db\n")
+        gitignore.write_text("\n".join(ignore_lines) + "\n")
 
     click.echo(f"\n  ✓ {name} created at {target}\n")
     click.echo(f"    AGENTS.md          — project coding rules")
@@ -370,29 +375,6 @@ def init(name: str | None):
     click.echo(f"\n  Next:")
     click.echo(f"    cd {target}")
     click.echo(f"    vibe")
-
-
-def _generated_config_files(root: Path) -> list[Path]:
-    files: list[Path] = []
-    for relative_dir in (".vibe", ".codex", ".claude", ".gemini"):
-        config_dir = root / relative_dir
-        if not config_dir.exists():
-            continue
-        files.extend(path for path in config_dir.rglob("*") if path.is_file())
-
-    mcp_json = root / ".mcp.json"
-    if mcp_json.exists():
-        files.append(mcp_json)
-
-    return files
-
-
-def _replace_placeholder_in_files(paths: list[Path], placeholder: str, value: str) -> None:
-    for path in paths:
-        text = path.read_text()
-        if placeholder in text:
-            path.write_text(text.replace(placeholder, value))
-
 
 def _initialize_git_repo(target: Path) -> None:
     if (target / ".git").exists():
@@ -449,7 +431,12 @@ def reindex(paths: tuple[str, ...]):
 
     target_paths: list[str] | str = list(paths) if paths else "."
     click.echo()
-    click.echo(index_project(target_paths))
+    result = index_project(target_paths)
+    if result.get("ok"):
+        click.echo(result.get("summary") or "Index complete")
+    else:
+        error = result.get("error") or {}
+        click.echo(f"Error: {error.get('message') or 'indexing failed'}")
     click.echo()
 
 

@@ -63,3 +63,20 @@ def test_initialize_respects_custom_dimensions(tmp_path: Path):
     db.upsert_chunks(chunks, embeddings)
     results = db.search([0.1] * 1024, limit=5)
     assert len(results) == 1
+
+
+def test_upsert_chunks_rejects_embedding_count_mismatch(db):
+    chunks = [{"file_path": "src/main.py", "chunk_index": 0, "content": "def hello(): pass",
+               "language": "python", "symbol": "hello", "start_line": 1, "end_line": 1}]
+
+    with pytest.raises(RuntimeError, match="Embedding count mismatch"):
+        db.upsert_chunks(chunks, [])
+
+
+def test_get_setting_json_status_reports_invalid_json(db):
+    db.set_setting("project_index_metadata", "{not-json")
+
+    parsed, error = db.get_setting_json_status("project_index_metadata")
+
+    assert parsed is None
+    assert "invalid JSON" in error

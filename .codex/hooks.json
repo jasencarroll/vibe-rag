@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "vibe-rag hook-session-start --format codex",
+            "command": "scripts/run-vibe-rag hook-session-start --format codex",
             "statusMessage": "Loading vibe-rag session context",
             "timeout": 30
           }

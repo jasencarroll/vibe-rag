@@ -179,9 +179,9 @@ Success looks like:
 
 - `index this project` reports code and docs indexed
 - `vibe-rag reindex` refreshes the local `.vibe/index.db` directly from the CLI
-- `search the code for ...` returns a relevant file or snippet
-- `search docs for ...` returns a relevant text chunk
-- `remember ...` returns a memory id
+- `search the code for ...` returns structured results with `ok`, `results`, and ranking metadata
+- `search docs for ...` returns structured doc hits
+- `remember ...` returns a structured memory payload with an id
 - a fresh client session can answer from prior context
 
 ## Client Scaffolding
@@ -200,8 +200,12 @@ These files use:
 
 - `vibe-rag serve` for MCP tools
 - `vibe-rag hook-session-start --format <client>` for session-start context injection
+- `vibe-rag` on `PATH`, not an absolute binary path captured at scaffold time
 
 Generated Codex config also sets `suppress_unstable_features_warning = true`.
+
+This maintainer repo also tracks its own bootstrap files in `.vibe/`, `.codex/`, `.claude/`, and `.mcp.json`.
+Those tracked maintainer configs use `scripts/run-vibe-rag` so agents can launch the repo from source without a user-specific install path.
 
 Current support level is shown in the support table above.
 
@@ -211,6 +215,15 @@ Current support level is shown in the support table above.
 | --- | --- | --- | --- |
 | Project index | semantic code and docs retrieval in the current repo | `.vibe/index.db` | `index_project`, `search_code`, `search_docs` |
 | User memory | durable cross-session memory | `~/.vibe/memory.db` | `remember`, `search_memory`, `forget`, `load_session_context` |
+
+## MCP Tool Contract
+
+MCP tools now return structured payloads:
+
+- success: `{"ok": true, ...}`
+- failure: `{"ok": false, "error": {"code": ..., "message": ..., "details": {...}}}`
+
+Retrieval tools return machine-readable `results` arrays rather than formatted markdown strings.
 
 ## Embedding Providers
 

@@ -152,8 +152,11 @@ Those files do two things:
 
 - register `vibe-rag serve` as an MCP server for the client
 - run `vibe-rag hook-session-start --format <client>` at session start
+- rely on `vibe-rag` being available on `PATH` rather than an absolute binary path
 
 Generated Codex config also sets `suppress_unstable_features_warning = true`.
+
+For this maintainer repo specifically, the tracked `.vibe/`, `.codex/`, `.claude/`, and `.mcp.json` files use `scripts/run-vibe-rag` instead. That repo-local runner is only for the source checkout; generated repos still use `vibe-rag` directly.
 
 Current support level:
 
@@ -192,6 +195,8 @@ Expected:
 - code search returns a useful file
 - docs search returns a useful chunk
 - memory search finds what you just stored
+
+If you are calling MCP tools programmatically, expect structured responses with `ok`, `results`, and structured `error` payloads instead of freeform strings.
 
 ## 6. Check Local State
 

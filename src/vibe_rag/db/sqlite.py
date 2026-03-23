@@ -115,14 +115,20 @@ class SqliteVecDB:
         conn.commit()
 
     def get_setting_json(self, key: str) -> dict | None:
+        parsed, _ = self.get_setting_json_status(key)
+        return parsed
+
+    def get_setting_json_status(self, key: str) -> tuple[dict | None, str | None]:
         raw = self.get_setting(key)
         if raw is None:
-            return None
+            return None, None
         try:
             parsed = json.loads(raw)
         except json.JSONDecodeError:
-            return None
-        return parsed if isinstance(parsed, dict) else None
+            return None, f"setting '{key}' contains invalid JSON"
+        if not isinstance(parsed, dict):
+            return None, f"setting '{key}' must contain a JSON object"
+        return parsed, None
 
     def set_setting_json(self, key: str, value: dict) -> None:
         self.set_setting(key, json.dumps(value))
@@ -137,7 +143,9 @@ class SqliteVecDB:
             ).fetchone()
             if schema_row and schema_row["sql"]:
                 match = re.search(r"float\[(\d+)\]", schema_row["sql"])
-                existing_dimensions = int(match.group(1)) if match else 1536
+                if not match:
+                    raise RuntimeError("Unable to determine embedding dimensions from existing sqlite-vec schema")
+                existing_dimensions = int(match.group(1))
                 conn.execute(
                     "INSERT OR REPLACE INTO settings (key, value) VALUES ('embedding_dimensions', ?)",
                     (str(existing_dimensions),),
@@ -179,7 +187,30 @@ class SqliteVecDB:
 
     # --- Code chunks ---
 
+    def _decode_metadata_json(self, raw: str | None) -> dict:
+        if not raw:
+            return {}
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+
+    def _row_to_memory(self, row) -> dict:
+        result = dict(row)
+        result["metadata"] = self._decode_metadata_json(result.pop("metadata_json", None))
+        return result
+
+    def _validate_embedding_count(
+        self, items: list[dict], embeddings: list[list[float]], *, kind: str
+    ) -> None:
+        if len(items) != len(embeddings):
+            raise RuntimeError(
+                f"Embedding count mismatch for {kind}: {len(items)} items but {len(embeddings)} embeddings"
+            )
+
     def upsert_chunks(self, chunks: list[dict], embeddings: list[list[float]]) -> None:
+        self._validate_embedding_count(chunks, embeddings, kind="code chunks")
         conn = self._get_conn()
         for chunk, embedding in zip(chunks, embeddings):
             cursor = conn.execute(
@@ -292,7 +323,7 @@ class SqliteVecDB:
         metadata: dict | None = None,
         source_session_id: str | None = None,
         source_message_id: str | None = None,
-        supersedes: str | None = None,
+        supersedes: int | None = None,
     ) -> int:
         conn = self._get_conn()
         cursor = conn.execute(
@@ -323,7 +354,7 @@ class SqliteVecDB:
         if supersedes is not None:
             conn.execute(
                 "UPDATE memories SET superseded_by = ?, updated_at = datetime('now') WHERE id = ?",
-                (str(row_id), supersedes),
+                (row_id, supersedes),
             )
         conn.commit()
         return row_id
@@ -354,9 +385,7 @@ class SqliteVecDB:
         ).fetchall()
         results = []
         for row in rows:
-            result = dict(row)
-            result["metadata"] = json.loads(result.pop("metadata_json") or "{}")
-            results.append(result)
+            results.append(self._row_to_memory(row))
         return results
 
     def get_memory(self, memory_id: int) -> dict | None:
@@ -364,9 +393,7 @@ class SqliteVecDB:
         row = conn.execute("SELECT * FROM memories WHERE id = ?", (memory_id,)).fetchone()
         if not row:
             return None
-        result = dict(row)
-        result["metadata"] = json.loads(result.pop("metadata_json") or "{}")
-        return result
+        return self._row_to_memory(row)
 
     def get_memory_by_source(
         self, source_session_id: str, source_message_id: str
@@ -383,9 +410,7 @@ class SqliteVecDB:
         ).fetchone()
         if not row:
             return None
-        result = dict(row)
-        result["metadata"] = json.loads(result.pop("metadata_json") or "{}")
-        return result
+        return self._row_to_memory(row)
 
     def forget(self, memory_id: int) -> str | None:
         conn = self._get_conn()
@@ -431,14 +456,13 @@ class SqliteVecDB:
         ).fetchall()
         results = []
         for row in rows:
-            result = dict(row)
-            result["metadata"] = json.loads(result.pop("metadata_json") or "{}")
-            results.append(result)
+            results.append(self._row_to_memory(row))
         return results
 
     # --- Docs ---
 
     def upsert_docs(self, chunks: list[dict], embeddings: list[list[float]]) -> None:
+        self._validate_embedding_count(chunks, embeddings, kind="doc chunks")
         conn = self._get_conn()
         for chunk, embedding in zip(chunks, embeddings):
             cursor = conn.execute(

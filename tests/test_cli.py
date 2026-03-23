@@ -50,7 +50,7 @@ def test_cli_reindex_uses_index_project(monkeypatch):
 
     def fake_index_project(paths):
         calls["paths"] = paths
-        return "Indexed 2 files"
+        return {"ok": True, "summary": "Indexed 2 files"}
 
     monkeypatch.setattr("vibe_rag.tools.index_project", fake_index_project)
 
@@ -67,7 +67,7 @@ def test_cli_reindex_defaults_to_current_project(monkeypatch):
 
     def fake_index_project(paths):
         calls["paths"] = paths
-        return "Indexed current project"
+        return {"ok": True, "summary": "Indexed current project"}
 
     monkeypatch.setattr("vibe_rag.tools.index_project", fake_index_project)
 
@@ -342,9 +342,9 @@ def test_cli_init_does_not_persist_secrets():
         assert "top-secret-key" not in config_text
         assert "/tmp/vibe-user.db" not in config_text
         assert 'skill_paths = [".vibe/skills"]' in config_text
-        assert 'command = "/bin/zsh"' in config_text
-        assert "source ~/.zprofile" in config_text
-        assert "source ~/.zshrc" in config_text
+        assert 'command = "vibe-rag"' in config_text
+        assert "source ~/.zprofile" not in config_text
+        assert "source ~/.zshrc" not in config_text
         assert "__VIBE_RAG_BIN__" not in config_text
         assert "[background_mcp_hook]" in config_text
         assert 'tool_name = "memory_load_session_context"' in config_text
@@ -443,7 +443,7 @@ def test_cli_init_only_rewrites_generated_files(monkeypatch):
 
         assert result.exit_code == 0
         assert Path("demo/notes.txt").read_text() == "leave __VIBE_RAG_BIN__ untouched"
-        assert "/tmp/fake-bin/vibe-rag" in Path("demo/.codex/config.toml").read_text()
+        assert 'command = "vibe-rag"' in Path("demo/.codex/config.toml").read_text()
 
 
 def test_cli_init_runs_git_init_when_missing(monkeypatch):
@@ -607,3 +607,37 @@ def test_cli_hook_session_start_categorizes_failures(monkeypatch):
 
     assert result.exit_code == 0
     assert "embedding failure" in result.output
+
+
+def test_cli_hook_session_start_handles_bootstrap_exceptions(monkeypatch):
+    runner = CliRunner()
+
+    def raise_failure(**kwargs):
+        raise RuntimeError("sqlite is locked")
+
+    monkeypatch.setattr(
+        "vibe_rag.hook_bridge.load_session_context",
+        raise_failure,
+    )
+
+    result = runner.invoke(
+        main,
+        ["hook-session-start", "--format", "codex"],
+        input='{"source":"startup"}',
+    )
+
+    assert result.exit_code == 0
+    assert "sqlite is locked" in result.output
+
+
+def test_cli_hook_session_start_handles_invalid_json_input():
+    runner = CliRunner()
+
+    result = runner.invoke(
+        main,
+        ["hook-session-start", "--format", "codex"],
+        input='{"source"',
+    )
+
+    assert result.exit_code == 0
+    assert "invalid hook input" in result.output

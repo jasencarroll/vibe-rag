@@ -132,7 +132,8 @@ def test_retrieval_eval_fixtures(tmp_db, tmp_path: Path):
             srv._project_id = None
 
             index_result = index_project()
-            assert "Indexed" in index_result
+            assert index_result["ok"] is True
+            assert "Indexed" in index_result["summary"]
 
             for memory in fixture["memories"]:
                 remember_result = remember_structured(

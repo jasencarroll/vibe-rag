@@ -1,6 +1,7 @@
 from __future__ import annotations
 import atexit
 import hashlib
+import logging
 import os
 import threading
 from pathlib import Path
@@ -16,6 +17,7 @@ _user_db: SqliteVecDB | None = None
 _embedder: EmbeddingProvider | None = None
 _project_id: str | None = None
 _init_lock = threading.Lock()
+logger = logging.getLogger(__name__)
 
 
 def _embedding_dimensions() -> int:
@@ -89,9 +91,15 @@ def _ensure_project_id() -> str:
 
 def _cleanup() -> None:
     if _project_db is not None:
-        _project_db.close()
+        try:
+            _project_db.close()
+        except Exception as exc:
+            logger.warning("project DB close failed: %s", exc)
     if _user_db is not None:
-        _user_db.close()
+        try:
+            _user_db.close()
+        except Exception as exc:
+            logger.warning("user DB close failed: %s", exc)
 
 
 atexit.register(_cleanup)

@@ -117,13 +117,21 @@ def _response_for_format(target_format: str, additional_context: str, system_mes
 def render_session_start_hook(target_format: str, hook_input: dict[str, Any]) -> dict[str, Any]:
     logging.getLogger("httpx").setLevel(logging.WARNING)
 
-    payload = load_session_context(
-        task=_session_task(str(hook_input.get("source") or "startup")),
-        refresh_index=False,
-        memory_limit=2,
-        code_limit=2,
-        docs_limit=2,
-    )
+    try:
+        payload = load_session_context(
+            task=_session_task(str(hook_input.get("source") or "startup")),
+            refresh_index=False,
+            memory_limit=2,
+            code_limit=2,
+            docs_limit=2,
+        )
+    except Exception as exc:
+        error = str(exc) or "unknown error"
+        return _response_for_format(
+            target_format,
+            "vibe-rag session bootstrap did not return usable context.",
+            f"vibe-rag session hook failed ({_error_category(error)}): {error}",
+        )
 
     if not isinstance(payload, dict) or not payload.get("ok"):
         error = "unknown error"
@@ -139,5 +147,14 @@ def render_session_start_hook(target_format: str, hook_input: dict[str, Any]) ->
 
 
 def render_session_start_hook_json(target_format: str, raw_input: str) -> str:
-    hook_input = json.loads(raw_input)
+    try:
+        hook_input = json.loads(raw_input)
+    except json.JSONDecodeError as exc:
+        return json.dumps(
+            _response_for_format(
+                target_format,
+                "vibe-rag session bootstrap did not return usable context.",
+                f"vibe-rag session hook failed (unknown error): invalid hook input: {exc.msg}",
+            )
+        )
     return json.dumps(render_session_start_hook(target_format, hook_input))

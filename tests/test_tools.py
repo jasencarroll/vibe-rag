@@ -1,6 +1,9 @@
+import pytest
 from pathlib import Path
 
 from vibe_rag.tools import (
+    _embed_sync_with_progress,
+    _rrf_merge,
     _index_project_impl,
     cleanup_duplicate_auto_memories,
     forget,
@@ -20,13 +23,22 @@ from vibe_rag.tools import (
 )
 
 
+def _error_message(result):
+    return result["error"]["message"]
+
+
+def _search_paths(result):
+    return [item["file_path"] for item in result["results"]]
+
+
 def test_remember_and_search_memory(tmp_db, mock_embedder):
     result = remember("sqlite-vec is local and simple")
-    assert "Remembered in project memory" in result
-    assert "id=" in result
+    assert result["ok"] is True
+    assert result["memory"]["id"] == 1
 
     result = search_memory("what is good for vectors?")
-    assert "sqlite-vec" in result
+    assert result["ok"] is True
+    assert result["results"][0]["summary"] == "sqlite-vec is local and simple"
 
 
 def test_remember_inferrs_constraint_kind_from_freeform_content(tmp_db, mock_embedder):
@@ -39,26 +51,30 @@ def test_remember_inferrs_constraint_kind_from_freeform_content(tmp_db, mock_emb
 
 def test_forget_existing(tmp_db, mock_embedder):
     result = remember("temporary fact")
-    assert "id=1" in result
+    assert result["memory"]["id"] == 1
 
     result = forget(1)
-    assert "Deleted" in result
-    assert "temporary fact" in result
+    assert result["ok"] is True
+    assert result["deleted"] is True
+    assert result["content_preview"] == "temporary fact"
 
 
 def test_forget_nonexistent(tmp_db, mock_embedder):
     result = forget(999)
-    assert "not found" in result
+    assert result["ok"] is False
+    assert _error_message(result) == "memory 999 not found"
 
 
 def test_search_code_empty(tmp_db, mock_embedder):
     result = search_code("anything")
-    assert "No code index" in result
+    assert result["ok"] is False
+    assert result["error"]["code"] == "no_code_index"
 
 
 def test_search_docs_empty(tmp_db, mock_embedder):
     result = search_docs("anything")
-    assert "No docs indexed" in result
+    assert result["ok"] is False
+    assert result["error"]["code"] == "no_docs_index"
 
 
 def test_index_project_real_dir(tmp_db, mock_embedder, tmp_path: Path):
@@ -73,8 +89,9 @@ def test_index_project_real_dir(tmp_db, mock_embedder, tmp_path: Path):
     finally:
         os.chdir(old_cwd)
 
-    assert "1 code files" in result
-    assert "1 docs" in result
+    assert result["ok"] is True
+    assert "1 code files" in result["summary"]
+    assert "1 docs" in result["summary"]
 
 
 def test_index_project_emits_progress_events(tmp_db, mock_embedder, tmp_path: Path):
@@ -91,7 +108,8 @@ def test_index_project_emits_progress_events(tmp_db, mock_embedder, tmp_path: Pa
     finally:
         os.chdir(old_cwd)
 
-    assert "Indexed 1 code files" in result
+    assert result["ok"] is True
+    assert "Indexed 1 code files" in result["summary"]
     phases = [event["phase"] for event in events]
     assert "file_discovery_complete" in phases
     assert "code_chunking_complete" in phases
@@ -112,8 +130,9 @@ def test_index_project_accepts_relative_paths_argument(tmp_db, mock_embedder, tm
     finally:
         os.chdir(old_cwd)
 
-    assert "1 code files" in result
-    assert "1 docs" in result
+    assert result["ok"] is True
+    assert "1 code files" in result["summary"]
+    assert "1 docs" in result["summary"]
 
 
 def test_index_project_accepts_string_paths_argument(tmp_db, mock_embedder, tmp_path: Path):
@@ -130,9 +149,10 @@ def test_index_project_accepts_string_paths_argument(tmp_db, mock_embedder, tmp_
     finally:
         os.chdir(old_cwd)
 
-    assert "1 code files" in result
-    assert "1 docs" in result
-    assert "pkg/hello.py" in search_result
+    assert result["ok"] is True
+    assert "1 code files" in result["summary"]
+    assert "1 docs" in result["summary"]
+    assert "pkg/hello.py" in _search_paths(search_result)
 
 
 def test_search_code_after_index(tmp_db, mock_embedder, tmp_path: Path):
@@ -147,7 +167,7 @@ def test_search_code_after_index(tmp_db, mock_embedder, tmp_path: Path):
     finally:
         os.chdir(old_cwd)
 
-    assert "auth.py" in result
+    assert "auth.py" in _search_paths(result)
 
 
 def test_search_docs_after_index(tmp_db, mock_embedder, tmp_path: Path):
@@ -162,7 +182,7 @@ def test_search_docs_after_index(tmp_db, mock_embedder, tmp_path: Path):
     finally:
         os.chdir(old_cwd)
 
-    assert "guide.md" in result
+    assert "guide.md" in _search_paths(result)
 
 
 def test_release_docs_queries_prefer_real_docs_over_eval_noise(tmp_db, mock_embedder, tmp_path: Path):
@@ -181,8 +201,8 @@ def test_release_docs_queries_prefer_real_docs_over_eval_noise(tmp_db, mock_embe
     finally:
         os.chdir(old_cwd)
 
-    assert "README.md" in result or "CHANGELOG.md" in result
-    assert "evals/local_repos.toml" not in result
+    assert "README.md" in _search_paths(result) or "CHANGELOG.md" in _search_paths(result)
+    assert "evals/local_repos.toml" not in _search_paths(result)
 
 
 def test_release_docs_queries_can_find_changelog_with_semantic_plus_lexical(tmp_db, mock_embedder, tmp_path: Path):
@@ -199,7 +219,7 @@ def test_release_docs_queries_can_find_changelog_with_semantic_plus_lexical(tmp_
     finally:
         os.chdir(old_cwd)
 
-    assert "CHANGELOG.md" in result
+    assert "CHANGELOG.md" in _search_paths(result)
 
 
 def test_release_automation_doc_queries_prefer_changelog_over_agents(
@@ -242,8 +262,8 @@ def test_release_procedure_queries_surface_agents_and_changelog(tmp_db, mock_emb
     finally:
         os.chdir(old_cwd)
 
-    assert "AGENTS.md" in result
-    assert "CHANGELOG.md" in result
+    assert "AGENTS.md" in _search_paths(result)
+    assert "CHANGELOG.md" in _search_paths(result)
 
 
 def test_release_procedure_queries_prefer_repo_agents_over_template_agents(
@@ -359,71 +379,6 @@ def test_resume_doc_queries_prefer_readme_over_changelog(
     assert payload["docs"][0]["file_path"] == "README.md"
 
 
-def test_api_and_pipeline_doc_queries_prefer_operational_docs_over_plans(
-    tmp_db, mock_embedder, tmp_path: Path
-):
-    import os
-
-    docs_dir = tmp_path / "docs"
-    docs_dir.mkdir()
-    spec_dir = tmp_path / "spec"
-    spec_dir.mkdir()
-    (tmp_path / "CLAUDE.md").write_text("Planning and repo notes.\n")
-    (spec_dir / "05-api-routes.md").write_text("Draft route plan.\n")
-    (spec_dir / "06-pipeline.md").write_text("Draft pipeline plan.\n")
-    (docs_dir / "API.md").write_text("REST API endpoints for auth, letters, analytics, billing, and health.\n")
-    (docs_dir / "PIPELINE.md").write_text("Warning letter discover, scrape, classify, enrich, and 483 ingestion pipeline.\n")
-
-    old_cwd = os.getcwd()
-    os.chdir(tmp_path)
-    try:
-        index_project()
-        api_payload = load_session_context(
-            "backend api auth letters analytics engines billing health endpoints",
-            memory_limit=0,
-            code_limit=0,
-            docs_limit=1,
-        )
-        pipeline_payload = load_session_context(
-            "warning letter scrape parse classify enrich 483 observation pipeline",
-            memory_limit=0,
-            code_limit=0,
-            docs_limit=1,
-        )
-    finally:
-        os.chdir(old_cwd)
-
-    assert api_payload["docs"][0]["file_path"] == "docs/API.md"
-    assert pipeline_payload["docs"][0]["file_path"] == "docs/PIPELINE.md"
-
-
-def test_api_doc_queries_prefer_nested_api_docs_over_setup_docs(
-    tmp_db, mock_embedder, tmp_path: Path
-):
-    import os
-
-    docs_dir = tmp_path / "docs" / "docs"
-    docs_dir.mkdir(parents=True)
-    (docs_dir / "api.md").write_text("API auth and route reference.\n")
-    (docs_dir / "drive-setup.md").write_text("Drive setup auth guide.\n")
-    (docs_dir / "gmail-setup.md").write_text("Gmail setup auth guide.\n")
-
-    old_cwd = os.getcwd()
-    os.chdir(tmp_path)
-    try:
-        index_project()
-        payload = load_session_context(
-            "api auth send magic link me logout session validation",
-            memory_limit=0,
-            code_limit=0,
-            docs_limit=1,
-        )
-    finally:
-        os.chdir(old_cwd)
-
-    assert payload["docs"][0]["file_path"] == "docs/docs/api.md"
-
-
 def test_procedural_docs_queries_prefer_operational_docs_over_finish_line_plan(
     tmp_db, mock_embedder, tmp_path: Path
 ):
@@ -497,65 +452,70 @@ def test_release_automation_queries_surface_workflow_file(tmp_db, mock_embedder,
     finally:
         os.chdir(old_cwd)
 
-    assert ".github/workflows/publish.yml" in result
+    assert ".github/workflows/publish.yml" in _search_paths(result)
 
 
-def test_codex_config_queries_prefer_config_and_cli_surfaces(tmp_db, mock_embedder, tmp_path: Path):
-    import os
-
-    (tmp_path / "docs").mkdir()
-    (tmp_path / "docs" / "config.md").write_text("Configure CODEX_HOME and connect MCP servers in config.toml.\n")
-    (tmp_path / "codex-rs" / "config" / "src").mkdir(parents=True)
-    (tmp_path / "codex-rs" / "config" / "src" / "lib.rs").write_text(
-        "pub const CODEX_HOME: &str = \"CODEX_HOME\";\npub fn sqlite_home() {}\n// config.toml MCP servers install build\n"
+def test_rrf_merge_boosts_multi_source_hits_and_tracks_sources():
+    shared = {
+        "file_path": "shared.py",
+        "chunk_index": 0,
+        "content": "def shared():\n    return 'shared'\n",
+        "language": "python",
+        "symbol": "shared",
+        "start_line": 1,
+        "end_line": 2,
+        "indexed_at": "2026-03-23T00:00:00Z",
+    }
+    merged = _rrf_merge(
+        (
+            "vector",
+            [
+                {
+                    "file_path": "vector_only.py",
+                    "chunk_index": 0,
+                    "content": "def vector_only():\n    return 1\n",
+                    "language": "python",
+                    "symbol": "vector_only",
+                    "start_line": 1,
+                    "end_line": 2,
+                    "indexed_at": "2026-03-23T00:00:00Z",
+                    "distance": 0.1,
+                },
+                {**shared, "distance": 0.4},
+            ],
+        ),
+        (
+            "lexical",
+            [
+                {
+                    "file_path": "lexical_only.py",
+                    "chunk_index": 0,
+                    "content": "def lexical_only():\n    return 1\n",
+                    "language": "python",
+                    "symbol": "lexical_only",
+                    "start_line": 1,
+                    "end_line": 2,
+                    "indexed_at": "2026-03-23T00:00:00Z",
+                    "score": 1.0,
+                },
+                {**shared, "score": 0.5},
+            ],
+        ),
+        (
+            "workflow",
+            [
+                {**shared, "score": 1.0},
+            ],
+        ),
+        limit=5,
     )
-    (tmp_path / "codex-rs" / "cli" / "src").mkdir(parents=True)
-    (tmp_path / "codex-rs" / "cli" / "src" / "mcp_cmd.rs").write_text(
-        "pub struct McpCli;\npub fn list_servers() {}\n// config.toml mcp servers cli install build\n"
-    )
 
-    old_cwd = os.getcwd()
-    os.chdir(tmp_path)
-    try:
-        index_project()
-        result = search_code(
-            "config.toml CODEX_HOME sqlite_home mcp_cmd list_servers codex cli mcp servers",
-            limit=5,
-        )
-    finally:
-        os.chdir(old_cwd)
-
-    assert "codex-rs/config/src/lib.rs" in result or "codex-rs/cli/src/mcp_cmd.rs" in result
-
-
-def test_codex_mcp_queries_prefer_protocol_and_shell_tool_surfaces(tmp_db, mock_embedder, tmp_path: Path):
-    import os
-
-    (tmp_path / "docs").mkdir()
-    (tmp_path / "docs" / "sandbox.md").write_text("Sandbox and approvals behavior.\n")
-    (tmp_path / "codex-rs" / "protocol" / "src").mkdir(parents=True)
-    (tmp_path / "codex-rs" / "protocol" / "src" / "mcp.rs").write_text(
-        "pub enum McpMessage { Approval }\n"
-    )
-    (tmp_path / "shell-tool-mcp" / "src").mkdir(parents=True)
-    (tmp_path / "shell-tool-mcp" / "src" / "index.ts").write_text(
-        "export function startShellToolMcp() { return 'approval'; }\n"
-    )
-    (tmp_path / "codex-rs" / "app-server" / "tests" / "suite" / "v2").mkdir(parents=True)
-    (tmp_path / "codex-rs" / "app-server" / "tests" / "suite" / "v2" / "turn_start.rs").write_text(
-        "fn turn_start_approval_test() {}\n"
-    )
-
-    old_cwd = os.getcwd()
-    os.chdir(tmp_path)
-    try:
-        index_project()
-        result = search_code("mcp server interface shell tool mcp sandbox exec policy approvals", limit=4)
-    finally:
-        os.chdir(old_cwd)
-
-    assert "codex-rs/protocol/src/mcp.rs" in result or "shell-tool-mcp/src/index.ts" in result
-    assert "turn_start.rs" not in result
+    assert merged[0]["file_path"] == "shared.py"
+    assert merged[0]["match_sources"] == ["vector", "lexical", "workflow"]
+    assert merged[0]["vector_distance"] == 0.4
+    assert "score" not in merged[0]
+    assert "distance" not in merged[0]
+    assert merged[0]["rank_score"] > merged[1]["rank_score"]
 
 
 def test_load_session_context_bundles_memory_code_and_docs(tmp_db, mock_embedder, tmp_path: Path):
@@ -578,8 +538,14 @@ def test_load_session_context_bundles_memory_code_and_docs(tmp_db, mock_embedder
     assert result["memories"][0]["provenance"]["project_id"] == result["project_id"]
     assert result["code"][0]["file_path"] == "billing.py"
     assert result["code"][0]["start_line"] == 1
+    assert result["code"][0]["rank_score"] > 0
+    assert set(result["code"][0]["match_sources"]) >= {"vector", "lexical"}
+    assert "score" not in result["code"][0]
     assert result["code"][0]["provenance"]["source"] == "project-index"
     assert result["docs"][0]["file_path"] == "billing.md"
+    assert result["docs"][0]["rank_score"] > 0
+    assert set(result["docs"][0]["match_sources"]) >= {"vector", "lexical"}
+    assert "score" not in result["docs"][0]
     assert result["docs"][0]["provenance"]["source"] == "project-index"
 
 
@@ -611,7 +577,8 @@ def test_index_project_no_api_key(tmp_db, tmp_path: Path, monkeypatch):
         os.chdir(old_cwd)
         srv._embedder = old_embedder
 
-    assert "Ollama not reachable" in result
+    assert result["ok"] is False
+    assert "Ollama not reachable" in _error_message(result)
 
 
 def test_index_project_no_files(tmp_db, mock_embedder, tmp_path: Path):
@@ -624,7 +591,20 @@ def test_index_project_no_files(tmp_db, mock_embedder, tmp_path: Path):
     finally:
         os.chdir(old_cwd)
 
-    assert "No files found" in result
+    assert result["ok"] is False
+    assert _error_message(result) == "no files found to index"
+
+
+def test_embed_sync_with_progress_propagates_internal_typeerror():
+    def broken_embed(texts, *, progress_callback=None):
+        raise TypeError("internal embed bug")
+
+    with pytest.raises(TypeError, match="internal embed bug"):
+        _embed_sync_with_progress(
+            broken_embed,
+            ["hello"],
+            progress_callback=lambda event: None,
+        )
 
 
 def test_search_code_with_language_filter(tmp_db, mock_embedder, tmp_path: Path):
@@ -642,15 +622,18 @@ def test_search_code_with_language_filter(tmp_db, mock_embedder, tmp_path: Path)
         os.chdir(old_cwd)
 
     # Should return results (may or may not filter depending on chunk metadata)
-    assert isinstance(result, str)
+    assert result["ok"] is True
+    assert "app.py" in _search_paths(result)
 
 
 def test_remember_with_tags(tmp_db, mock_embedder):
     result = remember("auth uses JWT tokens", tags="architecture,security")
-    assert "Remembered" in result
+    assert result["ok"] is True
+    assert result["memory"]["tags"] == ["architecture", "security"]
 
     result = search_memory("JWT")
-    assert "JWT" in result
+    assert result["ok"] is True
+    assert "JWT" in result["results"][0]["content"]
 
 
 def test_remember_structured_returns_memory_payload(tmp_db, mock_embedder):
@@ -839,7 +822,7 @@ def test_save_session_summary_rolls_up_many_turns(tmp_db, mock_embedder):
     assert second["deduplicated"] is False
     assert second["memory"]["supersedes"] == first["memory"]["id"]
     assert second["memory"]["metadata"]["latest_message_id"] == "msg-3"
-    assert second["memory"]["provenance"]["is_superseded"] is False
+    assert second["memory"]["is_superseded"] is False
     assert "Session covered 3 turns." in second["memory"]["content"]
 
 
@@ -985,8 +968,9 @@ def test_search_memory_falls_back_to_user_memory_results(tmp_db, mock_embedder):
     finally:
         srv._project_id = old_project_id
 
-    assert "mistral-vibe" in result
-    assert "CERULEAN_PINEAPPLE_20260322" in result
+    assert result["ok"] is True
+    assert result["results"][0]["project_id"] == "mistral-vibe"
+    assert "CERULEAN_PINEAPPLE_20260322" in result["results"][0]["content"]
 
 
 def test_search_memory_filters_stale_cross_project_results_when_project_memory_exists(tmp_db, mock_embedder):
@@ -1012,9 +996,10 @@ def test_search_memory_filters_stale_cross_project_results_when_project_memory_e
     finally:
         srv._project_id = old_project_id
 
-    assert "sink-repo" in result
-    assert "source-repo" not in result
-    assert "QUARTZ_MERIDIAN_20260322_Z9" in result
+    assert result["ok"] is True
+    assert result["results"][0]["project_id"] == "sink-repo"
+    assert all(item["project_id"] != "source-repo" for item in result["results"])
+    assert "QUARTZ_MERIDIAN_20260322_Z9" in result["results"][0]["content"]
 
 
 def test_load_session_context_uses_user_memory_results(tmp_db, mock_embedder, tmp_path: Path):
@@ -1045,8 +1030,8 @@ def test_load_session_context_uses_user_memory_results(tmp_db, mock_embedder, tm
     assert result["memories"][0]["summary"] == "gateway owns auth validation"
     assert result["memories"][0]["metadata"]["source"] == "session"
     assert result["code"][0]["file_path"] == "auth.py"
-    assert result["memories"][0]["provenance"]["is_stale"] is True
-    assert "project_id_mismatch" in result["memories"][0]["provenance"]["stale_reasons"]
+    assert result["memories"][0]["is_stale"] is True
+    assert "project_id_mismatch" in result["memories"][0]["stale_reasons"]
 
 
 def test_supersede_memory_marks_replacement(tmp_db, mock_embedder):
@@ -1068,22 +1053,23 @@ def test_supersede_memory_marks_replacement(tmp_db, mock_embedder):
     )
 
     assert replacement["ok"] is True
-    assert replacement["memory"]["supersedes"] == str(first_id)
+    assert replacement["memory"]["supersedes"] == first_id
     refreshed = load_session_context("sqlite local search", memory_limit=3, code_limit=0, docs_limit=0)
     assert refreshed["memories"][0]["summary"] == "use sqlite for local search and user memory"
     assert refreshed["memories"][0]["provenance"]["source_type"] == "manual_structured"
-    assert refreshed["memories"][0]["provenance"]["is_superseded"] is False
+    assert refreshed["memories"][0]["is_superseded"] is False
 
 
 def test_remember_empty_content(tmp_db, mock_embedder):
     result = remember("")
-    assert "Error" in result
-    assert "empty" in result
+    assert result["ok"] is False
+    assert _error_message(result) == "content is empty"
 
 
 def test_search_memory_empty_db(tmp_db, mock_embedder):
     result = search_memory("anything")
-    assert "No memories" in result
+    assert result["ok"] is False
+    assert result["error"]["code"] == "no_memories"
 
 
 def test_load_session_context_reports_empty_memory(tmp_db, mock_embedder, tmp_path: Path):
@@ -1099,7 +1085,7 @@ def test_load_session_context_reports_empty_memory(tmp_db, mock_embedder, tmp_pa
     finally:
         os.chdir(old_cwd)
 
-    assert result["memory_status"] == "No memories stored yet."
+    assert result["errors"]["memory"]["code"] == "no_memories"
     assert result["docs"][0]["file_path"] == "notes.md"
 
 
@@ -1119,6 +1105,25 @@ def test_load_session_context_reports_stale_deleted_files(tmp_db, mock_embedder,
 
     assert result["stale"]["is_stale"] is True
     assert any(warning["kind"] == "indexed_files_missing" for warning in result["stale"]["warnings"])
+
+
+def test_load_session_context_reports_corrupt_index_metadata(tmp_db, mock_embedder, tmp_path: Path):
+    import os
+    import vibe_rag.server as srv
+
+    (tmp_path / "notes.md").write_text("## Notes\n\nContext.\n")
+
+    old_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        index_project()
+        srv._get_db().set_setting("project_index_metadata", "{not-json")
+        result = load_session_context("continue notes", memory_limit=0, code_limit=0, docs_limit=1)
+    finally:
+        os.chdir(old_cwd)
+
+    assert result["stale"]["is_stale"] is True
+    assert any(warning["kind"] == "index_metadata_invalid" for warning in result["stale"]["warnings"])
 
 
 def test_search_memory_prefers_structured_memory_kinds(tmp_db, mock_embedder):
@@ -1183,9 +1188,9 @@ def test_load_session_context_downranks_cross_project_user_memory(tmp_db, mock_e
     finally:
         srv._project_id = old_project_id
 
-    assert [item["id"] for item in result["memories"][:1]] == [str(current_id)]
+    assert [item["id"] for item in result["memories"][:1]] == [current_id]
     assert result["memories"][0]["provenance"]["is_current_project"] is True
-    assert result["memories"][0]["provenance"]["is_stale"] is False
+    assert result["memories"][0]["is_stale"] is False
 
 
 def test_load_session_context_filters_stale_cross_project_memory_when_current_project_hit_exists(
@@ -1266,7 +1271,9 @@ def test_memory_cleanup_report_surfaces_freeform_and_cross_project_candidates(tm
 def test_project_status_includes_memory_cleanup_candidates(tmp_db, mock_embedder):
     remember("temporary cleanup candidate")
     status = project_status()
-    assert "Memory cleanup candidates:" in status
+    assert status["ok"] is True
+    assert status["status"]["cleanup_candidates"]
+    assert status["status"]["cleanup_candidates"][0]["summary"] == "temporary cleanup candidate"
 
 
 def test_memory_quality_report_summarizes_provenance_and_cleanup(tmp_db, mock_embedder):
@@ -1384,9 +1391,10 @@ def test_project_status_includes_index_metadata(tmp_db, mock_embedder, tmp_path:
     finally:
         os.chdir(old_cwd)
 
-    assert "Project id:" in status
-    assert "Indexed at:" in status
-    assert "Stale warnings: none" in status
+    assert status["ok"] is True
+    assert status["project_id"]
+    assert status["status"]["metadata"]["metadata"]["indexed_at"]
+    assert status["status"]["stale"]["warnings"] == []
 
 
 # --- Input validation tests ---
@@ -1401,23 +1409,26 @@ def test_normalize_paths_rejects_traversal(tmp_db, mock_embedder, tmp_path):
         result = index_project(paths=["../../etc"])
     finally:
         os.chdir(old_cwd)
-    assert "outside project root" in result
+    assert result["ok"] is False
+    assert "outside project root" in _error_message(result)
 
 
 def test_search_code_empty_query(tmp_db, mock_embedder):
     result = search_code("")
-    assert "Error" in result
+    assert result["ok"] is False
+    assert result["error"]["code"] == "empty_query"
 
 
 def test_search_code_whitespace_query(tmp_db, mock_embedder):
     result = search_code("   ")
-    assert "Error" in result
+    assert result["ok"] is False
+    assert result["error"]["code"] == "empty_query"
 
 
 def test_search_code_query_too_long(tmp_db, mock_embedder):
     result = search_code("x" * 10_001)
-    assert "Error" in result
-    assert "too long" in result
+    assert result["ok"] is False
+    assert "too long" in _error_message(result)
 
 
 def test_search_code_invalid_language(tmp_db, mock_embedder, tmp_path):
@@ -1430,47 +1441,50 @@ def test_search_code_invalid_language(tmp_db, mock_embedder, tmp_path):
         result = search_code("test", language="brainfuck")
     finally:
         os.chdir(old_cwd)
-    assert "Unknown language" in result
+    assert result["ok"] is False
+    assert "unknown language" in _error_message(result)
 
 
 def test_search_docs_empty_query(tmp_db, mock_embedder):
     result = search_docs("")
-    assert "Error" in result
+    assert result["ok"] is False
+    assert result["error"]["code"] == "empty_query"
 
 
 def test_search_docs_query_too_long(tmp_db, mock_embedder):
     result = search_docs("x" * 10_001)
-    assert "Error" in result
-    assert "too long" in result
+    assert result["ok"] is False
+    assert "too long" in _error_message(result)
 
 
 def test_search_memory_empty_query(tmp_db, mock_embedder):
     result = search_memory("")
-    assert "Error" in result
+    assert result["ok"] is False
+    assert result["error"]["code"] == "empty_query"
 
 
 def test_search_memory_query_too_long(tmp_db, mock_embedder):
     result = search_memory("x" * 10_001)
-    assert "Error" in result
-    assert "too long" in result
+    assert result["ok"] is False
+    assert "too long" in _error_message(result)
 
 
 def test_remember_too_large(tmp_db, mock_embedder):
     result = remember("x" * 20_000)
-    assert "Error" in result
-    assert "too large" in result
+    assert result["ok"] is False
+    assert "too large" in _error_message(result)
 
 
 def test_remember_whitespace_only(tmp_db, mock_embedder):
     result = remember("   \n\t  ")
-    assert "Error" in result
-    assert "empty" in result
+    assert result["ok"] is False
+    assert "empty" in _error_message(result)
 
 
 def test_remember_tags_too_long(tmp_db, mock_embedder):
     result = remember("valid content", tags="x" * 600)
-    assert "Error" in result
-    assert "tags" in result
+    assert result["ok"] is False
+    assert "tags" in _error_message(result)
 
 
 # --- project_status tests ---
@@ -1478,11 +1492,12 @@ def test_remember_tags_too_long(tmp_db, mock_embedder):
 
 def test_project_status_empty(tmp_db, mock_embedder):
     result = project_status()
-    assert "Code chunks: 0" in result
-    assert "Doc chunks: 0" in result
-    assert "Project memories: 0" in result
-    assert "User memories: 0" in result
-    assert "Languages" not in result
+    assert result["ok"] is True
+    assert result["status"]["counts"]["code_chunks"] == 0
+    assert result["status"]["counts"]["doc_chunks"] == 0
+    assert result["status"]["counts"]["project_memories"] == 0
+    assert result["status"]["counts"]["user_memories"] == 0
+    assert result["status"]["language_stats"] == {}
 
 
 def test_project_status_after_index(tmp_db, mock_embedder, tmp_path: Path):
@@ -1498,19 +1513,18 @@ def test_project_status_after_index(tmp_db, mock_embedder, tmp_path: Path):
     finally:
         os.chdir(old_cwd)
 
-    assert "Code chunks: 0" not in result
-    assert "Doc chunks: 0" not in result
-    assert "Languages" in result
-    assert "chunks" in result
+    assert result["ok"] is True
+    assert result["status"]["counts"]["code_chunks"] > 0
+    assert result["status"]["counts"]["doc_chunks"] > 0
+    assert sum(result["status"]["language_stats"].values()) > 0
 
 
 # --- min_score filtering tests ---
 
 
 def test_search_code_min_score_filters(tmp_db, mock_embedder, tmp_path: Path):
-    """min_score should filter results based on 1.0 - distance."""
+    """min_score should filter results based on vector_distance only."""
     import os
-    from unittest.mock import patch
 
     (tmp_path / "app.py").write_text("def hello():\n    return 1\n")
 
@@ -1521,7 +1535,7 @@ def test_search_code_min_score_filters(tmp_db, mock_embedder, tmp_path: Path):
 
         # Without min_score, we get results
         result_no_filter = search_code("hello")
-        assert "app.py" in result_no_filter
+        assert "app.py" in _search_paths(result_no_filter)
 
         # Patch db.search_code to return results with high distance (low score)
         fake_results = [
@@ -1535,15 +1549,112 @@ def test_search_code_min_score_filters(tmp_db, mock_embedder, tmp_path: Path):
         try:
             # min_score=0.5 should filter out result with score=0.2
             result_filtered = search_code("hello", min_score=0.5)
-            assert "No matching code found" in result_filtered
+            assert result_filtered["ok"] is True
+            assert result_filtered["result_total"] == 0
 
             # min_score=0.1 should keep result with score=0.2
             result_kept = search_code("hello", min_score=0.1)
-            assert "app.py" in result_kept
+            assert "app.py" in _search_paths(result_kept)
         finally:
             srv._project_db.search_code = original_search
     finally:
         os.chdir(old_cwd)
+
+
+def test_index_project_reports_skipped_unreadable_files(tmp_db, mock_embedder, tmp_path: Path, monkeypatch):
+    import os
+
+    original_read_text = Path.read_text
+    bad_file = tmp_path / "bad.py"
+    bad_file.write_text("def broken():\n    return 1\n")
+    (tmp_path / "good.py").write_text("def hello():\n    return 1\n")
+
+    def flaky_read_text(self, *args, **kwargs):
+        if self == bad_file:
+            raise OSError("permission denied")
+        return original_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", flaky_read_text)
+
+    old_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        result = index_project()
+    finally:
+        os.chdir(old_cwd)
+
+    assert "1 code skipped" in result["summary"]
+
+
+def test_index_project_does_not_persist_new_hashes_when_embedding_fails(
+    tmp_db, mock_embedder, tmp_path: Path, monkeypatch
+):
+    import os
+    import vibe_rag.server as srv
+
+    app = tmp_path / "app.py"
+    app.write_text("def hello():\n    return 1\n")
+
+    old_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        index_project()
+        old_hash = srv._get_db().get_file_hashes("code")["app.py"]
+        old_count = srv._get_db().code_chunk_count()
+
+        app.write_text("def hello():\n    return 2\n")
+
+        def fail_embed(_texts, *, progress_callback=None):
+            raise RuntimeError("embed outage")
+
+        monkeypatch.setattr(srv._embedder, "embed_code_sync", fail_embed)
+        result = index_project()
+
+        assert result["ok"] is False
+        assert _error_message(result) == "indexing failed: embed outage"
+        assert srv._get_db().get_file_hashes("code")["app.py"] == old_hash
+        assert srv._get_db().code_chunk_count() == old_count
+    finally:
+        os.chdir(old_cwd)
+
+
+def test_search_memory_scores_are_bounded_positive(tmp_db, mock_embedder):
+    import vibe_rag.server as srv
+
+    remember_structured(
+        summary="gateway validates tokens",
+        details="Gateway validates auth tokens before forwarding requests.",
+        memory_kind="decision",
+    )
+
+    fake_results = [
+        {
+            "id": 1,
+            "content": "Gateway validates auth tokens before forwarding requests.",
+            "tags": "",
+            "project_id": srv._ensure_project_id(),
+            "memory_kind": "decision",
+            "summary": "gateway validates tokens",
+            "metadata": {"capture_kind": "manual"},
+            "source_session_id": "",
+            "source_message_id": "",
+            "supersedes": None,
+            "superseded_by": None,
+            "created_at": "2026-03-23 00:00:00",
+            "updated_at": "2026-03-23 00:00:00",
+            "distance": 1.05,
+        }
+    ]
+    original_search = srv._project_db.search_memories
+    srv._project_db.search_memories = lambda *a, **kw: fake_results
+    try:
+        result = search_memory("gateway auth")
+    finally:
+        srv._project_db.search_memories = original_search
+
+    assert result["ok"] is True
+    assert result["results"][0]["score"] > 0
+    assert round(result["results"][0]["score"], 2) == 0.49
 
 
 # --- Incremental indexing tests ---
@@ -1559,11 +1670,11 @@ def test_index_project_incremental_skips_unchanged(tmp_db, mock_embedder, tmp_pa
     os.chdir(tmp_path)
     try:
         result1 = index_project()
-        assert "0 unchanged" in result1  # first run: nothing unchanged
+        assert "0 unchanged" in result1["summary"]  # first run: nothing unchanged
 
         result2 = index_project()
-        assert "1 unchanged" in result2  # code file unchanged
-        assert "0 chunks, 1 unchanged" in result2 or "0 chunks" in result2
+        assert "1 unchanged" in result2["summary"]  # code file unchanged
+        assert "0 chunks, 1 unchanged" in result2["summary"] or "0 chunks" in result2["summary"]
     finally:
         os.chdir(old_cwd)
 
@@ -1577,14 +1688,14 @@ def test_index_project_detects_changed_file(tmp_db, mock_embedder, tmp_path: Pat
     os.chdir(tmp_path)
     try:
         result1 = index_project()
-        assert "1 code files" in result1
-        assert "0 unchanged" in result1
+        assert "1 code files" in result1["summary"]
+        assert "0 unchanged" in result1["summary"]
 
         # Modify the file
         (tmp_path / "app.py").write_text("def main():\n    return 42\n")
 
         result2 = index_project()
-        assert "1 code files" in result2
-        assert "0 unchanged" in result2  # changed file should not be skipped
+        assert "1 code files" in result2["summary"]
+        assert "0 unchanged" in result2["summary"]  # changed file should not be skipped
     finally:
         os.chdir(old_cwd)

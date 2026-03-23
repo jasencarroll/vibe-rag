@@ -27,9 +27,12 @@ htmlcov/
 .mypy_cache/
 .ruff_cache/
 
-# vibe-rag
-.vibe/
-.codex/
+# vibe-rag runtime state
+.vibe/index.db
+.vibe/index.db-shm
+.vibe/index.db-wal
+.vibe/backups/
+.gemini/
 
 # Internal docs (specs, plans, design docs)
 docs/superpowers/

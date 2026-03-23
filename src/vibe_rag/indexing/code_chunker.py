@@ -53,7 +53,10 @@ def _try_tree_sitter_chunk(content: str, file_path: str, language: str) -> list[
     try:
         import tree_sitter_languages
         parser = tree_sitter_languages.get_parser(ts_lang)
-    except (ImportError, Exception):
+    except ImportError:
+        return None
+    except Exception as exc:
+        logger.warning("tree-sitter parser init failed for %s: %s", file_path, exc)
         return None
 
     tree = parser.parse(content.encode())

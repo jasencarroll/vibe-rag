@@ -32,6 +32,8 @@ search docs for release steps
 search memory for prior decisions
 ```
 
+Tool results are now structured payloads. Retrieval tools return `{"ok": true, "results": [...]}`, and failures return `{"ok": false, "error": {...}}`.
+
 ## What to Remember
 
 Good durable memories:
@@ -140,6 +142,7 @@ Those clients currently get:
 - MCP server registration for `vibe-rag serve`
 - session-start context injection through `vibe-rag hook-session-start`
 - automatic `git init` when the scaffold target is not already a repo
+- generated config that calls `vibe-rag` on `PATH`
 - Codex config with `suppress_unstable_features_warning = true`
 
 Vibe is currently the most complete integration, but the core `vibe-rag serve` MCP server is the product identity.

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import Callable
 from typing import Protocol
@@ -76,11 +77,12 @@ def _resolve_embedding_provider_name() -> str:
     if explicit:
         return explicit
 
+    ollama_error: RuntimeError | None = None
     try:
         _resolve_ollama_host()
         return "ollama"
-    except RuntimeError:
-        pass
+    except RuntimeError as exc:
+        ollama_error = exc
 
     if os.environ.get("VOYAGE_API_KEY", "").strip():
         return "voyage"
@@ -88,7 +90,29 @@ def _resolve_embedding_provider_name() -> str:
         return "mistral"
     if os.environ.get("OPENAI_API_KEY", "").strip():
         return "openai"
-    return "ollama"
+    raise RuntimeError(
+        "No embedding provider available. "
+        f"{ollama_error or 'Ollama not reachable and no hosted provider credentials configured.'}"
+    )
+
+
+def _response_error_message(resp: httpx.Response, *json_paths: tuple[str, ...]) -> str:
+    try:
+        payload = resp.json()
+    except (json.JSONDecodeError, ValueError):
+        text = (resp.text or "").strip()
+        return text[:200] if text else "unknown error"
+
+    for path in json_paths:
+        current: object = payload
+        for key in path:
+            if not isinstance(current, dict):
+                current = None
+                break
+            current = current.get(key)
+        if isinstance(current, str) and current.strip():
+            return current
+    return "unknown error"
 
 
 class EmbeddingProvider(Protocol):
@@ -121,10 +145,7 @@ class MistralEmbeddingProvider:
             json={"model": self._model, "input": texts},
         )
         if resp.status_code != 200:
-            try:
-                msg = resp.json().get("message", "unknown error")
-            except Exception:
-                msg = "unknown error"
+            msg = _response_error_message(resp, ("message",), ("error", "message"), ("detail",))
             raise RuntimeError(f"Embedding API error {resp.status_code}: {msg}")
         return [item["embedding"] for item in resp.json()["data"]]
 
@@ -281,11 +302,7 @@ class OpenAIEmbeddingProvider:
             payload["dimensions"] = self._dimensions
         resp = client.post(OPENAI_EMBED_URL, json=payload)
         if resp.status_code != 200:
-            try:
-                error = resp.json().get("error", {})
-                msg = error.get("message", "unknown error")
-            except Exception:
-                msg = "unknown error"
+            msg = _response_error_message(resp, ("error", "message"), ("message",), ("detail",))
             raise RuntimeError(f"Embedding API error {resp.status_code}: {msg}")
         return [item["embedding"] for item in resp.json()["data"]]
 
@@ -362,15 +379,19 @@ class VoyageEmbeddingProvider:
             )
         return self._client
 
-    def _embed_batch(self, payload: dict[str, object], texts: list[str]) -> list[list[float]]:
+    def _embed_batch(
+        self,
+        payload: dict[str, object],
+        texts: list[str],
+        *,
+        depth: int = 0,
+        max_depth: int = 8,
+    ) -> list[list[float]]:
         resp = self._get_client().post(VOYAGE_EMBED_URL, json=payload)
         if resp.status_code == 200:
             return [item["embedding"] for item in resp.json()["data"]]
 
-        try:
-            msg = resp.json().get("detail") or resp.json().get("message") or "unknown error"
-        except Exception:
-            msg = "unknown error"
+        msg = _response_error_message(resp, ("detail",), ("message",), ("error", "message"))
 
         # Voyage enforces a hard per-request token cap. Our estimate is intentionally
         # conservative, but very large markdown/doc batches can still exceed the real
@@ -380,6 +401,10 @@ class VoyageEmbeddingProvider:
             and "max allowed tokens per submitted batch" in msg.lower()
             and len(texts) > 1
         ):
+            if depth >= max_depth:
+                raise RuntimeError(
+                    "Embedding API error 400: voyage batch splitting exhausted max depth"
+                )
             midpoint = max(1, len(texts) // 2)
             left = list(texts[:midpoint])
             right = list(texts[midpoint:])
@@ -387,7 +412,17 @@ class VoyageEmbeddingProvider:
             left_payload["input"] = left
             right_payload = dict(payload)
             right_payload["input"] = right
-            return self._embed_batch(left_payload, left) + self._embed_batch(right_payload, right)
+            return self._embed_batch(
+                left_payload,
+                left,
+                depth=depth + 1,
+                max_depth=max_depth,
+            ) + self._embed_batch(
+                right_payload,
+                right,
+                depth=depth + 1,
+                max_depth=max_depth,
+            )
 
         raise RuntimeError(f"Embedding API error {resp.status_code}: {msg}")
 
@@ -519,17 +554,29 @@ def _resolve_ollama_host() -> str:
     for host in candidates:
         try:
             response = httpx.get(f"{host.rstrip('/')}/api/version", timeout=1.0)
-        except httpx.HTTPError:
+        except (httpx.ConnectError, httpx.TimeoutException):
             continue
+        except httpx.HTTPError as exc:
+            raise RuntimeError(f"Ollama health check failed for {host}: {exc}") from exc
         if response.status_code == 200:
             return host
+        raise RuntimeError(f"Ollama reachable at {host} but returned HTTP {response.status_code}")
 
     searched = ", ".join(candidates)
     raise RuntimeError(f"Ollama not reachable. Set VIBE_RAG_OLLAMA_HOST or OLLAMA_HOST. Tried: {searched}")
 
 
 def embedding_provider_status() -> dict[str, object]:
-    provider = _resolve_embedding_provider_name()
+    explicit = os.environ.get("VIBE_RAG_EMBEDDING_PROVIDER", "").strip().lower()
+    try:
+        provider = _resolve_embedding_provider_name()
+    except RuntimeError as exc:
+        return {
+            "provider": explicit or "auto",
+            "ok": False,
+            "detail": str(exc),
+            "model": os.environ.get("VIBE_RAG_EMBEDDING_MODEL", "").strip() or None,
+        }
     model = os.environ.get("VIBE_RAG_EMBEDDING_MODEL", "").strip()
 
     if provider == "mistral":

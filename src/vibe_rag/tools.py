@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
+import logging
 import os
 import re
 import subprocess
 import time
 from pathlib import Path
 import tomllib
+from typing import Any, cast
 
 from vibe_rag.chunking import chunk_doc, collect_files
 from vibe_rag.constants import EXT_TO_LANG
@@ -20,6 +23,7 @@ from vibe_rag.server import (
     mcp,
 )
 from vibe_rag.indexing.embedder import ProgressCallback
+from vibe_rag.types import CodeSearchResult, DocSearchResult, MemoryKind, MemoryPayload, ToolError
 
 MAX_QUERY_LENGTH = 10_000
 MAX_MEMORY_LENGTH = 10_000
@@ -114,50 +118,36 @@ DOC_FOCUSED_QUERY_TERMS = {
     "jetbrains",
     "neovim",
 }
-SANDBOX_QUERY_TERMS = {
-    "sandbox",
-    "exec",
-    "policy",
-    "approval",
-    "approvals",
-    "shell",
-}
-API_QUERY_TERMS = {
-    "api",
-    "auth",
-    "route",
-    "routes",
-    "endpoint",
-    "endpoints",
-    "letters",
-    "observations",
-    "decrees",
-    "analytics",
-    "billing",
-    "checkout",
-    "keys",
-    "health",
-    "fastapi",
-    "backend",
-}
-PIPELINE_QUERY_TERMS = {
-    "pipeline",
-    "discover",
-    "scrape",
-    "parser",
-    "parse",
-    "classify",
-    "classifier",
-    "enrich",
-    "ingestion",
-    "ingest",
-    "observation",
-    "observations",
-    "483",
-    "warning",
-    "letter",
-    "letters",
-}
+logger = logging.getLogger(__name__)
+
+
+def _tool_error(code: str, message: str, **details: Any) -> ToolError:
+    return {
+        "code": code,
+        "message": message,
+        "details": details,
+    }
+
+
+def _failure(code: str, message: str, **details: Any) -> dict:
+    return {"ok": False, "error": _tool_error(code, message, **details)}
+
+
+def _success(**payload: Any) -> dict:
+    return {"ok": True, **payload}
+
+
+def _failure_from_error(error: ToolError, **details: Any) -> dict:
+    merged = dict(error.get("details") or {})
+    merged.update(details)
+    return _failure(error["code"], error["message"], **merged)
+
+
+def _int_or_none(value: object) -> int | None:
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
 
 
 def _normalize_paths(paths: list[str] | str | None) -> tuple[list[Path], Path] | str:
@@ -191,32 +181,36 @@ def _content_hash(content: str) -> str:
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
-def _validate_query(query: str) -> str | None:
+def _validate_query(query: str) -> ToolError | None:
     if not query.strip():
-        return "Error: query is empty."
+        return _tool_error("empty_query", "query is empty")
     if len(query) > MAX_QUERY_LENGTH:
-        return "Error: query is too long."
+        return _tool_error("query_too_long", "query is too long", max_length=MAX_QUERY_LENGTH)
     return None
 
 
-def _validate_memory_content(content: str) -> str | None:
+def _validate_memory_content(content: str) -> ToolError | None:
     if not content.strip():
-        return "Error: content is empty."
+        return _tool_error("empty_content", "content is empty")
     if len(content) > MAX_MEMORY_LENGTH:
-        return "Error: content is too large."
+        return _tool_error("content_too_large", "content is too large", max_length=MAX_MEMORY_LENGTH)
     return None
 
 
-def _validate_tags(tags: str) -> str | None:
+def _validate_tags(tags: str) -> ToolError | None:
     if len(tags) > MAX_TAGS_LENGTH:
-        return "Error: tags are too long."
+        return _tool_error("tags_too_long", "tags are too long", max_length=MAX_TAGS_LENGTH)
     return None
 
 
-def _validate_memory_kind(memory_kind: str) -> str | None:
+def _validate_memory_kind(memory_kind: str) -> ToolError | None:
     if memory_kind not in ALLOWED_MEMORY_KINDS:
         allowed = ", ".join(sorted(ALLOWED_MEMORY_KINDS))
-        return f"Error: memory_kind must be one of {allowed}."
+        return _tool_error(
+            "invalid_memory_kind",
+            f"memory_kind must be one of {allowed}",
+            allowed=sorted(ALLOWED_MEMORY_KINDS),
+        )
     return None
 
 
@@ -251,7 +245,9 @@ def _distill_session_summary(turns: list[dict]) -> tuple[str, str]:
         topics.append(user)
 
     if not cleaned_turns:
-        raise ValueError("Error: turns must contain at least one user/assistant pair.")
+        raise ValueError(
+            "turns must contain at least one user/assistant pair using the keys 'user' and 'assistant'"
+        )
 
     topic_preview = "; ".join(topics[:3])
     if len(topics) > 3:
@@ -273,6 +269,7 @@ def _metadata_dict(value: object) -> dict:
         try:
             parsed = json.loads(value)
         except json.JSONDecodeError:
+            logger.warning("memory metadata contains invalid JSON")
             return {}
         return parsed if isinstance(parsed, dict) else {}
     return {}
@@ -285,22 +282,62 @@ def _should_skip_session_capture(response: str) -> bool:
     )
 
 
-def _score(result: dict) -> float:
-    if result.get("score") is not None:
-        return float(result["score"])
-    distance = result.get("distance")
-    if distance is None:
-        return 1.0
-    return 1.0 - float(distance)
-
-
 def _rank_score(result: dict) -> float:
-    if result.get("score") is not None:
-        return float(result["score"])
+    if result.get("rank_score") is not None:
+        return float(result["rank_score"])
     distance = result.get("distance")
     if distance is None:
         return 1.0
     return 1.0 / (1.0 + max(0.0, float(distance)))
+
+
+def _vector_match_score(result: dict) -> float | None:
+    distance = result.get("vector_distance")
+    if distance is None:
+        return None
+    return 1.0 - float(distance)
+
+
+def _memory_rank_score(result: dict) -> float:
+    distance = result.get("distance")
+    if distance is None:
+        return 1.0
+    return 1.0 / (1.0 + max(0.0, float(distance)))
+
+
+def _with_source_db(result: dict, source_db: str) -> dict:
+    return {**result, "source_db": source_db}
+
+
+def _result_key(result: dict) -> tuple[str, int | str]:
+    index = result.get("chunk_index")
+    if index is None:
+        index = result.get("start_line") or ""
+    return str(result.get("file_path") or ""), index
+
+
+def _result_order_index(result: dict) -> int:
+    index = result.get("chunk_index")
+    if index is None:
+        index = result.get("start_line")
+    return int(index or 0)
+
+
+def _result_base_fields(result: dict) -> dict:
+    base: dict = {}
+    for field in (
+        "file_path",
+        "chunk_index",
+        "start_line",
+        "end_line",
+        "content",
+        "language",
+        "symbol",
+        "indexed_at",
+    ):
+        if field in result:
+            base[field] = result[field]
+    return base
 
 
 def _memory_priority(memory_kind: str | None) -> int:
@@ -400,7 +437,7 @@ def _is_transient_status_auto_capture(task: str, summary: str, content: str) -> 
     return any(pattern in haystack for pattern in TRANSIENT_STATUS_PATTERNS)
 
 
-def _infer_auto_memory_kind(task: str, summary: str, content: str) -> str:
+def _infer_auto_memory_kind(task: str, summary: str, content: str) -> MemoryKind:
     haystack_terms = _query_terms(" ".join((task, summary, content)))
     if haystack_terms & TODO_TERMS:
         return "todo"
@@ -423,11 +460,17 @@ def _find_non_novel_auto_memory(
     candidates: list[dict] = []
     project_db = _get_db()
     user_db = _get_user_db()
-    candidates.extend(project_db.list_memories(limit=max(project_db.memory_count(include_superseded=True) + 10, 20), include_superseded=False, project_id=current_project_id))
+    candidates.extend(
+        _with_source_db(item, "project")
+        for item in project_db.list_memories(
+            limit=max(project_db.memory_count(include_superseded=True) + 10, 20),
+            include_superseded=False,
+            project_id=current_project_id,
+        )
+    )
     for item in user_db.list_memories(limit=max(user_db.memory_count(include_superseded=True) + 10, 20), include_superseded=False):
         if str(item.get("project_id") or "") == current_project_id:
-            item["source_db"] = "user"
-            candidates.append(item)
+            candidates.append(_with_source_db(item, "user"))
     for item in candidates:
         existing_summary = str(item.get("summary") or "")
         existing_content = str(item.get("content") or "")
@@ -447,7 +490,8 @@ def _find_merge_candidate(
     user_db = _get_user_db()
     candidates: list[dict] = []
     candidates.extend(
-        project_db.list_memories(
+        _with_source_db(item, "project")
+        for item in project_db.list_memories(
             limit=max(project_db.memory_count(include_superseded=True) + 10, 20),
             include_superseded=False,
             project_id=project_id,
@@ -455,7 +499,7 @@ def _find_merge_candidate(
     )
     for item in user_db.list_memories(limit=max(user_db.memory_count(include_superseded=True) + 10, 20), include_superseded=False):
         if str(item.get("project_id") or "") == project_id:
-            candidates.append(item)
+            candidates.append(_with_source_db(item, "user"))
     best: tuple[float, dict] | None = None
     for item in candidates:
         if str(item.get("memory_kind") or "") != memory_kind:
@@ -544,7 +588,7 @@ def _sort_memory_results(results: list[dict], current_project_id: str | None = N
         results,
         key=lambda item: (
             _memory_rank_penalty(item, current_project_id),
-            -_score(item),
+            -_memory_rank_score(item),
             _memory_priority(item.get("memory_kind")),
             str(item.get("updated_at") or ""),
         ),
@@ -575,12 +619,6 @@ def _query_intents(query: str) -> set[str]:
         intents.add("procedural")
     if DOC_FOCUSED_QUERY_TERMS & terms:
         intents.add("docs")
-    if SANDBOX_QUERY_TERMS & terms:
-        intents.add("sandbox")
-    if API_QUERY_TERMS & terms:
-        intents.add("api")
-    if PIPELINE_QUERY_TERMS & terms:
-        intents.add("pipeline")
     return intents
 
 
@@ -653,38 +691,6 @@ def _path_intent_boost(query: str, file_path: str) -> float:
         if path.endswith("agents.md") or path.endswith("changelog.md"):
             boost -= 0.5
 
-    if {"install", "build", "config"} & terms:
-        if path == "codex-rs/config/src/lib.rs":
-            boost += 2.4
-        elif path.startswith("codex-rs/config/src/"):
-            boost += 1.3
-        if path == "codex-rs/cli/src/mcp_cmd.rs":
-            boost += 1.7
-        elif path.startswith("codex-rs/cli/src/"):
-            boost += 0.8
-        if path.startswith(".github/workflows/"):
-            boost -= 1.8
-        if "/tests/" in path or path.startswith("tests/"):
-            boost -= 0.7
-
-    if "mcp" in terms or "sandbox" in intents:
-        if path == "codex-rs/protocol/src/mcp.rs":
-            boost += 1.9
-        elif path.startswith("codex-rs/protocol/src/"):
-            boost += 0.8
-        if path == "shell-tool-mcp/src/index.ts":
-            boost += 1.8
-        elif path.startswith("shell-tool-mcp/src/"):
-            boost += 0.9
-        if path.startswith("codex-rs/mcp-server/src/"):
-            boost += 1.0
-        if "sandbox" in path or "execpolicy" in path:
-            boost += 0.95
-        if path.startswith(".github/workflows/"):
-            boost -= 0.8
-        if "/tests/" in path or path.startswith("tests/"):
-            boost -= 0.75
-
     if "docs" in intents:
         if path == "readme.md":
             boost += 0.85
@@ -707,46 +713,6 @@ def _path_intent_boost(query: str, file_path: str) -> float:
                 boost += 0.6
             if path.endswith("changelog.md"):
                 boost -= 0.15
-
-    if "api" in intents:
-        if path == "backend/app/main.py":
-            boost += 1.0
-        if path.startswith("backend/app/routes/"):
-            boost += 0.75
-        if path.startswith("backend/app/analytics/") or path.startswith("backend/app/billing/"):
-            boost += 0.35
-        if path == "docs/api.md" or path.endswith("/docs/api.md"):
-            boost += 0.95
-        if path == "docs/architecture.md":
-            boost += 0.55
-        if "setup" in path:
-            boost -= 0.5
-        if path.startswith("spec/") or path == "claude.md":
-            boost -= 0.45
-        if "changelog" in path or path.endswith("changelog.tsx"):
-            boost -= 0.55
-        if path.startswith("frontend/"):
-            boost -= 0.2
-
-    if "bootstrap" in intents and "mcp" in terms:
-        if "mcp-tools" in path or path.endswith("mcp-tools.md"):
-            boost += 0.8
-        if path.endswith("/readme.md") and "mcp-server/" in path:
-            boost += 0.45
-
-    if "pipeline" in intents:
-        if path.startswith("backend/app/pipeline/"):
-            boost += 0.95
-        if path.startswith("backend/scripts/"):
-            boost += 0.65
-        if path == "docs/pipeline.md":
-            boost += 1.0
-        if path == "readme.md":
-            boost += 0.25
-        if path.startswith("spec/") or path == "claude.md":
-            boost -= 0.35
-        if "changelog" in path or path.endswith("changelog.tsx"):
-            boost -= 0.6
 
     return boost
 
@@ -794,27 +760,6 @@ def _rerank_doc_results(query: str, results: list[dict]) -> list[dict]:
                 bonus += 0.75
             if path.endswith("agents.md") and not ({"maintainer", "procedure", "steps", "guide"} & terms):
                 bonus -= 0.6
-        if "api" in intents:
-            if path == "docs/api.md" or path.endswith("/docs/api.md"):
-                bonus += 2.4
-            if path == "docs/architecture.md":
-                bonus += 0.9
-            if "setup" in path:
-                bonus -= 1.0
-            if path == "claude.md" or path.startswith("spec/"):
-                bonus -= 1.2
-        if "bootstrap" in intents and "mcp" in terms:
-            if "mcp-tools" in path or path.endswith("mcp-tools.md"):
-                bonus += 1.8
-            if path.endswith("/readme.md") and "mcp-server/" in path:
-                bonus += 0.8
-        if "pipeline" in intents:
-            if path == "docs/pipeline.md":
-                bonus += 2.4
-            if path == "readme.md":
-                bonus += 0.35
-            if path == "claude.md" or path.startswith("spec/"):
-                bonus -= 1.0
         return bonus
 
     return sorted(
@@ -833,31 +778,80 @@ def _rerank_doc_results(query: str, results: list[dict]) -> list[dict]:
     )
 
 
-def _merge_ranked_results(*result_sets: list[dict], limit: int) -> list[dict]:
-    seen: set[tuple[str, int | str]] = set()
-    merged: list[dict] = []
-    for result_set in result_sets:
-        for item in result_set:
-            key = (str(item.get("file_path") or ""), item.get("chunk_index") or item.get("start_line") or "")
-            if key in seen:
-                continue
-            seen.add(key)
-            merged.append(item)
-    return merged[:limit]
+def _rrf_merge(*result_sets: tuple[str, list[dict]], k: int = 60, limit: int) -> list[dict]:
+    merged: dict[tuple[str, int | str], dict] = {}
+    for source_name, results in result_sets:
+        for rank, item in enumerate(results, start=1):
+            key = _result_key(item)
+            payload = merged.setdefault(
+                key,
+                {
+                    **_result_base_fields(item),
+                    "rank_score": 0.0,
+                    "match_sources": [],
+                },
+            )
+            payload["rank_score"] = float(payload["rank_score"]) + (1.0 / (k + rank))
+            if source_name not in payload["match_sources"]:
+                payload["match_sources"].append(source_name)
+            if source_name == "vector" and item.get("distance") is not None:
+                payload["vector_distance"] = float(item["distance"])
+
+    results = list(merged.values())
+    results.sort(
+        key=lambda item: (
+            -float(item.get("rank_score") or 0.0),
+            str(item.get("file_path") or ""),
+            _result_order_index(item),
+        )
+    )
+    return results[:limit]
 
 
-def _memory_payload(result: dict, current_project_id: str | None = None) -> dict:
+def _code_result_payload(result: dict) -> CodeSearchResult:
+    return {
+        "file_path": str(result["file_path"]),
+        "start_line": int(result["start_line"]),
+        "end_line": int(result["end_line"]),
+        "content": str(result["content"]),
+        "language": result.get("language"),
+        "symbol": result.get("symbol"),
+        "indexed_at": result.get("indexed_at"),
+        "rank_score": round(float(result.get("rank_score") or 0.0), 6),
+        "match_sources": list(result.get("match_sources") or []),
+        "provenance": {
+            "source": "project-index",
+            "indexed_at": result.get("indexed_at"),
+        },
+    }
+
+
+def _doc_result_payload(result: dict) -> DocSearchResult:
+    content = str(result["content"])
+    return {
+        "file_path": str(result["file_path"]),
+        "chunk_index": int(result["chunk_index"]),
+        "content": content,
+        "preview": content.replace("\n", " ")[:160],
+        "indexed_at": result.get("indexed_at"),
+        "rank_score": round(float(result.get("rank_score") or 0.0), 6),
+        "match_sources": list(result.get("match_sources") or []),
+        "provenance": {
+            "source": "project-index",
+            "indexed_at": result.get("indexed_at"),
+        },
+    }
+
+
+def _memory_payload(result: dict, current_project_id: str | None = None) -> MemoryPayload:
     metadata = result.get("metadata") or {}
     capture_kind = str(metadata.get("capture_kind") or "").strip() or "unknown"
-    superseded_by = (
-        str(result["superseded_by"]) if result.get("superseded_by") is not None else None
-    )
-    supersedes = str(result["supersedes"]) if result.get("supersedes") is not None else None
+    superseded_by = _int_or_none(result.get("superseded_by"))
+    supersedes = _int_or_none(result.get("supersedes"))
     state = _memory_state(result, current_project_id)
     provenance = {
         "source_db": result.get("source_db"),
         "project_id": result.get("project_id"),
-        "memory_kind": result.get("memory_kind", "note"),
         "capture_kind": capture_kind,
         "source_type": "structured" if result.get("memory_kind") != "note" else "freeform",
         "source_session_id": result.get("source_session_id"),
@@ -865,11 +859,6 @@ def _memory_payload(result: dict, current_project_id: str | None = None) -> dict
         "created_at": str(result.get("created_at")) if result.get("created_at") is not None else None,
         "updated_at": str(result.get("updated_at")) if result.get("updated_at") is not None else None,
         "is_current_project": state["is_current_project"],
-        "is_superseded": superseded_by is not None,
-        "is_stale": state["is_stale"],
-        "stale_reasons": state["stale_reasons"],
-        "supersedes": supersedes,
-        "superseded_by": superseded_by,
     }
     if capture_kind == "session_distillation":
         provenance["source_type"] = "session_distillation"
@@ -878,14 +867,18 @@ def _memory_payload(result: dict, current_project_id: str | None = None) -> dict
     elif capture_kind == "manual" and result.get("memory_kind") != "note":
         provenance["source_type"] = "manual_structured"
 
-    payload = {
-        "id": str(result["id"]),
+    memory_kind = str(result.get("memory_kind") or "note")
+    if memory_kind not in ALLOWED_MEMORY_KINDS:
+        memory_kind = "note"
+
+    payload: MemoryPayload = {
+        "id": int(result["id"]),
         "source_db": result.get("source_db"),
         "summary": result.get("summary") or result.get("content", "")[:200],
         "content": result.get("content", ""),
-        "score": round(_score(result), 4),
+        "score": round(_memory_rank_score(result), 4),
         "project_id": result.get("project_id"),
-        "memory_kind": result.get("memory_kind", "note"),
+        "memory_kind": cast(MemoryKind, memory_kind),
         "tags": result.get("tags") or [],
         "created_at": str(result.get("created_at")) if result.get("created_at") is not None else None,
         "updated_at": str(result.get("updated_at")) if result.get("updated_at") is not None else None,
@@ -951,12 +944,18 @@ def _memory_cleanup_candidates(limit: int = 10) -> list[dict]:
     user_db = _get_user_db()
     candidates: list[dict] = []
 
-    for result in project_db.list_memories(limit=max(limit * 3, 20), include_superseded=True, project_id=current_project_id):
-        result["source_db"] = "project"
-        candidates.append(result)
-    for result in user_db.list_memories(limit=max(limit * 5, 30), include_superseded=True):
-        result["source_db"] = "user"
-        candidates.append(result)
+    candidates.extend(
+        _with_source_db(result, "project")
+        for result in project_db.list_memories(
+            limit=max(limit * 3, 20),
+            include_superseded=True,
+            project_id=current_project_id,
+        )
+    )
+    candidates.extend(
+        _with_source_db(result, "user")
+        for result in user_db.list_memories(limit=max(limit * 5, 30), include_superseded=True)
+    )
 
     ranked = []
     for result in candidates:
@@ -984,12 +983,18 @@ def _all_memory_payloads() -> list[dict]:
     user_db = _get_user_db()
     payloads: list[dict] = []
 
-    for result in project_db.list_memories(limit=max(project_db.memory_count() + 10, 20), include_superseded=True, project_id=current_project_id):
-        result["source_db"] = "project"
-        payloads.append(_memory_payload(result, current_project_id=current_project_id))
+    for result in project_db.list_memories(
+        limit=max(project_db.memory_count() + 10, 20),
+        include_superseded=True,
+        project_id=current_project_id,
+    ):
+        payloads.append(
+            _memory_payload(_with_source_db(result, "project"), current_project_id=current_project_id)
+        )
     for result in user_db.list_memories(limit=max(user_db.memory_count() + 10, 20), include_superseded=True):
-        result["source_db"] = "user"
-        payloads.append(_memory_payload(result, current_project_id=current_project_id))
+        payloads.append(
+            _memory_payload(_with_source_db(result, "user"), current_project_id=current_project_id)
+        )
     return payloads
 
 
@@ -1019,20 +1024,18 @@ def _duplicate_auto_memory_groups(payloads: list[dict]) -> list[dict]:
                 "capture_kind": capture_kind,
                 "project_id": sorted_items[0].get("project_id"),
                 "summary": sorted_items[0].get("summary"),
-                "memory_ids": [str(item.get("id") or "") for item in sorted_items],
+                "memory_ids": [int(item.get("id")) for item in sorted_items if item.get("id") is not None],
             }
         )
     duplicates.sort(key=lambda item: (-int(item["count"]), str(item.get("summary") or "")))
     return duplicates
 
 
-def _delete_memory_by_source_db(source_db: str, memory_id: str) -> bool:
-    try:
-        sqlite_id = int(memory_id)
-    except (TypeError, ValueError):
+def _delete_memory_by_source_db(source_db: str, memory_id: int) -> bool:
+    if memory_id is None:
         return False
     db = _get_db() if source_db == "project" else _get_user_db()
-    deleted = db.forget(sqlite_id)
+    deleted = db.forget(memory_id)
     return deleted is not None
 
 
@@ -1085,7 +1088,7 @@ def _merge_memory_results(
     return _sort_memory_results(merged, current_project_id=current_project_id)[:limit]
 
 
-def _current_git_head(project_root: Path | None = None) -> str | None:
+def _current_git_head_state(project_root: Path | None = None) -> tuple[str | None, str | None]:
     cwd = project_root or Path.cwd()
     try:
         result = subprocess.run(
@@ -1096,27 +1099,46 @@ def _current_git_head(project_root: Path | None = None) -> str | None:
             check=False,
         )
     except FileNotFoundError:
-        return None
+        return None, "git executable not found"
     if result.returncode != 0:
-        return None
+        stderr = (result.stderr or "").strip().lower()
+        if "not a git repository" in stderr:
+            return None, None
+        return None, f"git rev-parse HEAD failed: {(result.stderr or result.stdout or '').strip() or result.returncode}"
     head = result.stdout.strip()
-    return head or None
+    if not head:
+        return None, "git rev-parse HEAD returned no output"
+    return head, None
+
+
+def _current_git_head(project_root: Path | None = None) -> str | None:
+    head, _ = _current_git_head_state(project_root)
+    return head
+
+
+def _load_toml_state(path: Path) -> tuple[dict | None, str | None]:
+    if not path.exists():
+        return None, None
+    try:
+        return tomllib.loads(path.read_text()), None
+    except OSError as exc:
+        return None, f"{path} unreadable: {exc}"
+    except tomllib.TOMLDecodeError as exc:
+        return None, f"{path} contains invalid TOML: {exc}"
 
 
 def _load_toml(path: Path) -> dict | None:
-    if not path.exists():
-        return None
-    try:
-        return tomllib.loads(path.read_text())
-    except (OSError, tomllib.TOMLDecodeError):
-        return None
+    data, _ = _load_toml_state(path)
+    return data
 
 
 def _vibe_trust_status(project_root: Path) -> dict:
     config_path = Path.home() / ".vibe" / "trusted_folders.toml"
-    data = _load_toml(config_path)
+    data, error = _load_toml_state(config_path)
+    if error:
+        return {"status": "unknown", "detail": error}
     if not data:
-        return {"status": "unknown", "detail": f"{config_path} not found or unreadable"}
+        return {"status": "unknown", "detail": f"{config_path} not found"}
 
     trusted = {Path(entry).resolve() for entry in data.get("trusted", []) if isinstance(entry, str) and "$" not in entry}
     resolved = project_root.resolve()
@@ -1127,9 +1149,11 @@ def _vibe_trust_status(project_root: Path) -> dict:
 
 def _codex_trust_status(project_root: Path) -> dict:
     config_path = Path.home() / ".codex" / "config.toml"
-    data = _load_toml(config_path)
+    data, error = _load_toml_state(config_path)
+    if error:
+        return {"status": "unknown", "detail": error}
     if not data:
-        return {"status": "unknown", "detail": f"{config_path} not found or unreadable"}
+        return {"status": "unknown", "detail": f"{config_path} not found"}
 
     projects = data.get("projects")
     if not isinstance(projects, dict):
@@ -1145,7 +1169,11 @@ def _codex_trust_status(project_root: Path) -> dict:
 
 
 def _index_metadata(db) -> dict:
-    return db.get_setting_json(INDEX_METADATA_KEY) or {}
+    metadata, error = db.get_setting_json_status(INDEX_METADATA_KEY)
+    return {
+        "metadata": metadata,
+        "error": error,
+    }
 
 
 def _project_index_paths(db, project_root: Path) -> list[str]:
@@ -1163,16 +1191,33 @@ def _current_file_counts(project_root: Path) -> tuple[int, int]:
 
 
 def _stale_state(db, project_root: Path, project_id: str) -> dict:
-    metadata = _index_metadata(db)
+    metadata_state = _index_metadata(db)
+    metadata = metadata_state.get("metadata")
+    metadata_error = metadata_state.get("error")
+    warnings: list[dict] = []
+
+    if metadata_error:
+        warnings.append(
+            {
+                "kind": "index_metadata_invalid",
+                "detail": str(metadata_error),
+            }
+        )
+
     if not metadata:
         return {
-            "is_stale": False,
-            "warnings": [],
+            "is_stale": bool(warnings),
+            "warnings": warnings,
             "metadata": None,
         }
-
-    warnings: list[dict] = []
-    current_head = _current_git_head(project_root)
+    current_head, git_head_error = _current_git_head_state(project_root)
+    if git_head_error:
+        warnings.append(
+            {
+                "kind": "git_head_unavailable",
+                "detail": git_head_error,
+            }
+        )
     indexed_head = metadata.get("git_head")
     if indexed_head and current_head and indexed_head != current_head:
         warnings.append(
@@ -1242,10 +1287,29 @@ def _embed_sync_with_progress(
     *,
     progress_callback: ProgressCallback | None = None,
 ) -> list[list[float]]:
+    if progress_callback is None:
+        return embed_method(texts)
+    try:
+        signature = inspect.signature(embed_method)
+    except (TypeError, ValueError):
+        signature = None
+    if signature is not None and "progress_callback" not in signature.parameters:
+        return embed_method(texts)
     try:
         return embed_method(texts, progress_callback=progress_callback)
     except TypeError:
-        return embed_method(texts)
+        if signature is None:
+            return embed_method(texts)
+        raise
+
+
+def _validate_embedding_count(
+    items: list[dict], embeddings: list[list[float]], *, kind: str
+) -> None:
+    if len(items) != len(embeddings):
+        raise RuntimeError(
+            f"Embedding count mismatch for {kind}: {len(items)} items but {len(embeddings)} embeddings"
+        )
 
 
 def _search_code_results(
@@ -1253,91 +1317,81 @@ def _search_code_results(
     limit: int = 10,
     language: str | None = None,
     min_score: float = 0.0,
-) -> tuple[str | None, list[dict]]:
+) -> tuple[ToolError | None, list[dict]]:
     error = _validate_query(query)
     if error:
         return error, []
 
     if language and language not in set(EXT_TO_LANG.values()):
-        return f"Error: Unknown language '{language}'.", []
+        return _tool_error("unknown_language", f"unknown language '{language}'", language=language), []
 
     db = _get_db()
     if db.code_chunk_count() == 0:
-        return "No code index. Run index_project first.", []
+        return _tool_error("no_code_index", "no code index; run index_project first"), []
 
     try:
         embeddings = _get_embedder().embed_code_sync([query])
-    except Exception as e:
-        return f"Embedding failed: {e}", []
+    except RuntimeError as e:
+        return _tool_error("embedding_failed", f"embedding failed: {e}", operation="search_code"), []
 
     raw_results = db.search_code(embeddings[0], limit=max(limit * 5, 10), language=language)
     lexical_results = db.lexical_search_code(sorted(_query_terms(query)), limit=max(limit * 5, 10))
     workflow_results: list[dict] = []
-    intent_results: list[dict] = []
     terms = _query_terms(query)
     if {"release", "workflow"} <= terms or ({"release", "publish"} <= terms and "tag" in terms):
         workflow_results = db.lexical_search_code(
             ["publish.yml", ".github/workflows", "release", "publish"],
             limit=max(limit * 2, 5),
         )
-    if {"install", "build", "config"} & terms:
-        intent_results.extend(
-            db.lexical_search_code(
-                [
-                    "config/src/lib.rs",
-                    "mcp_cmd",
-                    "config.toml",
-                    "mcp servers",
-                    "CODEX_HOME",
-                    "sqlite_home",
-                ],
-                limit=max(limit * 3, 8),
-            )
-        )
-    if "mcp" in terms or {"sandbox", "approval", "approvals", "exec", "policy"} & terms:
-        intent_results.extend(
-            db.lexical_search_code(
-                ["protocol/src/mcp.rs", "shell-tool-mcp", "sandbox", "execpolicy", "approval"],
-                limit=max(limit * 3, 8),
-            )
-        )
     reranked = _rerank_results(
         query,
-        _merge_ranked_results(raw_results, lexical_results, workflow_results, intent_results, limit=max(limit * 10, 20)),
+        _rrf_merge(
+            ("vector", raw_results),
+            ("lexical", lexical_results),
+            ("workflow", workflow_results),
+            limit=max(limit * 10, 20),
+        ),
     )
-    filtered = [result for result in reranked if _score(result) >= min_score][:limit]
-    if not filtered:
-        return "No matching code found.", []
+    if min_score <= 0:
+        filtered = reranked[:limit]
+    else:
+        filtered = [
+            result
+            for result in reranked
+            if (_vector_match_score(result) is not None and _vector_match_score(result) >= min_score)
+        ][:limit]
     return None, filtered
 
 
-def _search_docs_results(query: str, limit: int = 10) -> tuple[str | None, list[dict]]:
+def _search_docs_results(query: str, limit: int = 10) -> tuple[ToolError | None, list[dict]]:
     error = _validate_query(query)
     if error:
         return error, []
 
     db = _get_db()
     if db.doc_count() == 0:
-        return "No docs indexed. Run index_project first.", []
+        return _tool_error("no_docs_index", "no docs indexed; run index_project first"), []
 
     try:
         embeddings = _get_embedder().embed_text_sync([query])
-    except Exception as e:
-        return f"Embedding failed: {e}", []
+    except RuntimeError as e:
+        return _tool_error("embedding_failed", f"embedding failed: {e}", operation="search_docs"), []
 
     raw_results = db.search_docs(embeddings[0], limit=max(limit * 5, 10))
     lexical_results = db.lexical_search_docs(sorted(_query_terms(query)), limit=max(limit * 5, 10))
     results = _rerank_doc_results(
         query,
-        _merge_ranked_results(raw_results, lexical_results, limit=max(limit * 10, 20)),
+        _rrf_merge(
+            ("vector", raw_results),
+            ("lexical", lexical_results),
+            limit=max(limit * 10, 20),
+        ),
     )
     results = results[:limit]
-    if not results:
-        return "No matching docs found.", []
     return None, results
 
 
-def _search_memory_results(query: str, limit: int = 10) -> tuple[str | None, list[dict]]:
+def _search_memory_results(query: str, limit: int = 10) -> tuple[ToolError | None, list[dict]]:
     error = _validate_query(query)
     if error:
         return error, []
@@ -1345,11 +1399,11 @@ def _search_memory_results(query: str, limit: int = 10) -> tuple[str | None, lis
     project_db = _get_db()
     user_db = _get_user_db()
     if project_db.memory_count() == 0 and user_db.memory_count() == 0:
-        return "No memories stored yet.", []
+        return _tool_error("no_memories", "no memories stored yet"), []
     try:
         embeddings = _get_embedder().embed_text_sync([query])
-    except Exception as e:
-        return f"Embedding failed: {e}", []
+    except RuntimeError as e:
+        return _tool_error("embedding_failed", f"embedding failed: {e}", operation="search_memory"), []
 
     current_project_id = _ensure_project_id()
     project_limit, user_limit = _memory_limit_split(limit)
@@ -1357,18 +1411,12 @@ def _search_memory_results(query: str, limit: int = 10) -> tuple[str | None, lis
         embeddings[0], limit=project_limit, project_id=current_project_id
     )
     user_results = user_db.search_memories(embeddings[0], limit=max(user_limit, 10))
-    for result in project_results:
-        result["source_db"] = "project"
-    for result in user_results:
-        result["source_db"] = "user"
     results = _merge_memory_results(
-        project_results,
-        user_results,
+        [_with_source_db(result, "project") for result in project_results],
+        [_with_source_db(result, "user") for result in user_results],
         limit=limit,
         current_project_id=current_project_id,
     )
-    if not results:
-        return "No matching memories found.", []
     return None, results
 
 
@@ -1376,22 +1424,22 @@ def _index_project_impl(
     paths: list[str] | str | None = None,
     *,
     progress_callback: ProgressCallback | None = None,
-) -> str:
+) -> dict:
     start = time.time()
 
     normalized = _normalize_paths(paths)
     if isinstance(normalized, str):
-        return normalized
+        return _failure("invalid_path", normalized.removeprefix("Error: ").strip(), paths=paths)
     root_paths, project_root = normalized
 
     try:
         embedder = _get_embedder()
     except RuntimeError as e:
-        return str(e)
+        return _failure("embedding_provider_unavailable", str(e))
 
     code_files, doc_files = collect_files(root_paths)
     if not code_files and not doc_files:
-        return "No files found to index."
+        return _failure("no_files_found", "no files found to index", paths=paths)
     _emit_progress(
         progress_callback,
         phase="file_discovery_complete",
@@ -1419,29 +1467,33 @@ def _index_project_impl(
 
     code_chunks: list[dict] = []
     code_embeddings_input: list[str] = []
+    code_updates: list[tuple[str, str, list[dict]]] = []
     doc_chunks: list[dict] = []
     doc_embeddings_input: list[str] = []
+    doc_updates: list[tuple[str, str, list[dict]]] = []
     code_unchanged = 0
     doc_unchanged = 0
+    code_skipped = 0
+    doc_skipped = 0
     _emit_progress(progress_callback, phase="code_chunking_start", file_total=len(code_files))
 
     for path in code_files:
+        rel_path = _relative_to_project(path, project_root)
         try:
             content = path.read_text(errors="replace")
         except Exception:
+            code_skipped += 1
             continue
-        rel_path = _relative_to_project(path, project_root)
         digest = _content_hash(content)
         if code_hashes.get(rel_path) == digest:
             code_unchanged += 1
             continue
 
-        db.delete_file_chunks(rel_path, kind="code")
         language = EXT_TO_LANG.get(path.suffix)
         file_chunks = chunk_code(content, rel_path, language)
+        code_updates.append((rel_path, digest, file_chunks))
         code_chunks.extend(file_chunks)
         code_embeddings_input.extend(chunk["content"] for chunk in file_chunks)
-        db.set_file_hash(rel_path, digest, "code")
 
     _emit_progress(
         progress_callback,
@@ -1449,25 +1501,26 @@ def _index_project_impl(
         file_total=len(code_files),
         chunk_total=len(code_chunks),
         unchanged_total=code_unchanged,
+        skipped_total=code_skipped,
     )
     _emit_progress(progress_callback, phase="doc_chunking_start", file_total=len(doc_files))
 
     for path in doc_files:
+        rel_path = _relative_to_project(path, project_root)
         try:
             content = path.read_text(errors="replace")
         except Exception:
+            doc_skipped += 1
             continue
-        rel_path = _relative_to_project(path, project_root)
         digest = _content_hash(content)
         if doc_hashes.get(rel_path) == digest:
             doc_unchanged += 1
             continue
 
-        db.delete_file_chunks(rel_path, kind="doc")
         file_chunks = chunk_doc(content, rel_path)
+        doc_updates.append((rel_path, digest, file_chunks))
         doc_chunks.extend(file_chunks)
         doc_embeddings_input.extend(chunk["content"] for chunk in file_chunks)
-        db.set_file_hash(rel_path, digest, "doc")
 
     _emit_progress(
         progress_callback,
@@ -1475,9 +1528,11 @@ def _index_project_impl(
         file_total=len(doc_files),
         chunk_total=len(doc_chunks),
         unchanged_total=doc_unchanged,
+        skipped_total=doc_skipped,
     )
 
     try:
+        code_embeddings: list[list[float]] = []
         if code_chunks:
             _emit_progress(
                 progress_callback,
@@ -1489,7 +1544,8 @@ def _index_project_impl(
                 code_embeddings_input,
                 progress_callback=progress_callback,
             )
-            db.upsert_chunks(code_chunks, code_embeddings)
+            _validate_embedding_count(code_chunks, code_embeddings, kind="code chunks")
+        doc_embeddings: list[list[float]] = []
         if doc_chunks:
             _emit_progress(
                 progress_callback,
@@ -1501,9 +1557,33 @@ def _index_project_impl(
                 doc_embeddings_input,
                 progress_callback=progress_callback,
             )
-            db.upsert_docs(doc_chunks, doc_embeddings)
+            _validate_embedding_count(doc_chunks, doc_embeddings, kind="doc chunks")
     except Exception as e:
-        return f"Indexing failed: {e}"
+        return _failure("indexing_failed", f"indexing failed: {e}")
+
+    code_offset = 0
+    for rel_path, digest, file_chunks in code_updates:
+        db.delete_file_chunks(rel_path, kind="code")
+        file_embedding_count = len(file_chunks)
+        if file_embedding_count:
+            db.upsert_chunks(
+                file_chunks,
+                code_embeddings[code_offset:code_offset + file_embedding_count],
+            )
+        db.set_file_hash(rel_path, digest, "code")
+        code_offset += file_embedding_count
+
+    doc_offset = 0
+    for rel_path, digest, file_chunks in doc_updates:
+        db.delete_file_chunks(rel_path, kind="doc")
+        file_embedding_count = len(file_chunks)
+        if file_embedding_count:
+            db.upsert_docs(
+                file_chunks,
+                doc_embeddings[doc_offset:doc_offset + file_embedding_count],
+            )
+        db.set_file_hash(rel_path, digest, "doc")
+        doc_offset += file_embedding_count
 
     db.set_setting_json(
         INDEX_METADATA_KEY,
@@ -1529,14 +1609,45 @@ def _index_project_impl(
         code_chunk_total=db.code_chunk_count(),
         doc_chunk_total=db.doc_count(),
     )
-    return (
+    summary = (
         f"Indexed {len(code_files)} code files ({len(code_chunks)} chunks, {code_unchanged} unchanged), "
         f"{len(doc_files)} docs ({len(doc_chunks)} chunks, {doc_unchanged} unchanged) in {elapsed:.1f}s"
+        f"{_index_skip_summary(code_skipped, doc_skipped)}"
+    )
+    return _success(
+        summary=summary,
+        project_id=_ensure_project_id(),
+        project_root=str(project_root),
+        elapsed_seconds=round(elapsed, 1),
+        counts={
+            "code_files": len(code_files),
+            "doc_files": len(doc_files),
+            "code_chunks": len(code_chunks),
+            "doc_chunks": len(doc_chunks),
+            "code_unchanged": code_unchanged,
+            "doc_unchanged": doc_unchanged,
+            "code_skipped": code_skipped,
+            "doc_skipped": doc_skipped,
+            "indexed_code_chunks": db.code_chunk_count(),
+            "indexed_doc_chunks": db.doc_count(),
+        },
+        warnings=[],
     )
 
 
+def _index_skip_summary(code_skipped: int, doc_skipped: int) -> str:
+    if code_skipped == 0 and doc_skipped == 0:
+        return ""
+    parts = []
+    if code_skipped:
+        parts.append(f"{code_skipped} code skipped")
+    if doc_skipped:
+        parts.append(f"{doc_skipped} docs skipped")
+    return f" ({', '.join(parts)})"
+
+
 @mcp.tool()
-def index_project(paths: list[str] | str | None = None) -> str:
+def index_project(paths: list[str] | str | None = None) -> dict:
     """Index project source files and docs for semantic search. Prefer this before grep when exploring a repo."""
     return _index_project_impl(paths)
 
@@ -1547,49 +1658,62 @@ def search_code(
     limit: int = 10,
     language: str | None = None,
     min_score: float = 0.0,
-) -> str:
+) -> dict:
     """Semantic code search. Prefer this over grep when you know behavior but not exact symbols or filenames."""
     error, filtered = _search_code_results(query, limit=limit, language=language, min_score=min_score)
     if error:
-        return error
+        return _failure_from_error(
+            error,
+            query=query,
+            limit=limit,
+            language=language,
+            min_score=min_score,
+        )
 
-    output = []
-    for result in filtered:
-        header = f"**{result['file_path']}:{result['start_line']}-{result['end_line']}**"
-        if result.get("symbol"):
-            header += f" (`{result['symbol']}`)"
-        output.append(f"{header}\n```\n{result['content']}\n```")
-    return "\n\n".join(output)
+    results = [_code_result_payload(result) for result in filtered]
+    return _success(
+        query=query,
+        limit=limit,
+        language=language,
+        min_score=min_score,
+        result_total=len(results),
+        results=results,
+        warnings=[],
+    )
 
 
 @mcp.tool()
-def search_docs(query: str, limit: int = 10) -> str:
+def search_docs(query: str, limit: int = 10) -> dict:
     """Semantic docs search for README, plans, specs, and other text files."""
     error, results = _search_docs_results(query, limit=limit)
     if error:
-        return error
+        return _failure_from_error(error, query=query, limit=limit)
 
-    output = []
-    for result in results:
-        output.append(f"**{result['file_path']}**\n{result['content'][:500]}")
-    return "\n\n---\n\n".join(output)
+    payloads = [_doc_result_payload(result) for result in results]
+    return _success(
+        query=query,
+        limit=limit,
+        result_total=len(payloads),
+        results=payloads,
+        warnings=[],
+    )
 
 
 @mcp.tool()
-def remember(content: str, tags: str = "") -> str:
+def remember(content: str, tags: str = "") -> dict:
     """Store durable project memory. Do not store secrets."""
     error = _validate_memory_content(content)
     if error:
-        return error
+        return _failure_from_error(error)
 
     tags_error = _validate_tags(tags)
     if tags_error:
-        return tags_error
+        return _failure_from_error(tags_error)
 
     try:
         embeddings = _get_embedder().embed_text_sync([content])
-    except Exception as e:
-        return f"Embedding failed: {e}"
+    except RuntimeError as e:
+        return _failure("embedding_failed", f"embedding failed: {e}")
 
     inferred_kind = _infer_auto_memory_kind("", content, content)
     memory_kind = inferred_kind if inferred_kind != "summary" else "note"
@@ -1604,24 +1728,44 @@ def remember(content: str, tags: str = "") -> str:
         memory_kind=memory_kind,
         metadata={"capture_kind": "freeform"},
     )
-    return f"Remembered in project memory (id={memory_id}): {content[:200]}"
+    stored = db.get_memory(memory_id)
+    return _success(
+        backend="project-sqlite",
+        memory=_memory_payload(
+            _with_source_db(
+                stored
+                or {
+                    "id": memory_id,
+                    "summary": _truncate(_single_line(content), 200),
+                    "content": content,
+                    "memory_kind": memory_kind,
+                    "metadata": {"capture_kind": "freeform"},
+                },
+                "project",
+            ),
+            current_project_id=_ensure_project_id(),
+        ),
+    )
 
 
 @mcp.tool()
-def search_memory(query: str, limit: int = 10) -> str:
+def search_memory(query: str, limit: int = 10) -> dict:
     """Semantic memory search across remembered project decisions and notes."""
     error, results = _search_memory_results(query, limit=limit)
     if error:
-        return error
+        return _failure_from_error(error, query=query, limit=limit)
 
-    output = []
-    for result in results:
-        project = f" [{result['project_id']}]" if result.get("project_id") else ""
-        summary = result.get("summary") or result.get("content", "")
-        kind = result.get("memory_kind")
-        kind_prefix = f"{kind} " if kind else ""
-        output.append(f"[id={result['id']}{project} score={_score(result):.2f}] {kind_prefix}{summary}")
-    return "\n\n".join(output)
+    payloads = [
+        _memory_payload(result, current_project_id=_ensure_project_id())
+        for result in results
+    ]
+    return _success(
+        query=query,
+        limit=limit,
+        result_total=len(payloads),
+        results=payloads,
+        warnings=[],
+    )
 
 
 @mcp.tool()
@@ -1635,7 +1779,7 @@ def load_session_context(
     """Bootstrap likely context for a new task by retrieving related memories, code, and docs in one call."""
     error = _validate_query(task)
     if error:
-        return {"ok": False, "error": error, "task": task}
+        return _failure_from_error(error, task=task)
 
     payload: dict = {
         "ok": True,
@@ -1646,6 +1790,7 @@ def load_session_context(
         "memories": [],
         "code": [],
         "docs": [],
+        "errors": {},
     }
 
     if refresh_index:
@@ -1656,7 +1801,7 @@ def load_session_context(
 
     memory_error, memory_results = _search_memory_results(task, limit=memory_limit)
     if memory_error:
-        payload["memory_status"] = memory_error
+        payload["errors"]["memory"] = memory_error
     else:
         payload["memories"] = [
             _memory_payload(result, current_project_id=payload["project_id"])
@@ -1665,45 +1810,15 @@ def load_session_context(
 
     code_error, code_results = _search_code_results(task, limit=code_limit)
     if code_error:
-        payload["code_status"] = code_error
+        payload["errors"]["code"] = code_error
     else:
-        for result in code_results:
-            payload["code"].append(
-                {
-                    "file_path": result["file_path"],
-                    "start_line": result["start_line"],
-                    "end_line": result["end_line"],
-                    "symbol": result.get("symbol"),
-                    "language": result.get("language"),
-                    "score": round(_score(result), 4),
-                    "indexed_at": result.get("indexed_at"),
-                    "provenance": {
-                        "source": "project-index",
-                        "indexed_at": result.get("indexed_at"),
-                    },
-                    "content": result["content"],
-                }
-            )
+        payload["code"] = [_code_result_payload(result) for result in code_results]
 
     docs_error, docs_results = _search_docs_results(task, limit=docs_limit)
     if docs_error:
-        payload["docs_status"] = docs_error
+        payload["errors"]["docs"] = docs_error
     else:
-        for result in docs_results:
-            payload["docs"].append(
-                {
-                    "file_path": result["file_path"],
-                    "chunk_index": result["chunk_index"],
-                    "score": round(_score(result), 4),
-                    "indexed_at": result.get("indexed_at"),
-                    "content": result["content"],
-                    "preview": result["content"].replace("\n", " ")[:160],
-                    "provenance": {
-                        "source": "project-index",
-                        "indexed_at": result.get("indexed_at"),
-                    },
-                }
-            )
+        payload["docs"] = [_doc_result_payload(result) for result in docs_results]
 
     return payload
 
@@ -1712,7 +1827,7 @@ def load_session_context(
 def remember_structured(
     summary: str,
     details: str = "",
-    memory_kind: str = "decision",
+    memory_kind: MemoryKind = "decision",
     tags: str = "",
     source_session_id: str = "",
     source_message_id: str = "",
@@ -1721,22 +1836,22 @@ def remember_structured(
     """Store a structured durable memory for later automatic retrieval."""
     error = _validate_memory_content(summary)
     if error:
-        return {"ok": False, "error": error}
+        return _failure_from_error(error)
     details_error = _validate_memory_content(details) if details else None
     if details_error:
-        return {"ok": False, "error": details_error}
+        return _failure_from_error(details_error)
     tags_error = _validate_tags(tags)
     if tags_error:
-        return {"ok": False, "error": tags_error}
+        return _failure_from_error(tags_error)
     kind_error = _validate_memory_kind(memory_kind)
     if kind_error:
-        return {"ok": False, "error": kind_error}
+        return _failure_from_error(kind_error)
 
     content = summary if not details else f"{summary}\n\n{details}"
     try:
         embeddings = _get_embedder().embed_text_sync([content])
-    except Exception as e:
-        return {"ok": False, "error": f"Embedding failed: {e}"}
+    except RuntimeError as e:
+        return _failure("embedding_failed", f"embedding failed: {e}")
 
     db = _get_db()
     memory_id = db.remember_structured(
@@ -1751,14 +1866,16 @@ def remember_structured(
         source_message_id=source_message_id or None,
     )
     stored = db.get_memory(memory_id)
-    return {
-        "ok": True,
-        "backend": "project-sqlite",
-        "memory": _memory_payload(
-            stored or {"id": memory_id, "summary": summary, "content": content},
+    return _success(
+        backend="project-sqlite",
+        memory=_memory_payload(
+            _with_source_db(
+                stored or {"id": memory_id, "summary": summary, "content": content},
+                "project",
+            ),
             current_project_id=_ensure_project_id(),
         ),
-    }
+    )
 
 
 @mcp.tool()
@@ -1769,28 +1886,28 @@ def save_session_memory(
     source_message_id: str,
     user_message_id: str = "",
     tags: str = "session,auto",
-    memory_kind: str = "summary",
+    memory_kind: MemoryKind = "summary",
     metadata: dict | None = None,
 ) -> dict:
     """Persist a distilled durable memory from a completed chat turn."""
     if _should_skip_session_capture(response):
-        return {"ok": True, "skipped": True, "reason": "low-signal response"}
+        return _success(skipped=True, reason="low-signal response")
     task_error = _validate_memory_content(task)
     if task_error:
-        return {"ok": False, "error": task_error}
+        return _failure_from_error(task_error)
     response_error = _validate_memory_content(response)
     if response_error:
-        return {"ok": False, "error": response_error}
+        return _failure_from_error(response_error)
     if not source_session_id.strip():
-        return {"ok": False, "error": "Error: source_session_id is required."}
+        return _failure("missing_source_session_id", "source_session_id is required")
     if not source_message_id.strip():
-        return {"ok": False, "error": "Error: source_message_id is required."}
+        return _failure("missing_source_message_id", "source_message_id is required")
     tags_error = _validate_tags(tags)
     if tags_error:
-        return {"ok": False, "error": tags_error}
+        return _failure_from_error(tags_error)
     kind_error = _validate_memory_kind(memory_kind)
     if kind_error:
-        return {"ok": False, "error": kind_error}
+        return _failure_from_error(kind_error)
 
     enriched_metadata = {
         "capture_kind": "session_distillation",
@@ -1803,26 +1920,28 @@ def save_session_memory(
     summary, content = _distill_session_turn(task, response)
     inferred_memory_kind = memory_kind if memory_kind != "summary" else _infer_auto_memory_kind(task.strip(), summary, content)
     if _is_transient_status_auto_capture(task.strip(), summary, content):
-        return {"ok": True, "skipped": True, "reason": "non-durable auto memory"}
+        return _success(skipped=True, reason="non-durable auto memory")
     if _is_low_signal_auto_capture(
         task=task.strip(),
         summary=summary,
         content=content,
         capture_kind="session_distillation",
     ):
-        return {"ok": True, "skipped": True, "reason": "low-signal auto memory"}
+        return _success(skipped=True, reason="low-signal auto memory")
 
     user_db = _get_user_db()
     existing = user_db.get_memory_by_source(
         source_session_id.strip(), source_message_id.strip()
     )
     if existing:
-        return {
-            "ok": True,
-            "backend": "user-sqlite",
-            "deduplicated": True,
-            "memory": _memory_payload(existing, current_project_id=_ensure_project_id()),
-        }
+        return _success(
+            backend="user-sqlite",
+            deduplicated=True,
+            memory=_memory_payload(
+                _with_source_db(existing, "user"),
+                current_project_id=_ensure_project_id(),
+            ),
+        )
 
     duplicate = _find_duplicate_auto_memory(
         user_db=user_db,
@@ -1832,14 +1951,16 @@ def save_session_memory(
         capture_kind="session_distillation",
     )
     if duplicate:
-        return {
-            "ok": True,
-            "backend": "user-sqlite",
-            "deduplicated": True,
-            "skipped": True,
-            "reason": "duplicate auto memory",
-            "memory": _memory_payload(duplicate, current_project_id=_ensure_project_id()),
-        }
+        return _success(
+            backend="user-sqlite",
+            deduplicated=True,
+            skipped=True,
+            reason="duplicate auto memory",
+            memory=_memory_payload(
+                _with_source_db(duplicate, "user"),
+                current_project_id=_ensure_project_id(),
+            ),
+        )
 
     non_novel = _find_non_novel_auto_memory(
         project_id=_ensure_project_id(),
@@ -1847,16 +1968,15 @@ def save_session_memory(
         content=content,
     )
     if non_novel:
-        return {
-            "ok": True,
-            "backend": "user-sqlite",
-            "deduplicated": True,
-            "skipped": True,
-            "reason": "non-novel auto memory",
-            "memory_kind": inferred_memory_kind,
-            "memory": _memory_payload(non_novel, current_project_id=_ensure_project_id()),
-            "merge_suggestion": _merge_suggestion_payload(non_novel, _ensure_project_id()),
-        }
+        return _success(
+            backend="user-sqlite",
+            deduplicated=True,
+            skipped=True,
+            reason="non-novel auto memory",
+            memory_kind=inferred_memory_kind,
+            memory=_memory_payload(non_novel, current_project_id=_ensure_project_id()),
+            merge_suggestion=_merge_suggestion_payload(non_novel, _ensure_project_id()),
+        )
 
     merge_candidate = _find_merge_candidate(
         project_id=_ensure_project_id(),
@@ -1867,8 +1987,8 @@ def save_session_memory(
 
     try:
         embedding = _get_embedder().embed_text_sync([content])[0]
-    except Exception as e:
-        return {"ok": False, "error": f"Embedding failed: {e}"}
+    except RuntimeError as e:
+        return _failure("embedding_failed", f"embedding failed: {e}")
 
     memory_id = user_db.remember_structured(
         summary=summary,
@@ -1882,17 +2002,19 @@ def save_session_memory(
         source_message_id=source_message_id.strip(),
     )
     stored = user_db.get_memory(memory_id)
-    return {
-        "ok": True,
-        "backend": "user-sqlite",
-        "deduplicated": False,
-        "memory_kind": inferred_memory_kind,
-        "merge_suggestion": _merge_suggestion_payload(merge_candidate, _ensure_project_id()),
-        "memory": _memory_payload(
-            stored or {"id": memory_id, "summary": summary, "content": content},
+    return _success(
+        backend="user-sqlite",
+        deduplicated=False,
+        memory_kind=inferred_memory_kind,
+        merge_suggestion=_merge_suggestion_payload(merge_candidate, _ensure_project_id()),
+        memory=_memory_payload(
+            _with_source_db(
+                stored or {"id": memory_id, "summary": summary, "content": content},
+                "user",
+            ),
             current_project_id=_ensure_project_id(),
         ),
-    }
+    )
 
 
 @mcp.tool()
@@ -1909,27 +2031,27 @@ def save_session_summary(
     if turns:
         last_assistant = str(turns[-1].get("assistant", ""))
         if _should_skip_session_capture(last_assistant):
-            return {"ok": True, "skipped": True, "reason": "low-signal response"}
+            return _success(skipped=True, reason="low-signal response")
     task_error = _validate_memory_content(task)
     if task_error:
-        return {"ok": False, "error": task_error}
+        return _failure_from_error(task_error)
     if not isinstance(turns, list):
-        return {"ok": False, "error": "Error: turns must be a list."}
+        return _failure("invalid_turns", "turns must be a list")
     if not source_session_id.strip():
-        return {"ok": False, "error": "Error: source_session_id is required."}
+        return _failure("missing_source_session_id", "source_session_id is required")
     if not source_message_id.strip():
-        return {"ok": False, "error": "Error: source_message_id is required."}
+        return _failure("missing_source_message_id", "source_message_id is required")
     tags_error = _validate_tags(tags)
     if tags_error:
-        return {"ok": False, "error": tags_error}
+        return _failure_from_error(tags_error)
 
     try:
         summary, content = _distill_session_summary(turns)
     except ValueError as e:
-        return {"ok": False, "error": str(e)}
+        return _failure("invalid_turns", str(e))
     inferred_memory_kind = "summary"
     if _is_transient_status_auto_capture(task.strip(), summary, content):
-        return {"ok": True, "skipped": True, "reason": "non-durable auto memory"}
+        return _success(skipped=True, reason="non-durable auto memory")
     if _is_low_signal_auto_capture(
         task=task.strip(),
         summary=summary,
@@ -1937,7 +2059,7 @@ def save_session_summary(
         capture_kind="session_rollup",
         turn_count=len(turns),
     ):
-        return {"ok": True, "skipped": True, "reason": "low-signal auto memory"}
+        return _success(skipped=True, reason="low-signal auto memory")
 
     summary_source_message_id = "__session_summary__"
     enriched_metadata = {
@@ -1952,20 +2074,22 @@ def save_session_summary(
 
     try:
         embedding = _get_embedder().embed_text_sync([content])[0]
-    except Exception as e:
-        return {"ok": False, "error": f"Embedding failed: {e}"}
+    except RuntimeError as e:
+        return _failure("embedding_failed", f"embedding failed: {e}")
 
     user_db = _get_user_db()
     existing = user_db.get_memory_by_source(
         source_session_id.strip(), summary_source_message_id
     )
     if existing and _metadata_dict(existing.get("metadata")).get("latest_message_id") == source_message_id.strip():
-        return {
-            "ok": True,
-            "backend": "user-sqlite",
-            "deduplicated": True,
-            "memory": _memory_payload(existing, current_project_id=_ensure_project_id()),
-        }
+        return _success(
+            backend="user-sqlite",
+            deduplicated=True,
+            memory=_memory_payload(
+                _with_source_db(existing, "user"),
+                current_project_id=_ensure_project_id(),
+            ),
+        )
     duplicate = _find_duplicate_auto_memory(
         user_db=user_db,
         project_id=_ensure_project_id(),
@@ -1974,14 +2098,16 @@ def save_session_summary(
         capture_kind="session_rollup",
     )
     if duplicate:
-        return {
-            "ok": True,
-            "backend": "user-sqlite",
-            "deduplicated": True,
-            "skipped": True,
-            "reason": "duplicate auto memory",
-            "memory": _memory_payload(duplicate, current_project_id=_ensure_project_id()),
-        }
+        return _success(
+            backend="user-sqlite",
+            deduplicated=True,
+            skipped=True,
+            reason="duplicate auto memory",
+            memory=_memory_payload(
+                _with_source_db(duplicate, "user"),
+                current_project_id=_ensure_project_id(),
+            ),
+        )
     merge_candidate = _find_merge_candidate(
         project_id=_ensure_project_id(),
         summary=summary,
@@ -1998,20 +2124,22 @@ def save_session_summary(
         metadata=enriched_metadata,
         source_session_id=source_session_id.strip(),
         source_message_id=summary_source_message_id,
-        supersedes=str(existing["id"]) if existing else None,
+        supersedes=int(existing["id"]) if existing else None,
     )
     stored = user_db.get_memory(memory_id)
-    return {
-        "ok": True,
-        "backend": "user-sqlite",
-        "deduplicated": False,
-        "memory_kind": inferred_memory_kind,
-        "merge_suggestion": _merge_suggestion_payload(merge_candidate, _ensure_project_id()),
-        "memory": _memory_payload(
-            stored or {"id": memory_id, "summary": summary, "content": content},
+    return _success(
+        backend="user-sqlite",
+        deduplicated=False,
+        memory_kind=inferred_memory_kind,
+        merge_suggestion=_merge_suggestion_payload(merge_candidate, _ensure_project_id()),
+        memory=_memory_payload(
+            _with_source_db(
+                stored or {"id": memory_id, "summary": summary, "content": content},
+                "user",
+            ),
             current_project_id=_ensure_project_id(),
         ),
-    }
+    )
 
 
 @mcp.tool()
@@ -2019,7 +2147,7 @@ def supersede_memory(
     old_memory_id: str,
     summary: str,
     details: str = "",
-    memory_kind: str = "decision",
+    memory_kind: MemoryKind = "decision",
     tags: str = "",
     source_session_id: str = "",
     source_message_id: str = "",
@@ -2027,25 +2155,32 @@ def supersede_memory(
 ) -> dict:
     """Create a new structured memory that supersedes an older one."""
     if not old_memory_id:
-        return {"ok": False, "error": "Error: old_memory_id is required."}
+        return _failure("missing_old_memory_id", "old_memory_id is required")
+    old_memory_int = _int_or_none(old_memory_id)
+    if old_memory_int is None:
+        return _failure(
+            "invalid_old_memory_id",
+            "old_memory_id must be an integer",
+            old_memory_id=old_memory_id,
+        )
     error = _validate_memory_content(summary)
     if error:
-        return {"ok": False, "error": error}
+        return _failure_from_error(error)
     details_error = _validate_memory_content(details) if details else None
     if details_error:
-        return {"ok": False, "error": details_error}
+        return _failure_from_error(details_error)
     tags_error = _validate_tags(tags)
     if tags_error:
-        return {"ok": False, "error": tags_error}
+        return _failure_from_error(tags_error)
     kind_error = _validate_memory_kind(memory_kind)
     if kind_error:
-        return {"ok": False, "error": kind_error}
+        return _failure_from_error(kind_error)
 
     content = summary if not details else f"{summary}\n\n{details}"
     try:
         embedding = _get_embedder().embed_text_sync([content])[0]
-    except Exception as e:
-        return {"ok": False, "error": f"Embedding failed: {e}"}
+    except RuntimeError as e:
+        return _failure("embedding_failed", f"embedding failed: {e}")
 
     db = _get_user_db()
     new_memory_id = db.remember_structured(
@@ -2058,93 +2193,85 @@ def supersede_memory(
         metadata={"capture_kind": "manual", **(metadata or {})},
         source_session_id=source_session_id or None,
         source_message_id=source_message_id or None,
-        supersedes=old_memory_id,
+        supersedes=old_memory_int,
     )
     stored = db.get_memory(new_memory_id)
-    return {
-        "ok": True,
-        "backend": "user-sqlite",
-        "memory": _memory_payload(
-            stored
-            or {
-                "id": new_memory_id,
-                "summary": summary,
-                "content": content,
-                "supersedes": old_memory_id,
-            },
+    return _success(
+        backend="user-sqlite",
+        memory=_memory_payload(
+            _with_source_db(
+                stored
+                or {
+                    "id": new_memory_id,
+                    "summary": summary,
+                    "content": content,
+                    "supersedes": old_memory_int,
+                },
+                "user",
+            ),
             current_project_id=_ensure_project_id(),
         ),
-    }
+    )
 
 
 @mcp.tool()
-def forget(memory_id: str) -> str:
+def forget(memory_id: str) -> dict:
     """Delete a remembered item by ID."""
     db = _get_db()
-    try:
-        sqlite_id = int(memory_id)
-    except (TypeError, ValueError):
-        sqlite_id = None
+    sqlite_id = _int_or_none(memory_id)
+    if sqlite_id is None:
+        return _failure("invalid_memory_id", "memory_id must be an integer", memory_id=memory_id)
     if sqlite_id is not None:
         content = db.forget(sqlite_id)
         if content:
-            return f"Deleted from project memory: {content[:200]}"
+            return _success(
+                backend="project-sqlite",
+                deleted=True,
+                memory_id=sqlite_id,
+                content_preview=content[:200],
+            )
     user_db = _get_user_db()
-    if sqlite_id is None:
-        return f"Memory {memory_id} not found."
     content = user_db.forget(sqlite_id)
     if content:
-        return f"Deleted from user memory: {content[:200]}"
-    return f"Memory {memory_id} not found."
+        return _success(
+            backend="user-sqlite",
+            deleted=True,
+            memory_id=sqlite_id,
+            content_preview=content[:200],
+        )
+    return _failure("memory_not_found", f"memory {memory_id} not found", memory_id=sqlite_id)
 
 
 @mcp.tool()
-def project_status() -> str:
+def project_status() -> dict:
     """Summarize the current project index and memory state."""
     db = _get_db()
-    metadata = _index_metadata(db)
+    metadata_state = _index_metadata(db)
     stale = _stale_state(db, Path.cwd(), _ensure_project_id())
-    lines = [
-        f"Project id: {_ensure_project_id()}",
-        f"Code chunks: {db.code_chunk_count()}",
-        f"Doc chunks: {db.doc_count()}",
-        f"Project memories: {db.memory_count()}",
-        f"User memories: {_get_user_db().memory_count()}",
-    ]
-    if metadata:
-        lines.append(f"Indexed at: {metadata.get('indexed_at') or 'unknown'}")
-        if metadata.get("git_head"):
-            lines.append(f"Indexed git HEAD: {metadata['git_head']}")
-    if stale.get("warnings"):
-        lines.append(f"Stale warnings: {len(stale['warnings'])}")
-        for warning in stale["warnings"][:3]:
-            lines.append(f"- {warning['detail']}")
-    else:
-        lines.append("Stale warnings: none")
     language_stats = db.language_stats()
-    if language_stats:
-        language_summary = ", ".join(
-            f"{language or 'unknown'}={count}" for language, count in sorted(language_stats.items())
-        )
-        lines.append(f"Languages: {language_summary}")
     cleanup_candidates = _memory_cleanup_candidates(limit=3)
-    if cleanup_candidates:
-        lines.append(f"Memory cleanup candidates: {len(cleanup_candidates)}")
-        for candidate in cleanup_candidates:
-            lines.append(
-                f"- [{candidate['source_db']}:{candidate['id']}] {candidate['summary']} "
-                f"({', '.join(candidate['cleanup_reasons'])})"
-            )
-    else:
-        lines.append("Memory cleanup candidates: none")
-    return "\n".join(lines)
+    return _success(
+        project_id=_ensure_project_id(),
+        status={
+            "counts": {
+                "code_chunks": db.code_chunk_count(),
+                "doc_chunks": db.doc_count(),
+                "project_memories": db.memory_count(),
+                "user_memories": _get_user_db().memory_count(),
+            },
+            "metadata": metadata_state,
+            "stale": stale,
+            "language_stats": language_stats,
+            "cleanup_candidates": cleanup_candidates,
+        },
+    )
 
 
 @mcp.tool()
 def memory_cleanup_report(limit: int = 10) -> dict:
     """List low-value or stale memories that are good cleanup candidates."""
     if limit < 1:
-        return {"ok": False, "error": "Error: limit must be at least 1."}
+        return _failure("invalid_limit", "limit must be at least 1", limit=limit)
     candidates = _memory_cleanup_candidates(limit=limit)
     return {
         "ok": True,
@@ -2158,7 +2285,7 @@ def memory_cleanup_report(limit: int = 10) -> dict:
 def memory_quality_report(limit: int = 10) -> dict:
     """Summarize memory quality, provenance mix, and cleanup pressure."""
     if limit < 1:
-        return {"ok": False, "error": "Error: limit must be at least 1."}
+        return _failure("invalid_limit", "limit must be at least 1", limit=limit)
 
     payloads = _all_memory_payloads()
     stale = [item for item in payloads if item.get("is_stale") is True]
@@ -2226,7 +2353,7 @@ def memory_quality_report(limit: int = 10) -> dict:
 def cleanup_duplicate_auto_memories(limit: int = 20, apply: bool = False) -> dict:
     """Report or prune duplicate auto-captured memories, keeping the newest copy in each group."""
     if limit < 1:
-        return {"ok": False, "error": "Error: limit must be at least 1."}
+        return _failure("invalid_limit", "limit must be at least 1", limit=limit)
 
     groups = _duplicate_auto_memory_groups(_all_memory_payloads())[:limit]
     results: list[dict] = []
@@ -2237,13 +2364,13 @@ def cleanup_duplicate_auto_memories(limit: int = 20, apply: bool = False) -> dic
             continue
         keep_id = memory_ids[-1]
         delete_ids = memory_ids[:-1]
-        deleted_ids: list[str] = []
+        deleted_ids: list[int] = []
         for memory_id in delete_ids:
             if not apply:
                 continue
             source_db = "user"
             for item in _all_memory_payloads():
-                if str(item.get("id") or "") == memory_id:
+                if int(item.get("id") or 0) == int(memory_id):
                     source_db = str(item.get("source_db") or "user")
                     break
             if _delete_memory_by_source_db(source_db, memory_id):
