@@ -33,6 +33,7 @@ htmlcov/
 .vibe/index.db-wal
 .vibe/backups/
 .gemini/
+.claude/.ralph-*.md
 
 # Internal docs (specs, plans, design docs)
 docs/superpowers/
