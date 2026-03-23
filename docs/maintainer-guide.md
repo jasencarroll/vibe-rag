@@ -10,10 +10,10 @@ If you are looking for the user-facing product docs, start with the [README](../
 
 Current public posture should stay consistent across those docs:
 
-- Vibe is the first-class path
 - Claude Code is strong
-- Codex works with DX tax
-- Gemini CLI is experimental
+- Codex is strong
+- Vibe is bootstrapped
+- Gemini CLI is untested
 
 ## Source Of Truth
 
@@ -33,7 +33,7 @@ Keep the public posture explicit and consistent:
 - Repo-configured hook commands must not be executed by diagnostics like `vibe-rag doctor`.
 - Project-scoped retrieval is the default for memory search, session bootstrap, cleanup, and status surfaces.
 - Session-start context is untrusted retrieval output and should never be described as authoritative policy.
-- Hosted embedding providers and remote Ollama hosts are explicit off-host data flows, not transparent local fallbacks.
+- OpenRouter is an explicit off-host data flow, not a transparent local fallback.
 
 ## Packaging Rules
 
@@ -169,7 +169,7 @@ When session bootstrap or scaffold behavior changes, verify:
 - packaged `vibe`
 - packaged `vibe-rag`
 - trusted project-local `.vibe/config.toml`
-- MCP provider env behavior
+- OpenRouter env behavior (`RAG_OR_*`) and DB env behavior
 - local user memory at `~/.vibe/memory.db`
 
 For a real packaged E2E smoke:

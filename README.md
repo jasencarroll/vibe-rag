@@ -4,18 +4,33 @@
 
 It is an MCP server for semantic repo search, durable coding memory, and session-start briefings.
 
+## Golden Path
+
+Use the packaged `vibe-rag` binary with OpenRouter-backed embeddings and generated client scaffolding.
+
+```bash
+export RAG_OR_API_KEY=...
+uv tool install --python 3.12 vibe-rag
+vibe-rag init my-project
+cd my-project
+vibe
+```
+
+First prompts:
+
+```text
+load session context for understanding this repo
+index this project
+search the code for authentication handling
+search docs for deployment instructions
+remember that auth tokens are validated in the API gateway
+```
+
 It is built for agentic coding workflows across clients, but the product bar is simple:
 
 - packaged install path works from the built wheel, not only from source
 - repo docs stay canonical
 - session-start context improves the first turn instead of adding noise
-
-Current posture:
-
-- Vibe is the first-class path today.
-- Claude Code is close behind and works well with the current session-start hook path.
-- Codex works, but it still carries startup UX tax.
-- Gemini CLI is scaffolded, but it is still experimental.
 
 It adds:
 
@@ -23,7 +38,18 @@ It adds:
 - semantic docs search
 - durable session memory
 
-When `VIBE_RAG_EMBEDDING_PROVIDER` is not set, `vibe-rag` uses Ollama by default and requires a reachable Ollama endpoint. Set `VIBE_RAG_EMBEDDING_PROVIDER` explicitly for hosted providers.
+`vibe-rag` uses OpenRouter-only embeddings by default:
+
+- model: `perplexity/pplx-embed-v1-4b`
+- dimensions: `2560`
+
+Set these environment variables for OpenRouter and storage:
+
+- `RAG_OR_API_KEY` (required)
+- `RAG_OR_EMBED_MOD` (optional, defaults above)
+- `RAG_OR_EMBED_DIM` (optional, defaults above)
+- `RAG_DB` (project DB override)
+- `RAG_USER_DB` (user DB override)
 
 Storage is local and simple:
 
@@ -38,16 +64,7 @@ Trust model:
 - MCP tool arguments and untrusted repo contents should be treated as untrusted input.
 - `search_memory` and `load_session_context` stay project-scoped by default, including user-memory retrieval.
 - Session-start context is retrieval output, not an authority signal. Clients should treat it as untrusted context.
-- Hosted embedding providers and remote Ollama hosts receive indexed content by design.
-
-The packaged-install bar is non-negotiable:
-
-1. build the wheel
-2. install the wheel
-3. scaffold a repo
-4. verify session-start context and retrieval from the installed binary
-
-If it only works from a source checkout, it is not ready.
+- OpenRouter receives indexed content by design.
 
 ## Read This First
 
@@ -61,33 +78,22 @@ If it only works from a source checkout, it is not ready.
 | Layer | Status | Notes |
 | --- | --- | --- |
 | `vibe-rag serve` MCP server | core identity | client-agnostic semantic repo search and memory |
-| Vibe integration | first-class | native `SessionStart` path through the maintained `mistral-vibe` fork |
-| Claude Code integration | strong | session-start scaffolding ships and works well, but Vibe remains the reference path |
-| Codex integration | usable with DX tax | session-start scaffolding works, but startup UX is still rougher than the best paths |
+| Claude Code integration | strong | best-supported operational path |
+| Codex integration | strong | session-start scaffolding ships and works well |
+| Vibe integration | bootstrapped | maintained for startup and compatibility |
 | Gemini CLI integration | experimental | project scaffolding plus session-start hook |
 
 ## What You Need
 
 - Python 3.12+
 - `uv`
-- Ollama
-- Vibe
+- OpenRouter API key
 
 Use Python 3.12 for `uv tool install`. In this environment, `tree-sitter-languages` does not have cp313 wheels.
 
 ## Vibe Integration
 
-If you want the most complete integration path today, use the fork that contains the native `SessionStart` work `vibe-rag` expects:
-
-- `https://github.com/jasencarroll/mistral-vibe`
-
-Install it:
-
-```bash
-uv tool uninstall mistral-vibe || true
-uv tool install git+https://github.com/jasencarroll/mistral-vibe.git
-vibe --version
-```
+If you want to run with Vibe, use the generated `vibe` project scaffolding and trust the resolved local path.
 
 ## Install vibe-rag
 
@@ -110,14 +116,11 @@ If your machine defaults `uv` tools to Python 3.13:
 uv tool install --python 3.12 vibe-rag
 ```
 
-## Quick Start
+## Install And Start
 
-Choose the client path you want to start with.
-
-For the most complete Vibe path:
+For the default bootstrap flow:
 
 ```bash
-vibe-rag setup-ollama
 vibe-rag init my-project
 cd my-project
 vibe
@@ -139,7 +142,7 @@ args = ["serve"]
 command = "'/absolute/path/to/vibe-rag' hook-session-start --format vibe"
 ```
 
-Optional Ollama overrides:
+Optional embedding/storage overrides:
 
 ```toml
 [[mcp_servers]]
@@ -148,32 +151,22 @@ transport = "stdio"
 command = "/absolute/path/to/vibe-rag"
 args = ["serve"]
 env = {
-  VIBE_RAG_EMBEDDING_PROVIDER = "ollama",
-  VIBE_RAG_EMBEDDING_MODEL = "qwen3-embedding:0.6b",
-  VIBE_RAG_EMBEDDING_DIMENSIONS = "1024"
+  RAG_OR_API_KEY = "your-openrouter-key",
+  RAG_OR_EMBED_MOD = "perplexity/pplx-embed-v1-4b",
+  RAG_OR_EMBED_DIM = "2560",
+  RAG_DB = "/path/to/project/index.db",
+  RAG_USER_DB = "/path/to/user/memory.db"
 }
 ```
-
-Optional:
-
-- `VIBE_RAG_OLLAMA_HOST`
-- `VIBE_RAG_ALLOW_REMOTE_OLLAMA_HOST=true` to allow non-loopback Ollama hosts.
-- `MISTRAL_API_KEY` if you switch to the Mistral provider
-- `OPENAI_API_KEY` if you switch to the OpenAI provider
-- `VOYAGE_API_KEY` if you switch to the Voyage provider
-
-If `VIBE_RAG_OLLAMA_HOST` is not set, `vibe-rag` checks:
-
-- `OLLAMA_HOST`
-- `http://localhost:11434`
-- `http://127.0.0.1:11434`
 
 Helper commands:
 
 ```bash
 vibe-rag doctor
 vibe-rag doctor --fix
-vibe-rag setup-ollama
+vibe-rag reindex
+vibe-rag reindex --full
+vibe-rag reset-index
 vibe-rag hook-session-start --format codex
 ```
 
@@ -196,21 +189,19 @@ When `doctor` reports stale state, run:
 vibe-rag reindex
 ```
 
-First prompts:
+When `doctor` reports an incompatible index after an embedding-profile change, run:
 
-```text
-load session context for understanding this repo
-index this project
-search the code for authentication handling
-search docs for deployment instructions
-remember that auth tokens are validated in the API gateway
-summarize thread auth-refactor
+```bash
+vibe-rag reindex --full
+# or
+vibe-rag reset-index
 ```
 
 Success looks like:
 
 - `index this project` reports code and docs indexed
 - `vibe-rag reindex` refreshes the local `.vibe/index.db` directly from the CLI
+- `vibe-rag reindex --full` forces a full rebuild when the embedding profile changes
 - `search the code for ...` returns structured results with `ok`, `results`, and ranking metadata
 - `search docs for ...` returns structured doc hits
 - `remember ...` returns a structured memory payload with an id
@@ -243,16 +234,16 @@ Current support level is shown in the support table above.
 
 Generated repo messaging should match that table:
 
-- Vibe is the first-class path
 - Claude Code is strong
-- Codex works with DX tax
+- Codex is strong
+- Vibe is bootstrapped for compatibility
 - Gemini CLI is experimental
 
 ## Storage Model
 
 | Layer | Purpose | Storage | Tools |
 | --- | --- | --- | --- |
-| Project index | semantic code and docs retrieval in the current repo | `.vibe/index.db` | `index_project`, `search_code`, `search_docs` |
+| Project index | semantic code and docs retrieval in the current repo | `.vibe/index.db` | `index_project`, `search(scope="code")`, `search(scope="docs")`, `project_status` |
 | User memory | durable cross-session memory | `~/.vibe/memory.db` | `remember`, `search_memory`, `summarize_thread`, `forget`, `load_session_context` |
 
 ## MCP Tool Contract
@@ -264,24 +255,22 @@ MCP tools now return structured payloads:
 
 Retrieval tools return machine-readable `results` arrays rather than formatted markdown strings.
 
-## Embedding Providers
+## Tool Naming
 
-Current providers:
+`vibe-rag` itself exposes bare MCP tool names such as `load_session_context`, `index_project`, `search`, `search_memory`, `remember`, and `project_status`.
 
-- `ollama` (default)
-- `mistral`
-- `openai`
-- `voyage`
+Some clients prefix tool names with the configured server name. In generated Vibe projects the MCP server is named `memory`, so those same tools appear as `memory_load_session_context`, `memory_index_project`, `memory_search`, `memory_search_memory`, `memory_remember`, and `memory_project_status`.
 
-Provider env vars:
+The natural-language prompts in the golden path are still the intended operator flow.
 
-- `VIBE_RAG_EMBEDDING_PROVIDER`
-- `VIBE_RAG_EMBEDDING_MODEL`
-- `VIBE_RAG_EMBEDDING_DIMENSIONS`
-- `VIBE_RAG_OLLAMA_HOST` for Ollama
-- `OPENAI_API_KEY` for OpenAI
-- `VOYAGE_API_KEY` for Voyage
-- `VIBE_RAG_CODE_EMBEDDING_MODEL` for Voyage code embeddings
+## Embedding and Storage Config
+
+- OpenRouter-only, with `perplexity/pplx-embed-v1-4b` at `2560` dimensions
+- `RAG_OR_API_KEY` (required)
+- `RAG_OR_EMBED_MOD` (optional)
+- `RAG_OR_EMBED_DIM` (optional)
+- `RAG_DB` (optional)
+- `RAG_USER_DB` (optional)
 
 ## Local Evals
 
@@ -330,10 +319,10 @@ Current artifact summaries include:
 Trend summaries additionally show retrieval, fallback, noise, index-time, and memory-quality drift across the selected artifact window.
 Persistent-memory snapshots use the real repo and user DB instead of the eval runner's temporary sqlite DBs, so they capture maintainer-memory drift over time.
 
-For memory hygiene and provenance mix in the current repo, call the MCP tool:
+For memory hygiene and provenance mix in the current repo, call:
 
 ```text
-memory_quality_report
+project_status include_memory_health=true
 ```
 
 To preview or prune duplicate auto-captured memories:
@@ -355,6 +344,22 @@ The test suite also now includes scenario-based memory usefulness evals, so `loa
 
 Auto-captured session memory is also more selective at write time now: transient status updates and non-novel restatements are skipped before they become durable memory.
 When a one-turn auto capture is worth keeping, `vibe-rag` now infers a stronger memory kind such as `decision`, `constraint`, `todo`, or `fact` instead of defaulting everything to `summary`, and it can suggest superseding a nearby existing memory when the new capture looks like an update.
+
+Current posture:
+
+- Claude Code is strongest today.
+- Codex is also strongly supported.
+- Vibe is bootstrapped for compatibility and launch speed.
+- Gemini CLI is scaffolded but untested.
+
+The packaged-install bar is non-negotiable:
+
+1. build the wheel
+2. install the wheel
+3. scaffold a repo
+4. verify session-start context and retrieval from the installed binary
+
+If it only works from a source checkout, it is not ready.
 
 ## Docs
 

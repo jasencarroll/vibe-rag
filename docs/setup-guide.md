@@ -4,25 +4,33 @@ Use this when you are wiring a fresh machine, validating a packaged install, or 
 
 If you already have the tool installed and want the day-to-day operating flow, jump to the [User Guide](user-guide.md). If you are changing packaging, scaffold, or release behavior in this repo, use the [Maintainer Guide](maintainer-guide.md).
 
+If you just want the working path first, do this:
+
+```bash
+uv tool install --python 3.12 vibe-rag
+vibe-rag init demo
+cd demo
+# start your generated client (vibe, codex, claude, or gemini)
+```
+
+Then start the session with:
+
+```text
+load session context for understanding this repo
+index this project
+```
+
 Target state:
 
 - packaged `vibe-rag` from an installed wheel
 - project-local config for your chosen client
 - local durable memory in `~/.vibe/memory.db`
 - session bootstrap where supported
-- Ollama embeddings with `qwen3-embedding:0.6b`
+- OpenRouter embeddings with `perplexity/pplx-embed-v1-4b` at `2560` dims
 - client scaffolding for Vibe, Codex, Claude Code, or Gemini CLI
 
 `vibe-rag` itself is the MCP server and memory/search layer.
 Client integrations sit on top of that core.
-
-Acceptance bar:
-
-1. install the packaged binary
-2. scaffold a repo from that binary
-3. verify session-start context and retrieval from the generated client config
-
-If you only proved the source checkout path, you did not prove the product.
 
 ## 1. Install the Tools
 
@@ -39,18 +47,10 @@ If `uv` defaults to Python 3.13:
 uv tool install --python 3.12 vibe-rag
 ```
 
-Start Ollama and pull the default embedding model:
+Set the OpenRouter key once in your environment:
 
 ```bash
-vibe-rag setup-ollama
-```
-
-If you want the most complete Vibe integration, install the Vibe fork:
-
-```bash
-uv tool uninstall mistral-vibe || true
-uv tool install git+https://github.com/jasencarroll/mistral-vibe.git
-vibe --version
+export RAG_OR_API_KEY="..."
 ```
 
 ## 2. Scaffold a Repo
@@ -97,10 +97,12 @@ Notes:
 
 - Durable user memory is stored automatically in `~/.vibe/memory.db`.
 - Project code and docs index stay in `.vibe/index.db`.
-- Ollama is the default embedding provider.
+- Embeddings use OpenRouter, defaulting to `perplexity/pplx-embed-v1-4b` and `2560` dimensions.
 - Retrieval stays project-scoped by default, including user-memory results used by session bootstrap.
+- `vibe-rag` exposes bare MCP tool names like `load_session_context`, `index_project`, `search`, `remember`, and `project_status`.
+- In generated Vibe projects the MCP server is named `memory`, so some clients show those same tools as `memory_load_session_context`, `memory_index_project`, `memory_search`, `memory_remember`, and `memory_project_status`.
 
-If Ollama is running on a non-default host, use:
+Optional embed/storage env block:
 
 ```toml
 [[mcp_servers]]
@@ -109,25 +111,19 @@ transport = "stdio"
 command = "/absolute/path/to/vibe-rag"
 args = ["serve"]
 env = {
-  VIBE_RAG_OLLAMA_HOST = "http://192.168.1.5:11434",
-  VIBE_RAG_ALLOW_REMOTE_OLLAMA_HOST = "true",
-  VIBE_RAG_EMBEDDING_DIMENSIONS = "1024"
+  RAG_OR_API_KEY = "your-openrouter-key",
+  RAG_OR_EMBED_MOD = "perplexity/pplx-embed-v1-4b",
+  RAG_OR_EMBED_DIM = "2560",
+  RAG_DB = "/path/to/.vibe/index.db",
+  RAG_USER_DB = "/path/to/.vibe/memory.db"
 }
 ```
-
-Optional:
-
-- `VIBE_RAG_OLLAMA_HOST`
-- `VIBE_RAG_ALLOW_REMOTE_OLLAMA_HOST=true` to permit non-loopback Ollama hosts (disabled by default).
-
-If `VIBE_RAG_OLLAMA_HOST` is not set, `vibe-rag` checks `OLLAMA_HOST`, then `localhost`, then `127.0.0.1`.
 
 Helper commands:
 
 ```bash
 vibe-rag doctor
 vibe-rag doctor --fix
-vibe-rag setup-ollama
 vibe-rag hook-session-start --format codex
 ```
 
@@ -149,9 +145,15 @@ If you want to refresh the local index outside the client loop, run:
 vibe-rag reindex
 ```
 
-If Ollama is unavailable and `VIBE_RAG_EMBEDDING_PROVIDER` is unset, `vibe-rag` reports embedding provider unavailability. Use an explicit value (`ollama`, `mistral`, `openai`, or `voyage`) to select a different provider.
+If the embedding profile changes or `doctor` reports an incompatible index, run:
 
-If you use a hosted provider or a non-loopback Ollama host, indexed code, docs, and memory text leave the machine by design. Only do that when you accept that tradeoff.
+```bash
+vibe-rag reindex --full
+# or
+vibe-rag reset-index
+```
+
+If `RAG_OR_API_KEY` is missing, `vibe-rag` reports a provider configuration error.
 
 ## 3A. Optional Codex And Claude Code Scaffolding
 
@@ -176,10 +178,10 @@ For this maintainer repo specifically, the tracked `.vibe/`, `.codex/`, `.claude
 Current support level:
 
 - `vibe-rag serve`: core identity
-- Vibe: first-class path
-- Claude Code: strong session-start path
-- Codex: usable, but with startup DX tax
-- Gemini CLI: experimental
+- Claude Code: strongest
+- Codex: strongly supported
+- Vibe: bootstrapped compatibility path
+- Gemini CLI: untested
 
 ## 4. Trust the Repo
 
@@ -213,6 +215,16 @@ Expected:
 
 If you are calling MCP tools programmatically, expect structured responses with `ok`, `results`, and structured `error` payloads instead of freeform strings.
 
+## Validation Bar
+
+This is the acceptance bar for the product:
+
+1. install the packaged binary
+2. scaffold a repo from that binary
+3. verify session-start context and retrieval from the generated client config
+
+If you only proved the source checkout path, you did not prove the product.
+
 ## 6. Check Local State
 
 ```bash
@@ -233,14 +245,20 @@ If code or docs search is empty:
 - trust the repo
 - run `index this project`
 - or run `vibe-rag reindex`
+- if the index is incompatible, run `vibe-rag reindex --full` or `vibe-rag reset-index`
 - run `vibe-rag doctor`
-- make sure Ollama is running and `qwen3-embedding:0.6b` is pulled
+- verify `RAG_OR_API_KEY` is set and `RAG_OR_EMBED_DIM` is `2560` when needed
 
 If `vibe-rag doctor` reports stale state:
 
 - run `vibe-rag reindex`
 - make sure you are in the intended repo root
 - check whether git `HEAD` changed since the last index
+
+If `vibe-rag doctor` reports an incompatible index:
+
+- run `vibe-rag reindex --full` or `vibe-rag reset-index`
+- then rerun `vibe-rag doctor`
 
 If memory search is empty:
 
@@ -264,7 +282,7 @@ uv tool install --upgrade --python 3.12 vibe-rag
 To evaluate real repos in `~/dev` without mutating their normal index state:
 
 1. Copy `evals/local_repos.toml.example` to `evals/local_repos.toml`
-2. Point each `path` at a real local repo such as `~/dev/vibe-rag`, `~/dev/mistral-vibe`, or `~/dev/codex`
+2. Point each `path` at a real local repo such as `~/dev/vibe-rag`, `~/dev/other-project`, or `~/dev/another-project`
 3. Run:
 
 ```bash
@@ -315,7 +333,7 @@ One-turn auto session captures now also infer stronger memory kinds and can surf
 To inspect memory hygiene in the current repo after a session-heavy run, call:
 
 ```text
-memory_quality_report
+project_status include_memory_health=true
 ```
 
 To preview or apply duplicate-auto-memory cleanup:

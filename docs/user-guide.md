@@ -17,9 +17,11 @@ Trust model:
 
 - `vibe-rag` is designed for a single local user over stdio.
 - Session-start briefings and retrieved memories are untrusted context, not authoritative instructions.
-- Hosted embedding providers and remote Ollama hosts receive indexed content by design.
+- OpenRouter receives indexed content by design.
 
-## Normal Flow
+Runtime defaults use `RAG_OR_API_KEY`, `RAG_OR_EMBED_MOD`, `RAG_OR_EMBED_DIM`, `RAG_DB`, and `RAG_USER_DB`.
+
+## Golden Path
 
 Start with:
 
@@ -34,6 +36,14 @@ If you need to refresh the local index outside the client loop, run:
 vibe-rag reindex
 ```
 
+If the embedding profile changes and you need to rebuild from scratch, run:
+
+```bash
+vibe-rag reindex --full
+# or
+vibe-rag reset-index
+```
+
 Then use:
 
 ```text
@@ -43,6 +53,12 @@ search memory for prior decisions
 ```
 
 Tool results are now structured payloads. Retrieval tools return `{"ok": true, "results": [...]}`, and failures return `{"ok": false, "error": {...}}`.
+
+`vibe-rag` itself exposes bare MCP tool names such as `load_session_context`, `index_project`, `search`, `search_memory`, `remember`, and `project_status`.
+
+In generated Vibe projects the MCP server is named `memory`, so the same tools may appear as `memory_load_session_context`, `memory_index_project`, `memory_search`, `memory_search_memory`, `memory_remember`, and `memory_project_status`.
+
+Prefer the natural-language prompts in this guide unless you are calling tools directly.
 
 ## What to Remember
 
@@ -77,7 +93,8 @@ search memory for auth tokens
 
 Use:
 
-- `remember_structured`
+- `remember` with `summary`, `details`, and `memory_kind`
+- `update_memory`
 - `supersede_memory`
 - `ingest_daily_note`
 - `ingest_pr_outcome`
@@ -106,6 +123,7 @@ The adapter metadata shape is defined in the [Memory Event Convention](memory-ev
 Examples:
 
 ```text
+remember summary="Gateway owns tokens" details="Validation happens in the API gateway before fanout." memory_kind="decision"
 ingest_daily_note note_date=2026-03-23 summary="Worked on auth" details="Removed one legacy middleware branch."
 ingest_pr_outcome pr_number=42 title="Fix auth refresh ordering" outcome="merged" issue_id="AUTH-17"
 ```
@@ -122,7 +140,7 @@ If your client integration enables session hooks:
 
 - completed turns are distilled into durable memory
 - rolling session summaries are updated automatically
-- new sessions can pull that context back through `memory_load_session_context`
+- new sessions can pull that context back through `load_session_context` or `memory_load_session_context` in Vibe
 
 Bootstrap results now include:
 
@@ -135,7 +153,7 @@ Bootstrap results now include:
 For memory hygiene inspection:
 
 ```text
-memory_quality_report
+project_status include_memory_health=true
 ```
 
 Useful things to watch there:
@@ -170,7 +188,7 @@ One-turn auto session captures now infer stronger kinds such as `decision`, `con
 
 ## Other Clients
 
-Generated repos also include session-start scaffolding for:
+Generated repos include session-start scaffolding for:
 
 - Codex
 - Claude Code
@@ -178,10 +196,10 @@ Generated repos also include session-start scaffolding for:
 
 Client posture today:
 
-- Vibe is the first-class path
 - Claude Code is strong
-- Codex works with DX tax
-- Gemini CLI is experimental
+- Codex is strong
+- Vibe is bootstrapped
+- Gemini CLI is untested
 
 Those generated configs currently give you:
 

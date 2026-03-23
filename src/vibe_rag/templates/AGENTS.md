@@ -11,11 +11,16 @@ Use the memory MCP tools first when the task is about:
 
 1. `memory_load_session_context`
 2. `memory_index_project`
-3. `memory_search_code`
-4. `memory_search_docs`
-5. `memory_search_memory`
+3. `memory_search`
+4. `memory_search_memory`
+5. `memory_project_status`
 6. `read_file`
 7. `grep`
+
+The MCP server itself exposes bare tool names like `load_session_context`, `index_project`, `search`, `remember`, and `project_status`.
+In generated Vibe configs the server is named `memory`, so client-visible tool names are prefixed as `memory_*`.
+Use `memory_search` with `scope="code"` or `scope="docs"` instead of looking for separate code/doc search tools.
+OpenRouter is the only supported embedding backend in this generated workflow.
 
 ## Rules
 
@@ -28,14 +33,14 @@ Use the memory MCP tools first when the task is about:
 
 - project index lives in `.vibe/index.db`
 - durable user memory lives in `~/.vibe/memory.db`
-- Ollama is the default embedding provider
+- OpenRouter is the embedding backend
 
 ## Client Scaffolding
 
-- Vibe is the first-class client.
-- Claude Code is the strongest non-Vibe path today.
-- Codex works, but it still carries startup UX tax.
-- Gemini CLI is still experimental.
+- Claude Code is strong.
+- Codex is strong.
+- Vibe is a bootstrapped compatibility client.
+- Gemini CLI is untested.
 - `vibe-rag init` initializes a git repo when one does not already exist so repo-scoped client behavior works.
 - `vibe-rag init` pins the resolved `vibe-rag` binary path in generated client configs so startup does not depend on `PATH` ordering.
 - Generated configs are expected to work from the installed binary, not only from a source checkout.

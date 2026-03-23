@@ -175,14 +175,13 @@ uv tool install --upgrade --python 3.12 vibe-rag@X.Y.Z
 
 ## Vibe Integration Notes
 
-- The required Vibe fork for the background MCP hook is:
-  - `https://github.com/jasencarroll/mistral-vibe`
-- If docs reference the recommended Vibe install, keep that link current.
+- Vibe remains a bootstrap/compatibility path, not the strongest validated integration.
+- If docs reference the maintained Vibe install, keep that link current.
 - When changing session bootstrap behavior, verify:
   - packaged `vibe`
   - packaged `vibe-rag`
   - trusted project-local `.vibe/config.toml`
-  - `MISTRAL_API_KEY` in the MCP server `env`
+  - `RAG_OR_API_KEY` in the MCP server `env`
   - local user memory at `~/.vibe/memory.db`
 
 ## E2E Verification Pattern
@@ -191,18 +190,9 @@ For a real packaged E2E smoke test:
 
 1. `vibe-rag init demo`
 2. add small `src/` and `docs/` files
-3. add `MISTRAL_API_KEY` to `.vibe/config.toml`
-4. add:
-
-```toml
-[background_mcp_hook]
-enabled = true
-tool_name = "memory_load_session_context"
-task_arg = "task"
-```
-
-5. trust the repo in Vibe
-6. run prompts for:
+3. add `RAG_OR_API_KEY` to `.vibe/config.toml`
+4. trust the repo in the client you are testing
+5. run prompts for:
    - `index this project`
    - `search the code for ...`
    - `search docs for ...`
