@@ -41,3 +41,4 @@ docs/superpowers/
 # Test projects
 test-project/
 my-app/
+.claude/worktrees/
