@@ -3,6 +3,7 @@ from pathlib import Path
 
 from vibe_rag.tools import (
     _embed_sync_with_progress,
+    _memory_cleanup_candidates,
     _merge_memory_results,
     _format_briefing,
     _query_terms,
@@ -15,8 +16,6 @@ from vibe_rag.tools import (
     forget,
     index_project,
     load_session_context,
-    memory_cleanup_report,
-    memory_quality_report,
     project_status,
     remember,
     remember_structured,
@@ -1825,7 +1824,7 @@ def test_load_session_context_downranks_low_signal_auto_memory(tmp_db, mock_embe
     assert result["memories"][0]["provenance"]["source_type"] == "manual_structured"
     assert all(
         item["provenance"]["capture_kind"] != "session_rollup"
-        for item in memory_cleanup_report(limit=5)["candidates"]
+        for item in _memory_cleanup_candidates(limit=5)
     )
 
 
@@ -1936,7 +1935,7 @@ def test_merge_memory_results_keeps_auto_captures_visible_when_manual_memory_exi
     assert [item["id"] for item in merged] == [1, 2]
 
 
-def test_memory_cleanup_report_surfaces_freeform_and_cross_project_candidates(tmp_db, mock_embedder):
+def test_project_status_memory_health_surfaces_freeform_and_cross_project_candidates(tmp_db, mock_embedder):
     import vibe_rag.server as srv
 
     old_project_id = srv._project_id
@@ -1951,13 +1950,15 @@ def test_memory_cleanup_report_surfaces_freeform_and_cross_project_candidates(tm
             memory_kind="note",
             metadata={"capture_kind": "freeform"},
         )
-        report = memory_cleanup_report(limit=5)
+        status = project_status()
     finally:
         srv._project_id = old_project_id
 
-    assert report["ok"] is True
-    assert report["candidate_total"] >= 2
-    reasons = {reason for item in report["candidates"] for reason in item["cleanup_reasons"]}
+    assert status["ok"] is True
+    health = status["status"]["memory_health"]
+    candidates = health["top_cleanup_candidates"]
+    assert len(candidates) >= 2
+    reasons = {reason for item in candidates for reason in item["cleanup_reasons"]}
     assert "freeform_note" in reasons
     assert "cross_project_user_memory" in reasons
 
@@ -1970,7 +1971,7 @@ def test_project_status_includes_memory_cleanup_candidates(tmp_db, mock_embedder
     assert status["status"]["cleanup_candidates"][0]["summary"] == "temporary cleanup candidate"
 
 
-def test_memory_quality_report_summarizes_provenance_and_cleanup(tmp_db, mock_embedder):
+def test_project_status_memory_health_summarizes_provenance_and_cleanup(tmp_db, mock_embedder):
     import vibe_rag.server as srv
 
     old_project_id = srv._project_id
@@ -2016,26 +2017,24 @@ def test_memory_quality_report_summarizes_provenance_and_cleanup(tmp_db, mock_em
             memory_kind="summary",
             metadata={"capture_kind": "session_rollup", "task": "Reply with only the project id loaded in session context.", "turn_count": 1},
         )
-        report = memory_quality_report(limit=5)
+        status = project_status()
     finally:
         srv._project_id = old_project_id
 
-    assert report["ok"] is True
-    assert report["summary"]["total_memories"] >= 4
-    assert report["summary"]["stale_memories"] >= 1
-    assert report["summary"]["superseded_memories"] >= 1
-    assert report["by_source_db"]["user"] >= 3
-    assert report["by_capture_kind"]["freeform"] >= 2
-    assert report["by_source_type"]["manual_structured"] >= 1
-    assert report["stale_reasons"]["project_id_mismatch"] >= 1
-    assert report["cleanup_reasons"]["cross_project_user_memory"] >= 1
-    assert report["cleanup_reasons"]["low_signal_auto_memory"] >= 1
-    assert report["summary"]["duplicate_auto_memory_groups"] >= 1
-    assert report["recommended_actions"]
-    assert any("low-signal auto session summaries" in action for action in report["recommended_actions"])
-    assert any("duplicate auto-captured session memories" in action for action in report["recommended_actions"])
-    assert report["duplicate_auto_memory_groups"]
-    assert report["top_cleanup_candidates"]
+    assert status["ok"] is True
+    health = status["status"]["memory_health"]
+    assert health["summary"]["total_memories"] >= 4
+    assert health["summary"]["stale_memories"] >= 1
+    assert health["summary"]["superseded_memories"] >= 1
+    assert health["summary"]["duplicate_auto_memory_groups"] >= 1
+    assert health["by_capture_kind"]["freeform"] >= 2
+    assert health["by_source_type"]["manual_structured"] >= 1
+    assert health["recommended_actions"]
+    assert len(health["recommended_actions"]) <= 3
+    # Verify top actions cover the most important issues
+    assert any("stale" in action.lower() or "supersed" in action.lower() or "freeform" in action.lower()
+               for action in health["recommended_actions"])
+    assert health["top_cleanup_candidates"]
 
 
 def test_cleanup_duplicate_auto_memories_reports_and_deletes_duplicates(tmp_db, mock_embedder):
@@ -2056,7 +2055,7 @@ def test_cleanup_duplicate_auto_memories_reports_and_deletes_duplicates(tmp_db, 
 
         preview = cleanup_duplicate_auto_memories(limit=5, apply=False)
         applied = cleanup_duplicate_auto_memories(limit=5, apply=True)
-        report = memory_quality_report(limit=5)
+        status = project_status()
     finally:
         srv._project_id = old_project_id
 
@@ -2069,7 +2068,7 @@ def test_cleanup_duplicate_auto_memories_reports_and_deletes_duplicates(tmp_db, 
     assert applied["group_total"] == 1
     assert applied["deleted_total"] == 1
     assert len(applied["groups"][0]["deleted_ids"]) == 1
-    assert report["summary"]["duplicate_auto_memory_groups"] == 0
+    assert status["status"]["memory_health"]["summary"]["duplicate_auto_memory_groups"] == 0
 
 
 def test_cleanup_duplicate_auto_memories_only_loads_payloads_once(tmp_db, monkeypatch):
@@ -2235,6 +2234,21 @@ def test_project_status_empty(tmp_db, mock_embedder):
     assert result["status"]["counts"]["project_memories"] == 0
     assert result["status"]["counts"]["user_memories"] == 0
     assert result["status"]["language_stats"] == {}
+    # memory_health included by default
+    assert "memory_health" in result["status"]
+    health = result["status"]["memory_health"]
+    assert "summary" in health
+    assert "top_cleanup_candidates" in health
+    assert "recommended_actions" in health
+    assert "by_capture_kind" in health
+    assert "by_source_type" in health
+
+
+def test_project_status_without_memory_health(tmp_db, mock_embedder):
+    result = project_status(include_memory_health=False)
+    assert result["ok"] is True
+    assert result["status"]["counts"]["code_chunks"] == 0
+    assert "memory_health" not in result["status"]
 
 
 def test_project_status_after_index(tmp_db, mock_embedder, tmp_path: Path):

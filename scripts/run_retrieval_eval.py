@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 import vibe_rag.server as srv
-from vibe_rag.tools import _index_project_impl, load_session_context, memory_quality_report
+from vibe_rag.tools import _index_project_impl, load_session_context, project_status
 
 
 ELAPSED_SECONDS_RE = re.compile(r"in (?P<seconds>\d+(?:\.\d+)?)s")
@@ -217,7 +217,7 @@ def run_manifest(manifest_path: Path) -> dict:
                 "path": str(repo_path),
                 "ok": all(task["ok"] for task in task_results),
                 "index_result": index_result,
-                "memory_quality": memory_quality_report(limit=5),
+                "memory_quality": project_status().get("status", {}).get("memory_health", {}),
                 "tasks": task_results,
             }
         )
@@ -645,14 +645,15 @@ def _compare_persistent_memory(previous: dict[str, Any], current: dict[str, Any]
 
 
 def _persistent_memory_artifact(repo_path: Path, artifact_dir: Path, previous_artifact_path: Path | None = None) -> dict[str, Any]:
-    report = memory_quality_report(limit=10)
+    status = project_status()
+    memory_health = status.get("status", {}).get("memory_health", {})
     artifact = {
         "generated_at": datetime.now(UTC).isoformat(),
         "repo_name": repo_path.resolve().name,
         "repo_path": str(repo_path.resolve()),
-        "project_id": report.get("project_id"),
+        "project_id": status.get("project_id"),
         "git_head": _current_git_head(repo_path.resolve()),
-        "memory_quality": report,
+        "memory_quality": memory_health,
     }
     previous_path = previous_artifact_path or _latest_persistent_memory_artifact(repo_path, artifact_dir)
     artifact["previous_artifact"] = str(previous_path.resolve()) if previous_path else None
