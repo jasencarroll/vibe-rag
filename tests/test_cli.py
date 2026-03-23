@@ -80,6 +80,13 @@ def test_cli_reindex_defaults_to_current_project(monkeypatch):
     assert "Indexed current project" in result.output
 
 
+def _patch_doctor_new_checks(monkeypatch):
+    """Patch the new doctor checks (language coverage, memory health, tool count)."""
+    monkeypatch.setattr("vibe_rag.cli._check_language_coverage", lambda db: {"ok": True, "warning": False, "detail": "100 chunks across 3 languages"})
+    monkeypatch.setattr("vibe_rag.cli._check_memory_health", lambda db, user_db: {"ok": True, "warning": False, "detail": "5 active"})
+    monkeypatch.setattr("vibe_rag.cli._check_tool_count", lambda: {"ok": True, "warning": False, "detail": "15 tools registered"})
+
+
 def test_cli_doctor_defaults_to_ollama(monkeypatch):
     runner = CliRunner()
     monkeypatch.setattr(
@@ -113,14 +120,18 @@ def test_cli_doctor_defaults_to_ollama(monkeypatch):
             {"provider": "mistral", "available": False, "detail": "set MISTRAL_API_KEY"},
         ],
     )
+    _patch_doctor_new_checks(monkeypatch)
     result = runner.invoke(main, ["doctor"])
     assert result.exit_code == 0
     assert "Project id:   demo-project" in result.output
-    assert "[ok] MCP command" in result.output
-    assert "[ok] Vibe CLI" in result.output
-    assert "[ok] Vibe hooks" in result.output
-    assert "[ok] SessionStart" in result.output
-    assert "[ok] Embedding" in result.output
+    assert "[pass] MCP command" in result.output
+    assert "[pass] Vibe CLI" in result.output
+    assert "[pass] Vibe hooks" in result.output
+    assert "[pass] SessionStart" in result.output
+    assert "[pass] Embedding" in result.output
+    assert "[pass] Languages" in result.output
+    assert "[pass] Memory health" in result.output
+    assert "[pass] MCP tools" in result.output
     assert "Recommended:  ollama (local embeddings are available)" in result.output
     assert "ready (http://localhost:11434)" in result.output
 
@@ -165,9 +176,10 @@ def test_cli_doctor_for_ollama_missing_host(monkeypatch):
             {"provider": "mistral", "available": True, "detail": "MISTRAL_API_KEY is set"},
         ],
     )
+    _patch_doctor_new_checks(monkeypatch)
     result = runner.invoke(main, ["doctor"])
     assert result.exit_code == 0
-    assert "[fail] MCP command" in result.output
+    assert "[FAIL] MCP command" in result.output
     assert "[warn] Vibe CLI" in result.output
     assert "[warn] Vibe hooks" in result.output
     assert "[warn] Project DB" in result.output
@@ -206,6 +218,7 @@ def test_cli_doctor_fix_invokes_setup_ollama(monkeypatch):
         "vibe_rag.cli._provider_candidates",
         lambda: [{"provider": "ollama", "available": True, "detail": "local embeddings via Ollama"}],
     )
+    _patch_doctor_new_checks(monkeypatch)
 
     def fake_invoke(command, *args, **kwargs):
         invoked["command"] = command.name
@@ -287,6 +300,7 @@ def test_cli_doctor_reports_stale_state(monkeypatch):
             ],
         },
     )
+    _patch_doctor_new_checks(monkeypatch)
 
     result = runner.invoke(main, ["doctor"])
 

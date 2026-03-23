@@ -37,10 +37,19 @@ def _embedding_dimensions() -> int:
 
 def _status_label(ok: bool, warning: bool = False) -> str:
     if ok:
-        return "ok"
+        return click.style("pass", fg="green")
+    if warning:
+        return click.style("warn", fg="yellow")
+    return click.style("FAIL", fg="red")
+
+
+def _plain_status_label(ok: bool, warning: bool = False) -> str:
+    """Return uncolored status label for assertions in tests."""
+    if ok:
+        return "pass"
     if warning:
         return "warn"
-    return "fail"
+    return "FAIL"
 
 
 def _read_toml_state(path: Path) -> tuple[dict | None, str]:
@@ -402,7 +411,7 @@ def _provider_setup_hint(provider: str) -> str:
 @main.command()
 @click.argument("name", required=False)
 def init(name: str | None):
-    """Create a new Vibe project with vibe-rag configured."""
+    """Scaffold a new project with MCP config for all supported agent CLIs."""
     from importlib.resources import files as pkg_files
 
     templates_dir = Path(str(pkg_files("vibe_rag") / "templates"))
@@ -505,9 +514,59 @@ def _initialize_git_repo(target: Path) -> None:
         stderr=subprocess.DEVNULL,
     )
 
+def _index_freshness(db) -> str:
+    """Return a human-readable freshness label based on the last index timestamp."""
+    import json as _json
+    from datetime import datetime, timezone
+
+    raw = db.get_setting("project_index_metadata")
+    if not raw:
+        return "unknown"
+    try:
+        metadata = _json.loads(raw)
+    except Exception:
+        return "unknown"
+    indexed_at = metadata.get("indexed_at")
+    if not indexed_at:
+        return "unknown"
+    try:
+        ts = datetime.fromisoformat(indexed_at.replace("Z", "+00:00"))
+        delta = datetime.now(timezone.utc) - ts
+        hours = delta.total_seconds() / 3600
+        if hours < 1:
+            return f"fresh (indexed {int(delta.total_seconds() / 60)}m ago)"
+        if hours < 24:
+            return f"fresh (indexed {int(hours)}h ago)"
+        days = int(hours / 24)
+        return f"stale (indexed {days}d ago)"
+    except Exception:
+        return "unknown"
+
+
+def _distinct_file_count(db) -> int:
+    """Count distinct files across code_chunks and docs tables."""
+    conn = db._get_conn()
+    code_files = conn.execute("SELECT COUNT(DISTINCT file_path) FROM code_chunks").fetchone()[0]
+    doc_files = conn.execute("SELECT COUNT(DISTINCT file_path) FROM docs").fetchone()[0]
+    return code_files + doc_files
+
+
+def _format_language_stats(lang_stats: dict[str, int], top_n: int = 5) -> str:
+    """Format language stats as 'python (180), javascript (80), ...'."""
+    sorted_langs = sorted(lang_stats.items(), key=lambda x: -x[1])
+    parts = []
+    for lang, count in sorted_langs[:top_n]:
+        label = lang if lang else "unknown"
+        parts.append(f"{label} ({count})")
+    if len(sorted_langs) > top_n:
+        rest = sum(c for _, c in sorted_langs[top_n:])
+        parts.append(f"+{len(sorted_langs) - top_n} more ({rest})")
+    return ", ".join(parts) if parts else "none"
+
+
 @main.command()
 def status():
-    """Check memory status for current project."""
+    """Show index, memory, and health summary for the current project."""
     from vibe_rag.db.sqlite import SqliteVecDB
 
     db_path = Path(os.environ.get("VIBE_RAG_DB", Path.cwd() / ".vibe" / "index.db")).expanduser()
@@ -519,27 +578,42 @@ def status():
     if db_path.exists():
         db = SqliteVecDB(db_path, embedding_dimensions=embedding_dimensions)
         db.initialize()
-        click.echo(f"  Code chunks: {db.code_chunk_count()}")
-        click.echo(f"  Doc chunks:  {db.doc_count()}")
-        click.echo(f"  Project:     {db.memory_count()} memories")
+        code_chunks = db.code_chunk_count()
+        doc_chunks = db.doc_count()
+        file_count = _distinct_file_count(db)
+        project_memories = db.memory_count()
+        lang_stats = db.language_stats()
+        freshness = _index_freshness(db)
         db.close()
+
+        click.echo(f"  Index:     {code_chunks} code chunks, {doc_chunks} doc chunks ({file_count} files)")
+
+        user_memories = 0
+        if user_db_path.exists():
+            user_db = SqliteVecDB(user_db_path, embedding_dimensions=embedding_dimensions)
+            user_db.initialize()
+            user_memories = user_db.memory_count()
+            user_db.close()
+        click.echo(f"  Memory:    {project_memories} project, {user_memories} user")
+        click.echo(f"  Health:    {freshness}")
+        if lang_stats:
+            click.echo(f"  Languages: {_format_language_stats(lang_stats)}")
     else:
         click.echo("  No index yet. Run `vibe-rag reindex` or use `index_project` through your client.")
-
-    if user_db_path.exists():
-        user_db = SqliteVecDB(user_db_path, embedding_dimensions=embedding_dimensions)
-        user_db.initialize()
-        click.echo(f"  User:        {user_db.memory_count()} memories ({user_db_path})")
-        user_db.close()
-    else:
-        click.echo(f"  User:        0 memories ({user_db_path})")
+        if user_db_path.exists():
+            user_db = SqliteVecDB(user_db_path, embedding_dimensions=embedding_dimensions)
+            user_db.initialize()
+            click.echo(f"  User:      {user_db.memory_count()} memories ({user_db_path})")
+            user_db.close()
+        else:
+            click.echo(f"  User:      0 memories ({user_db_path})")
     click.echo()
 
 
 @main.command("reindex")
 @click.argument("paths", nargs=-1)
 def reindex(paths: tuple[str, ...]):
-    """Refresh the current project's code and docs index."""
+    """Re-index code and docs for the current project."""
     from vibe_rag.tools import index_project
 
     target_paths: list[str] | str = list(paths) if paths else "."
@@ -553,10 +627,58 @@ def reindex(paths: tuple[str, ...]):
     click.echo()
 
 
+def _check_language_coverage(db) -> dict:
+    """Check whether code chunks have language annotations."""
+    lang_stats = db.language_stats()
+    total = sum(lang_stats.values())
+    none_count = lang_stats.get(None, 0)
+    if total == 0:
+        return {"ok": True, "warning": True, "detail": "no code chunks indexed"}
+    if none_count == total:
+        return {"ok": False, "warning": True, "detail": f"all {total} chunks have unknown language"}
+    if none_count > 0:
+        return {"ok": True, "warning": True, "detail": f"{none_count}/{total} chunks have unknown language"}
+    return {"ok": True, "warning": False, "detail": f"{total} chunks across {len(lang_stats)} languages"}
+
+
+def _check_memory_health(db, user_db) -> dict:
+    """Check memory staleness and cleanup pressure."""
+    total = db.memory_count(include_superseded=True)
+    active = db.memory_count(include_superseded=False)
+    superseded = total - active
+    user_total = user_db.memory_count(include_superseded=True) if user_db else 0
+    user_active = user_db.memory_count(include_superseded=False) if user_db else 0
+    user_superseded = user_total - user_active
+
+    stale_total = superseded + user_superseded
+    parts = []
+    if stale_total > 0:
+        parts.append(f"{stale_total} superseded")
+    parts.append(f"{active + user_active} active")
+    detail = ", ".join(parts)
+    if stale_total > 10:
+        return {"ok": False, "warning": True, "detail": detail + " -- consider cleanup"}
+    return {"ok": True, "warning": False, "detail": detail}
+
+
+def _check_tool_count() -> dict:
+    """Verify expected MCP tools are registered."""
+    try:
+        from vibe_rag.server import mcp as _mcp
+        tool_names = sorted(_mcp._tool_manager._tools.keys())
+        count = len(tool_names)
+        if count == 0:
+            return {"ok": False, "warning": False, "detail": "no MCP tools registered"}
+        return {"ok": True, "warning": False, "detail": f"{count} tools registered", "tools": tool_names}
+    except Exception as exc:
+        return {"ok": False, "warning": True, "detail": f"tool check failed: {exc}"}
+
+
 @main.command()
 @click.option("--fix", is_flag=True, help="Run provider-specific setup helpers when possible.")
 def doctor(fix: bool):
-    """Check local vibe-rag setup and embedding provider health."""
+    """Run diagnostic checks on setup, provider, index, and memory health."""
+    from vibe_rag.db.sqlite import SqliteVecDB
     from vibe_rag.indexing.embedder import embedding_provider_status
     from vibe_rag.server import _ensure_project_id, _get_db, _get_embedder
     from vibe_rag.tools import _codex_trust_status, _stale_state, _vibe_trust_status
@@ -596,6 +718,39 @@ def doctor(fix: bool):
                 "warnings": [{"kind": "stale_check_failed", "detail": f"stale-state check failed: {exc}"}],
             }
 
+    # Language coverage check
+    lang_coverage = {"ok": True, "warning": True, "detail": "no project DB"}
+    if project_db_status["ok"]:
+        try:
+            embedding_dimensions = _embedding_dimensions()
+            proj_db = SqliteVecDB(project_db_path, embedding_dimensions=embedding_dimensions)
+            proj_db.initialize()
+            lang_coverage = _check_language_coverage(proj_db)
+            proj_db.close()
+        except Exception as exc:
+            lang_coverage = {"ok": False, "warning": True, "detail": f"language check failed: {exc}"}
+
+    # Memory health check
+    memory_health = {"ok": True, "warning": True, "detail": "no project DB"}
+    if project_db_status["ok"]:
+        try:
+            embedding_dimensions = _embedding_dimensions()
+            proj_db = SqliteVecDB(project_db_path, embedding_dimensions=embedding_dimensions)
+            proj_db.initialize()
+            user_db_obj = None
+            if user_db_path.exists():
+                user_db_obj = SqliteVecDB(user_db_path, embedding_dimensions=embedding_dimensions)
+                user_db_obj.initialize()
+            memory_health = _check_memory_health(proj_db, user_db_obj)
+            proj_db.close()
+            if user_db_obj:
+                user_db_obj.close()
+        except Exception as exc:
+            memory_health = {"ok": False, "warning": True, "detail": f"memory health check failed: {exc}"}
+
+    # Tool count check
+    tool_status = _check_tool_count()
+
     click.echo(f"\n  vibe-rag {__version__}")
     click.echo(f"  Project root: {project_root}")
     click.echo(f"  Project id:   {project_id}")
@@ -605,36 +760,35 @@ def doctor(fix: bool):
     click.echo(f"  Model:        {provider['model'] or 'unset'}")
     click.echo(f"  Recommended:  {recommended['provider']} ({recommended['reason']})")
     click.echo()
-    click.echo(f"  [{_status_label(mcp_status['ok'])}] MCP command     {mcp_status['detail']}")
-    click.echo(
-        f"  [{_status_label(vibe_cli_status['ok'], vibe_cli_status.get('warning', False))}] Vibe CLI        {vibe_cli_status['detail']}"
-    )
-    click.echo(
-        f"  [{_status_label(vibe_hook_status['ok'], vibe_hook_status.get('warning', False))}] Vibe hooks      {vibe_hook_status['detail']}"
-    )
-    click.echo(f"  [{_status_label(hook_status['ok'])}] SessionStart   {hook_status['detail']}")
-    click.echo(
-        f"  [{_status_label(project_db_status['ok'], project_db_status.get('warning', False))}] Project DB      {project_db_status['detail']}"
-    )
-    click.echo(
-        f"  [{_status_label(user_db_status['ok'], user_db_status.get('warning', False))}] User DB         {user_db_status['detail']}"
-    )
-    click.echo(f"  [{_status_label(provider_ok)}] Embedding       {provider_detail}")
-    click.echo(f"  [{_status_label(vibe_trust['status'] == 'ok', vibe_trust['status'] == 'warn')}] Vibe trust      {vibe_trust['detail']}")
-    click.echo(f"  [{_status_label(codex_trust['status'] == 'ok', codex_trust['status'] == 'warn')}] Codex trust     {codex_trust['detail']}")
+
+    def _emit(label: str, ok: bool, warning: bool, detail: str) -> None:
+        click.echo(f"  [{_status_label(ok, warning)}] {label:<16s} {detail}")
+
+    _emit("MCP command", mcp_status["ok"], False, mcp_status["detail"])
+    _emit("Vibe CLI", vibe_cli_status["ok"], vibe_cli_status.get("warning", False), vibe_cli_status["detail"])
+    _emit("Vibe hooks", vibe_hook_status["ok"], vibe_hook_status.get("warning", False), vibe_hook_status["detail"])
+    _emit("SessionStart", hook_status["ok"], False, hook_status["detail"])
+    _emit("Project DB", project_db_status["ok"], project_db_status.get("warning", False), project_db_status["detail"])
+    _emit("User DB", user_db_status["ok"], user_db_status.get("warning", False), user_db_status["detail"])
+    _emit("Embedding", provider_ok, False, provider_detail)
+    _emit("Vibe trust", vibe_trust["status"] == "ok", vibe_trust["status"] == "warn", vibe_trust["detail"])
+    _emit("Codex trust", codex_trust["status"] == "ok", codex_trust["status"] == "warn", codex_trust["detail"])
+    _emit("Languages", lang_coverage["ok"], lang_coverage.get("warning", False), lang_coverage["detail"])
+    _emit("Memory health", memory_health["ok"], memory_health.get("warning", False), memory_health["detail"])
+    _emit("MCP tools", tool_status["ok"], tool_status.get("warning", False), tool_status["detail"])
 
     if stale_state.get("warnings"):
-        click.echo("  [warn] Stale state     " + stale_state["warnings"][0]["detail"])
+        click.echo(f"  [{_status_label(False, True)}] {'Stale state':<16s} " + stale_state["warnings"][0]["detail"])
         for warning in stale_state["warnings"][1:]:
-            click.echo(f"                    {warning['detail']}")
+            click.echo(f"                         {warning['detail']}")
         click.echo("  Suggested stale fix: vibe-rag reindex")
     else:
-        click.echo("  [ok] Stale state     no stale index warnings")
+        click.echo(f"  [{_status_label(True)}] {'Stale state':<16s} no stale index warnings")
 
     click.echo("  Provider options:")
     for candidate in candidates:
         available = bool(candidate["available"])
-        click.echo(f"  [{_status_label(available, not available)}] {candidate['provider']:<15} {candidate['detail']}")
+        click.echo(f"    [{_status_label(available, not available)}] {candidate['provider']:<15} {candidate['detail']}")
 
     if not provider_ok or provider["provider"] != recommended["provider"]:
         click.echo(f"  Suggested next step: {_provider_setup_hint(recommended['provider'])}")
@@ -697,7 +851,7 @@ def _start_ollama_if_needed() -> str:
 @main.command("setup-ollama")
 @click.option("--model", default="qwen3-embedding:0.6b", show_default=True, help="Embedding model to pull.")
 def setup_ollama(model: str):
-    """Start Ollama if needed and pull the default embedding model."""
+    """Start Ollama and pull the embedding model for local use."""
     ollama_bin = shutil.which("ollama")
     if not ollama_bin:
         raise click.ClickException("Ollama is not installed or not on PATH.")
@@ -721,7 +875,7 @@ def setup_ollama(model: str):
 @main.command("hook-session-start")
 @click.option("--format", "target_format", type=click.Choice(["codex", "claude", "gemini", "vibe"]), required=True)
 def hook_session_start(target_format: str):
-    """Render SessionStart hook output for supported agent CLIs."""
+    """Emit SessionStart hook JSON for a given agent CLI format."""
     from vibe_rag.hook_bridge import render_session_start_hook_json
 
     raw_input = sys.stdin.read()
@@ -730,7 +884,7 @@ def hook_session_start(target_format: str):
 
 @main.command()
 def serve():
-    """Start the MCP server (called by Vibe, not the user)."""
+    """Launch the MCP stdio server (called by agent CLIs, not directly)."""
     from vibe_rag.server import run_server
     run_server()
 
