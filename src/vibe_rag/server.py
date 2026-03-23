@@ -7,7 +7,7 @@ import threading
 from pathlib import Path
 from mcp.server.fastmcp import FastMCP
 from vibe_rag.db.sqlite import SqliteVecDB
-from vibe_rag.indexing.embedder import EmbeddingProvider, create_embedding_provider
+from vibe_rag.indexing.embedder import EmbeddingProvider, create_embedding_provider, resolve_embedding_dimensions
 
 mcp = FastMCP(name="vibe-rag")
 
@@ -21,14 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 def _embedding_dimensions() -> int:
-    raw = os.environ.get("VIBE_RAG_EMBEDDING_DIMENSIONS", "1024").strip()
-    try:
-        value = int(raw)
-    except ValueError as exc:
-        raise RuntimeError("VIBE_RAG_EMBEDDING_DIMENSIONS must be an integer") from exc
-    if value <= 0:
-        raise RuntimeError("VIBE_RAG_EMBEDDING_DIMENSIONS must be positive")
-    return value
+    return resolve_embedding_dimensions()
 
 
 def _project_db_path() -> Path:

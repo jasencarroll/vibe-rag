@@ -64,6 +64,37 @@ def test_get_db_creates_and_returns_db(tmp_path: Path, monkeypatch):
         srv._project_db = old_db
 
 
+def test_get_db_uses_provider_default_dimensions_when_env_unset(tmp_path: Path, monkeypatch):
+    old_db = srv._project_db
+    srv._project_db = None
+    captured = {}
+
+    class FakeDB:
+        def __init__(self, path, embedding_dimensions):
+            captured["path"] = path
+            captured["embedding_dimensions"] = embedding_dimensions
+
+        def initialize(self):
+            return None
+
+    monkeypatch.setenv("VIBE_RAG_DB", str(tmp_path / "test_srv.db"))
+    monkeypatch.delenv("VIBE_RAG_EMBEDDING_DIMENSIONS", raising=False)
+    monkeypatch.delenv("VIBE_RAG_EMBEDDING_PROVIDER", raising=False)
+    monkeypatch.delenv("VOYAGE_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setenv("MISTRAL_API_KEY", "test-key")
+    monkeypatch.setattr(
+        "vibe_rag.indexing.embedder._resolve_ollama_host",
+        lambda: (_ for _ in ()).throw(RuntimeError("Ollama not reachable")),
+    )
+    monkeypatch.setattr(srv, "SqliteVecDB", FakeDB)
+    try:
+        srv._get_db()
+        assert captured["embedding_dimensions"] == 1536
+    finally:
+        srv._project_db = old_db
+
+
 def test_get_user_db_creates_and_returns_db(tmp_path: Path, monkeypatch):
     old_db = srv._user_db
     srv._user_db = None

@@ -27,14 +27,12 @@ def main():
 
 
 def _embedding_dimensions() -> int:
-    raw = os.environ.get("VIBE_RAG_EMBEDDING_DIMENSIONS", "1024").strip()
     try:
-        value = int(raw)
-    except ValueError as exc:
-        raise click.ClickException("VIBE_RAG_EMBEDDING_DIMENSIONS must be an integer") from exc
-    if value <= 0:
-        raise click.ClickException("VIBE_RAG_EMBEDDING_DIMENSIONS must be positive")
-    return value
+        from vibe_rag.indexing.embedder import resolve_embedding_dimensions
+
+        return resolve_embedding_dimensions()
+    except RuntimeError as exc:
+        raise click.ClickException(str(exc)) from exc
 
 
 def _status_label(ok: bool, warning: bool = False) -> str:

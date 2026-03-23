@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Native MCP server startup now recovers embedding-provider env from the user's login shell when the client launches `vibe-rag serve` without forwarding hosted-provider variables, so packaged installs can still reach hosted embeddings without storing secrets in project config
+
 ## [0.0.24] - 2026-03-23
 
 ### Added

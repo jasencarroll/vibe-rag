@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 from collections.abc import Callable
 from typing import Protocol
 
@@ -17,6 +18,10 @@ DEFAULT_OLLAMA_MODEL = "qwen3-embedding:0.6b"
 DEFAULT_OPENAI_MODEL = "text-embedding-3-small"
 DEFAULT_VOYAGE_TEXT_MODEL = "voyage-4"
 DEFAULT_VOYAGE_CODE_MODEL = "voyage-code-3"
+DEFAULT_MISTRAL_DIMENSIONS = 1536
+DEFAULT_OLLAMA_DIMENSIONS = 1024
+DEFAULT_OPENAI_DIMENSIONS = 1536
+DEFAULT_VOYAGE_DIMENSIONS = 1024
 BATCH_SIZE = 64
 VOYAGE_BATCH_SIZE = 1000
 VOYAGE_MAX_BATCH_TOKENS = 75_000
@@ -27,6 +32,18 @@ OLLAMA_HOST_CANDIDATES = (
     "http://127.0.0.1:11434",
 )
 ProgressCallback = Callable[[dict[str, object]], None]
+EMBEDDING_ENV_KEYS = (
+    "VIBE_RAG_EMBEDDING_PROVIDER",
+    "VIBE_RAG_EMBEDDING_MODEL",
+    "VIBE_RAG_CODE_EMBEDDING_MODEL",
+    "VIBE_RAG_EMBEDDING_DIMENSIONS",
+    "VIBE_RAG_OLLAMA_HOST",
+    "OLLAMA_HOST",
+    "MISTRAL_API_KEY",
+    "OPENAI_API_KEY",
+    "VOYAGE_API_KEY",
+)
+_SHELL_ENV_ATTEMPTED = False
 
 
 def _emit_progress(progress_callback: ProgressCallback | None, **event: object) -> None:
@@ -73,6 +90,7 @@ def _batch_by_limits(
 
 
 def _resolve_embedding_provider_name() -> str:
+    _load_embedding_env_from_shell()
     explicit = os.environ.get("VIBE_RAG_EMBEDDING_PROVIDER", "").strip().lower()
     if explicit:
         return explicit
@@ -94,6 +112,80 @@ def _resolve_embedding_provider_name() -> str:
         "No embedding provider available. "
         f"{ollama_error or 'Ollama not reachable and no hosted provider credentials configured.'}"
     )
+
+
+def _shell_env_fallback_needed() -> bool:
+    explicit = os.environ.get("VIBE_RAG_EMBEDDING_PROVIDER", "").strip().lower()
+    if explicit == "mistral":
+        return not os.environ.get("MISTRAL_API_KEY", "").strip()
+    if explicit == "openai":
+        return not os.environ.get("OPENAI_API_KEY", "").strip()
+    if explicit == "voyage":
+        return not os.environ.get("VOYAGE_API_KEY", "").strip()
+    if explicit == "ollama":
+        return not (
+            os.environ.get("VIBE_RAG_OLLAMA_HOST", "").strip()
+            or os.environ.get("OLLAMA_HOST", "").strip()
+        )
+    return not any(os.environ.get(key, "").strip() for key in EMBEDDING_ENV_KEYS)
+
+
+def _preferred_shell() -> tuple[str, str]:
+    shell = os.environ.get("SHELL", "").strip() or "/bin/sh"
+    flag = "-lic" if os.path.basename(shell) in {"bash", "zsh"} else "-lc"
+    return shell, flag
+
+
+def _load_embedding_env_from_shell() -> None:
+    global _SHELL_ENV_ATTEMPTED
+    if _SHELL_ENV_ATTEMPTED or not _shell_env_fallback_needed():
+        return
+    _SHELL_ENV_ATTEMPTED = True
+    shell, flag = _preferred_shell()
+    try:
+        result = subprocess.run(
+            [shell, flag, "command env -0"],
+            check=True,
+            capture_output=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return
+    for entry in result.stdout.split(b"\0"):
+        if not entry or b"=" not in entry:
+            continue
+        key_bytes, value_bytes = entry.split(b"=", 1)
+        key = key_bytes.decode("utf-8", errors="ignore")
+        if key not in EMBEDDING_ENV_KEYS or os.environ.get(key, "").strip():
+            continue
+        value = value_bytes.decode("utf-8", errors="ignore").strip()
+        if value:
+            os.environ[key] = value
+
+
+def resolve_embedding_dimensions() -> int:
+    raw = os.environ.get("VIBE_RAG_EMBEDDING_DIMENSIONS", "").strip()
+    if raw:
+        try:
+            value = int(raw)
+        except ValueError as exc:
+            raise RuntimeError("VIBE_RAG_EMBEDDING_DIMENSIONS must be an integer") from exc
+        if value <= 0:
+            raise RuntimeError("VIBE_RAG_EMBEDDING_DIMENSIONS must be positive")
+        return value
+
+    try:
+        provider = _resolve_embedding_provider_name()
+    except RuntimeError:
+        return DEFAULT_OLLAMA_DIMENSIONS
+
+    if provider == "mistral":
+        return DEFAULT_MISTRAL_DIMENSIONS
+    if provider == "openai":
+        return DEFAULT_OPENAI_DIMENSIONS
+    if provider == "voyage":
+        return DEFAULT_VOYAGE_DIMENSIONS
+    return DEFAULT_OLLAMA_DIMENSIONS
 
 
 def _response_error_message(resp: httpx.Response, *json_paths: tuple[str, ...]) -> str:
