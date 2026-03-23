@@ -56,7 +56,7 @@ Tool results are now structured payloads. Retrieval tools return `{"ok": true, "
 
 `vibe-rag` itself exposes bare MCP tool names such as `load_session_context`, `index_project`, `search`, `search_memory`, `remember`, and `project_status`.
 
-In generated Vibe projects the MCP server is named `memory`, so the same tools may appear as `memory_load_session_context`, `memory_index_project`, `memory_search`, `memory_search_memory`, `memory_remember`, and `memory_project_status`.
+When a client's MCP config names the server (e.g. `memory`), the same tools may appear prefixed as `memory_load_session_context`, `memory_index_project`, `memory_search`, `memory_search_memory`, `memory_remember`, and `memory_project_status`.
 
 Prefer the natural-language prompts in this guide unless you are calling tools directly.
 
@@ -140,7 +140,7 @@ If your client integration enables session hooks:
 
 - completed turns are distilled into durable memory
 - rolling session summaries are updated automatically
-- new sessions can pull that context back through `load_session_context` or `memory_load_session_context` in Vibe
+- new sessions can pull that context back through `load_session_context` (or the prefixed variant like `memory_load_session_context` when the MCP server is named)
 
 Bootstrap results now include:
 
@@ -186,29 +186,28 @@ For release prep, `--release-evidence` combines the latest retrieval snapshot, r
 
 One-turn auto session captures now infer stronger kinds such as `decision`, `constraint`, `todo`, or `fact` when the content supports it, and the save result can include a merge/supersede suggestion when the new capture looks like an update to an existing memory.
 
-## Other Clients
+## Client Integrations
 
-Generated repos include session-start scaffolding for:
+`vibe-rag init` generates session-start scaffolding for all four supported clients:
 
-- Codex
 - Claude Code
+- Codex
 - Gemini CLI
+- Vibe
 
-Client posture today:
-
-- Claude Code is strong
-- Codex is strong
-- Vibe is bootstrapped
-- Gemini CLI is untested
-
-Those generated configs currently give you:
+Each client's generated config provides:
 
 - MCP server registration for `vibe-rag serve`
-- session-start context injection through `vibe-rag hook-session-start`
-- Vibe projects use a native `[[hooks.SessionStart]]` entry in `.vibe/config.toml`
+- session-start context injection through `vibe-rag hook-session-start --format <client>`
 - automatic `git init` when the scaffold target is not already a repo
 - generated config that pins the resolved `vibe-rag` binary path
-- Codex config with `suppress_unstable_features_warning = true`
+
+Client-specific notes:
+
+- Vibe uses a native `[[hooks.SessionStart]]` entry in `.vibe/config.toml`
+- Codex config sets `suppress_unstable_features_warning = true`
+- Claude Code uses `.claude/settings.json`
+- Gemini CLI uses `.gemini/settings.json` and `.mcp.json`
 
 The core `vibe-rag serve` MCP server is the product identity. Client quality is judged on whether the packaged binary, generated config, session-start path, and retrieval loop all work together without a source checkout.
 

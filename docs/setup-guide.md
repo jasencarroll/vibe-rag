@@ -77,7 +77,7 @@ This is the path that matters for release quality. Generated repos pin the resol
 
 ## 3. Configure the MCP Server
 
-Use a project config like this:
+Each client has its own config format. Here is the Vibe example (`.vibe/config.toml`):
 
 ```toml
 active_model = "devstral-2"
@@ -93,6 +93,8 @@ args = ["serve"]
 command = "'/absolute/path/to/vibe-rag' hook-session-start --format vibe"
 ```
 
+Claude Code (`.claude/settings.json`), Codex (`.codex/config.toml` + `.codex/hooks.json`), and Gemini CLI (`.gemini/settings.json` + `.mcp.json`) have equivalent generated configs. `vibe-rag init` writes all four.
+
 Notes:
 
 - Durable user memory is stored automatically in `~/.vibe/memory.db`.
@@ -100,7 +102,7 @@ Notes:
 - Embeddings use OpenRouter, defaulting to `perplexity/pplx-embed-v1-4b` and `2560` dimensions.
 - Retrieval stays project-scoped by default, including user-memory results used by session bootstrap.
 - `vibe-rag` exposes bare MCP tool names like `load_session_context`, `index_project`, `search`, `remember`, and `project_status`.
-- In generated Vibe projects the MCP server is named `memory`, so some clients show those same tools as `memory_load_session_context`, `memory_index_project`, `memory_search`, `memory_remember`, and `memory_project_status`.
+- When a client's MCP config names the server (e.g. `memory`), those same tools may appear prefixed as `memory_load_session_context`, `memory_index_project`, `memory_search`, `memory_remember`, and `memory_project_status`.
 
 Optional embed/storage env block:
 
@@ -134,7 +136,7 @@ vibe-rag hook-session-start --format codex
 - Codex `SessionStart` hook configuration
 - project and user sqlite readability
 - embedding provider reachability
-- Vibe and Codex trust state
+- client trust state (Vibe, Codex, and others where applicable)
 - stale index warnings
 
 `doctor` does not execute repo-configured hook commands. It only inspects the configured command and reports trust state.
@@ -155,37 +157,28 @@ vibe-rag reset-index
 
 If `RAG_OR_API_KEY` is missing, `vibe-rag` reports a provider configuration error.
 
-## 3A. Optional Codex And Claude Code Scaffolding
+## 3A. Per-Client Scaffolding
 
-`vibe-rag init` also writes:
+`vibe-rag init` writes config for all four clients:
 
-- `.codex/config.toml`
-- `.codex/hooks.json`
-- `.claude/settings.json`
-- `.gemini/settings.json`
-- `.mcp.json`
+- `.vibe/config.toml` and `.vibe/skills/semantic-repo-search/SKILL.md` (Vibe)
+- `.codex/config.toml` and `.codex/hooks.json` (Codex)
+- `.claude/settings.json` (Claude Code)
+- `.gemini/settings.json` and `.mcp.json` (Gemini CLI)
 
-Those files do two things:
+Each client config does the same things:
 
-- register `vibe-rag serve` as an MCP server for the client
-- run `vibe-rag hook-session-start --format <client>` at session start
-- pin the resolved `vibe-rag` binary path captured at scaffold time so client startup does not depend on `PATH` ordering
+- registers `vibe-rag serve` as an MCP server
+- runs `vibe-rag hook-session-start --format <client>` at session start
+- pins the resolved `vibe-rag` binary path captured at scaffold time so client startup does not depend on `PATH` ordering
 
 Generated Codex config also sets `suppress_unstable_features_warning = true`.
 
 For this maintainer repo specifically, the tracked `.vibe/`, `.codex/`, `.claude/`, and `.mcp.json` files use `scripts/run-vibe-rag` instead. That repo-local runner is only for the source checkout; generated repos pin the resolved installed `vibe-rag` path directly.
 
-Current support level:
-
-- `vibe-rag serve`: core identity
-- Claude Code: strongest
-- Codex: strongly supported
-- Vibe: bootstrapped compatibility path
-- Gemini CLI: untested
-
 ## 4. Trust the Repo
 
-If Vibe prompts for trust, trust the real resolved path.
+If your client prompts for trust (Vibe, Codex, or others), trust the real resolved path.
 
 This matters for:
 
@@ -268,7 +261,7 @@ If memory search is empty:
 
 If project ids feel wrong:
 
-- restart `vibe`
+- restart your client session
 - make sure you are in the intended repo root
 
 If packaged behavior looks stale:

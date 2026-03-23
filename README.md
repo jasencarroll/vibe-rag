@@ -73,15 +73,15 @@ Trust model:
 - [Memory Event Convention](docs/memory-event-convention.md)
 - [Maintainer Guide](docs/maintainer-guide.md)
 
-## Support Levels
+## Supported Clients
 
-| Layer | Status | Notes |
-| --- | --- | --- |
-| `vibe-rag serve` MCP server | core identity | client-agnostic semantic repo search and memory |
-| Claude Code integration | strong | best-supported operational path |
-| Codex integration | strong | session-start scaffolding ships and works well |
-| Vibe integration | bootstrapped | maintained for startup and compatibility |
-| Gemini CLI integration | experimental | project scaffolding plus session-start hook |
+| Layer | Notes |
+| --- | --- |
+| `vibe-rag serve` MCP server | client-agnostic semantic repo search and memory |
+| Claude Code | MCP config and session-start hook via `vibe-rag init` |
+| Codex | MCP config, hooks, and session-start scaffolding via `vibe-rag init` |
+| Vibe | project config and session-start hook via `vibe-rag init` |
+| Gemini CLI | project config and session-start hook via `vibe-rag init` |
 
 ## What You Need
 
@@ -90,10 +90,6 @@ Trust model:
 - OpenRouter API key
 
 Use Python 3.12 for `uv tool install`. In this environment, `tree-sitter-languages` does not have cp313 wheels.
-
-## Vibe Integration
-
-If you want to run with Vibe, use the generated `vibe` project scaffolding and trust the resolved local path.
 
 ## Install vibe-rag
 
@@ -174,11 +170,10 @@ vibe-rag hook-session-start --format codex
 
 - effective project id
 - project MCP command resolution
-- Vibe SessionStart hook configuration
-- Codex SessionStart hook configuration
+- session-start hook configuration for each supported client
 - project and user DB readability
 - embedding provider reachability
-- Vibe and Codex trust status
+- client trust status
 - stale index warnings
 
 `doctor` inspects hook configuration and trust state. It does not execute repo-configured hook commands.
@@ -230,14 +225,7 @@ Generated Codex config also sets `suppress_unstable_features_warning = true`.
 This maintainer repo also tracks its own bootstrap files in `.vibe/`, `.codex/`, `.claude/`, and `.mcp.json`.
 Those tracked maintainer configs use `scripts/run-vibe-rag` so agents can launch the repo from source without a user-specific install path.
 
-Current support level is shown in the support table above.
-
-Generated repo messaging should match that table:
-
-- Claude Code is strong
-- Codex is strong
-- Vibe is bootstrapped for compatibility
-- Gemini CLI is experimental
+All four clients (Claude Code, Codex, Vibe, Gemini CLI) are supported via `vibe-rag init` scaffolding.
 
 ## Storage Model
 
@@ -345,12 +333,7 @@ The test suite also now includes scenario-based memory usefulness evals, so `loa
 Auto-captured session memory is also more selective at write time now: transient status updates and non-novel restatements are skipped before they become durable memory.
 When a one-turn auto capture is worth keeping, `vibe-rag` now infers a stronger memory kind such as `decision`, `constraint`, `todo`, or `fact` instead of defaulting everything to `summary`, and it can suggest superseding a nearby existing memory when the new capture looks like an update.
 
-Current posture:
-
-- Claude Code is strongest today.
-- Codex is also strongly supported.
-- Vibe is bootstrapped for compatibility and launch speed.
-- Gemini CLI is scaffolded but untested.
+All four clients are supported and receive MCP config plus session-start hooks from `vibe-rag init`.
 
 The packaged-install bar is non-negotiable:
 

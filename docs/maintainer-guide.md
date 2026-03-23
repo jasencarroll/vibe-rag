@@ -8,12 +8,12 @@ The internal agent-oriented maintainer contract still lives in `AGENTS.md`.
 
 If you are looking for the user-facing product docs, start with the [README](../README.md), the [Setup Guide](setup-guide.md), and the [User Guide](user-guide.md).
 
-Current public posture should stay consistent across those docs:
+Current public posture should stay consistent across those docs and present all four supported clients equally:
 
-- Claude Code is strong
-- Codex is strong
-- Vibe is bootstrapped
-- Gemini CLI is untested
+- Claude Code
+- Codex
+- Gemini CLI
+- Vibe
 
 ## Source Of Truth
 
@@ -162,13 +162,12 @@ vibe-rag --version
 
 If PyPI resolution fails immediately after a successful publish workflow, wait and retry.
 
-## Vibe And E2E Checks
+## Client E2E Checks
 
 When session bootstrap or scaffold behavior changes, verify:
 
-- packaged `vibe`
 - packaged `vibe-rag`
-- trusted project-local `.vibe/config.toml`
+- trusted project-local config for each client (`.vibe/config.toml`, `.codex/config.toml`, `.claude/settings.json`, `.gemini/settings.json`)
 - OpenRouter env behavior (`RAG_OR_*`) and DB env behavior
 - local user memory at `~/.vibe/memory.db`
 
