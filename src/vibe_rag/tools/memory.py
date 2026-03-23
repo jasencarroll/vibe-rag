@@ -98,6 +98,8 @@ def remember(
     if scope not in ("project", "user"):
         return _failure("invalid_scope", "scope must be 'project' or 'user'")
 
+    current_project_id = _ensure_project_id()
+
     # --- Structured path: summary is provided ---
     if summary.strip():
         error = _validate_memory_content(summary)
@@ -127,7 +129,7 @@ def remember(
             content=body,
             embedding=embeddings[0],
             tags=tags,
-            project_id=_ensure_project_id(),
+            project_id=current_project_id,
             memory_kind=resolved_kind,
             metadata={"capture_kind": "manual", **(metadata or {})},
             source_session_id=source_session_id or None,
@@ -141,7 +143,7 @@ def remember(
                     stored or {"id": mid, "summary": summary, "content": body},
                     source_db_label,
                 ),
-                current_project_id=_ensure_project_id(),
+                current_project_id=current_project_id,
             ),
         )
 
@@ -173,7 +175,7 @@ def remember(
         content=content,
         embedding=embeddings[0],
         tags=tags,
-        project_id=_ensure_project_id(),
+        project_id=current_project_id,
         memory_kind=resolved_kind,
         metadata={"capture_kind": "freeform", **(metadata or {})},
         source_session_id=source_session_id or None,
@@ -194,7 +196,7 @@ def remember(
                 },
                 source_db_label,
             ),
-            current_project_id=_ensure_project_id(),
+            current_project_id=current_project_id,
         ),
     )
 
@@ -242,6 +244,7 @@ def update_memory(
     if isinstance(parsed, dict):
         return _failure_from_error(parsed)
     source_db, sqlite_id = parsed
+    current_project_id = _ensure_project_id()
 
     # Resolve DB
     if source_db == "user":
@@ -339,7 +342,7 @@ def update_memory(
         backend=f"{source_db_label}-sqlite",
         memory=_memory_payload(
             _with_source_db(updated or existing, source_db_label),
-            current_project_id=_ensure_project_id(),
+            current_project_id=current_project_id,
         ),
     )
 
@@ -648,6 +651,7 @@ def save_session_memory(
 
     enriched_metadata = _infer_session_metadata(task.strip(), response, enriched_metadata)
 
+    current_project_id = _ensure_project_id()
     user_db = _get_user_db()
     existing = user_db.get_memory_by_source(
         source_session_id.strip(), source_message_id.strip()
@@ -658,13 +662,13 @@ def save_session_memory(
             deduplicated=True,
             memory=_memory_payload(
                 _with_source_db(existing, "user"),
-                current_project_id=_ensure_project_id(),
+                current_project_id=current_project_id,
             ),
         )
 
     duplicate = _find_duplicate_auto_memory(
         user_db=user_db,
-        project_id=_ensure_project_id(),
+        project_id=current_project_id,
         summary=summary,
         content=content,
         capture_kind="session_distillation",
@@ -677,12 +681,12 @@ def save_session_memory(
             reason="duplicate auto memory",
             memory=_memory_payload(
                 _with_source_db(duplicate, "user"),
-                current_project_id=_ensure_project_id(),
+                current_project_id=current_project_id,
             ),
         )
 
     non_novel = _find_non_novel_auto_memory(
-        project_id=_ensure_project_id(),
+        project_id=current_project_id,
         summary=summary,
         content=content,
     )
@@ -693,12 +697,12 @@ def save_session_memory(
             skipped=True,
             reason="non-novel auto memory",
             memory_kind=inferred_memory_kind,
-            memory=_memory_payload(non_novel, current_project_id=_ensure_project_id()),
-            merge_suggestion=_merge_suggestion_payload(non_novel, _ensure_project_id()),
+            memory=_memory_payload(non_novel, current_project_id=current_project_id),
+            merge_suggestion=_merge_suggestion_payload(non_novel, current_project_id),
         )
 
     merge_candidate = _find_merge_candidate(
-        project_id=_ensure_project_id(),
+        project_id=current_project_id,
         summary=summary,
         content=content,
         memory_kind=inferred_memory_kind,
@@ -714,7 +718,7 @@ def save_session_memory(
         content=content,
         embedding=embedding,
         tags=tags,
-        project_id=_ensure_project_id(),
+        project_id=current_project_id,
         memory_kind=inferred_memory_kind,
         metadata=enriched_metadata,
         source_session_id=source_session_id.strip(),
@@ -725,13 +729,13 @@ def save_session_memory(
         backend="user-sqlite",
         deduplicated=False,
         memory_kind=inferred_memory_kind,
-        merge_suggestion=_merge_suggestion_payload(merge_candidate, _ensure_project_id()),
+        merge_suggestion=_merge_suggestion_payload(merge_candidate, current_project_id),
         memory=_memory_payload(
             _with_source_db(
                 stored or {"id": memory_id, "summary": summary, "content": content},
                 "user",
             ),
-            current_project_id=_ensure_project_id(),
+            current_project_id=current_project_id,
         ),
     )
 
@@ -797,6 +801,7 @@ def save_session_summary(
     except RuntimeError as e:
         return _failure("embedding_failed", f"embedding failed: {e}")
 
+    current_project_id = _ensure_project_id()
     user_db = _get_user_db()
     existing = user_db.get_memory_by_source(
         source_session_id.strip(), summary_source_message_id
@@ -807,12 +812,12 @@ def save_session_summary(
             deduplicated=True,
             memory=_memory_payload(
                 _with_source_db(existing, "user"),
-                current_project_id=_ensure_project_id(),
+                current_project_id=current_project_id,
             ),
         )
     duplicate = _find_duplicate_auto_memory(
         user_db=user_db,
-        project_id=_ensure_project_id(),
+        project_id=current_project_id,
         summary=summary,
         content=content,
         capture_kind="session_rollup",
@@ -825,11 +830,11 @@ def save_session_summary(
             reason="duplicate auto memory",
             memory=_memory_payload(
                 _with_source_db(duplicate, "user"),
-                current_project_id=_ensure_project_id(),
+                current_project_id=current_project_id,
             ),
         )
     merge_candidate = _find_merge_candidate(
-        project_id=_ensure_project_id(),
+        project_id=current_project_id,
         summary=summary,
         content=content,
         memory_kind=inferred_memory_kind,
@@ -839,7 +844,7 @@ def save_session_summary(
         content=content,
         embedding=embedding,
         tags=tags,
-        project_id=_ensure_project_id(),
+        project_id=current_project_id,
         memory_kind=inferred_memory_kind,
         metadata=enriched_metadata,
         source_session_id=source_session_id.strip(),
@@ -851,13 +856,13 @@ def save_session_summary(
         backend="user-sqlite",
         deduplicated=False,
         memory_kind=inferred_memory_kind,
-        merge_suggestion=_merge_suggestion_payload(merge_candidate, _ensure_project_id()),
+        merge_suggestion=_merge_suggestion_payload(merge_candidate, current_project_id),
         memory=_memory_payload(
             _with_source_db(
                 stored or {"id": memory_id, "summary": summary, "content": content},
                 "user",
             ),
-            current_project_id=_ensure_project_id(),
+            current_project_id=current_project_id,
         ),
     )
 

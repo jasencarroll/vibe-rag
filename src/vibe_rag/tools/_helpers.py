@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import inspect
 import json
@@ -105,6 +105,9 @@ STRUCTURED_MEMORY_PRIORITY = {
     "fact": 4,
     "note": 5,
 }
+AUTO_MEMORY_SCAN_LIMIT = 200
+AUTO_MEMORY_RECENCY_DAYS = 30
+
 PROCEDURAL_QUERY_TERMS = {
     "release",
     "publish",
@@ -723,27 +726,50 @@ def _infer_auto_memory_kind(task: str, summary: str, content: str) -> MemoryKind
     return "summary"
 
 
+def _auto_memory_recent_cutoff() -> str:
+    return (datetime.now(timezone.utc) - timedelta(days=AUTO_MEMORY_RECENCY_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _recent_project_auto_memory_candidates(project_id: str) -> list[dict]:
+    cutoff = _auto_memory_recent_cutoff()
+    project_db = _get_db()
+    user_db = _get_user_db()
+    candidates = [
+        _with_source_db(item, "project")
+        for item in project_db.list_memories(
+            limit=AUTO_MEMORY_SCAN_LIMIT,
+            include_superseded=False,
+            project_id=project_id,
+            updated_since=cutoff,
+        )
+    ]
+    candidates.extend(
+        _with_source_db(item, "user")
+        for item in user_db.list_memories(
+            limit=AUTO_MEMORY_SCAN_LIMIT,
+            include_superseded=False,
+            project_id=project_id,
+            updated_since=cutoff,
+        )
+    )
+    return candidates
+
+
+def _recent_user_auto_memory_candidates(user_db, *, include_superseded: bool) -> list[dict]:
+    return user_db.list_memories(
+        limit=AUTO_MEMORY_SCAN_LIMIT,
+        include_superseded=include_superseded,
+        updated_since=_auto_memory_recent_cutoff(),
+    )
+
+
 def _find_non_novel_auto_memory(
     *,
     project_id: str,
     summary: str,
     content: str,
 ) -> dict | None:
-    current_project_id = project_id
-    candidates: list[dict] = []
-    project_db = _get_db()
-    user_db = _get_user_db()
-    candidates.extend(
-        _with_source_db(item, "project")
-        for item in project_db.list_memories(
-            limit=max(project_db.memory_count(include_superseded=True) + 10, 20),
-            include_superseded=False,
-            project_id=current_project_id,
-        )
-    )
-    for item in user_db.list_memories(limit=max(user_db.memory_count(include_superseded=True) + 10, 20), include_superseded=False):
-        if str(item.get("project_id") or "") == current_project_id:
-            candidates.append(_with_source_db(item, "user"))
+    candidates = _recent_project_auto_memory_candidates(project_id)
     for item in candidates:
         existing_content = str(item.get("content") or "")
         if _text_term_similarity(content, existing_content) >= 0.55:
@@ -758,20 +784,7 @@ def _find_merge_candidate(
     content: str,
     memory_kind: str,
 ) -> dict | None:
-    project_db = _get_db()
-    user_db = _get_user_db()
-    candidates: list[dict] = []
-    candidates.extend(
-        _with_source_db(item, "project")
-        for item in project_db.list_memories(
-            limit=max(project_db.memory_count(include_superseded=True) + 10, 20),
-            include_superseded=False,
-            project_id=project_id,
-        )
-    )
-    for item in user_db.list_memories(limit=max(user_db.memory_count(include_superseded=True) + 10, 20), include_superseded=False):
-        if str(item.get("project_id") or "") == project_id:
-            candidates.append(_with_source_db(item, "user"))
+    candidates = _recent_project_auto_memory_candidates(project_id)
     best: tuple[float, dict] | None = None
     for item in candidates:
         if str(item.get("memory_kind") or "") != memory_kind:
@@ -836,10 +849,7 @@ def _find_duplicate_auto_memory(
     capture_kind: str,
 ) -> dict | None:
     target = _normalized_auto_memory_key(summary, content, capture_kind, project_id)
-    existing = user_db.list_memories(
-        limit=max(user_db.memory_count(include_superseded=True) + 10, 20),
-        include_superseded=True,
-    )
+    existing = _recent_user_auto_memory_candidates(user_db, include_superseded=True)
     for item in existing:
         metadata = _metadata_dict(item.get("metadata"))
         if str(metadata.get("capture_kind") or "").strip() not in {"session_rollup", "session_distillation"}:
@@ -863,6 +873,7 @@ def _sort_memory_results(results: list[dict], current_project_id: str | None = N
             -_memory_rank_score(item),
             _memory_priority(item.get("memory_kind")),
             str(item.get("updated_at") or ""),
+            int(item.get("id") or 0),
         ),
     )
 
