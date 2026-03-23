@@ -1,3 +1,4 @@
+import os
 import pytest
 import hashlib
 import math
@@ -67,3 +68,104 @@ def mock_embedder():
     srv._embedder = fake
     yield fake
     srv._embedder = old_embedder
+
+
+# ---------------------------------------------------------------------------
+# Composite fixtures that eliminate repeated setup across test files
+# ---------------------------------------------------------------------------
+
+_SAMPLE_PY_AUTH = "def authenticate(user, password):\n    return True\n"
+_SAMPLE_PY_BILLING = "def create_invoice(customer_id):\n    return customer_id\n"
+_SAMPLE_MD_GUIDE = "## Deployment\n\nDeploy to Railway with docker.\n"
+
+
+@pytest.fixture
+def indexed_project(tmp_db, mock_embedder, tmp_path: Path):
+    """Create a temp project with .py and .md files, index it, and yield the path.
+
+    The fixture handles chdir into the project directory and restores the
+    original working directory on teardown.  After yielding, both code and
+    doc indexes are populated so search_code / search_docs / load_session_context
+    can be called immediately.
+    """
+    from vibe_rag.tools import index_project
+
+    (tmp_path / "auth.py").write_text(_SAMPLE_PY_AUTH)
+    (tmp_path / "billing.py").write_text(_SAMPLE_PY_BILLING)
+    (tmp_path / "guide.md").write_text(_SAMPLE_MD_GUIDE)
+
+    old_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        result = index_project()
+        assert result["ok"] is True, f"index_project failed: {result}"
+        yield tmp_path
+    finally:
+        os.chdir(old_cwd)
+
+
+@pytest.fixture
+def populated_memory(tmp_db, mock_embedder):
+    """Store a few memories of different kinds and yield their IDs.
+
+    Returns a dict mapping memory kind to the ID returned by
+    ``remember_structured``, e.g. ``{"decision": 1, "fact": 2, "note": 3}``.
+    Useful for search_memory / forget / update_memory tests.
+    """
+    from vibe_rag.tools import remember_structured
+
+    ids: dict[str, int] = {}
+
+    result = remember_structured(
+        summary="gateway owns auth tokens",
+        details="the gateway service validates bearer tokens before routing",
+        memory_kind="decision",
+    )
+    assert result["ok"] is True
+    ids["decision"] = result["memory"]["id"]
+
+    result = remember_structured(
+        summary="max retry count is 5",
+        details="the retry policy caps at 5 attempts with exponential backoff",
+        memory_kind="fact",
+    )
+    assert result["ok"] is True
+    ids["fact"] = result["memory"]["id"]
+
+    result = remember_structured(
+        summary="need to refactor billing module",
+        details="billing module has grown too large and should be split",
+        memory_kind="note",
+    )
+    assert result["ok"] is True
+    ids["note"] = result["memory"]["id"]
+
+    yield ids
+
+
+_PROVIDER_ENV_VARS = (
+    "VIBE_RAG_EMBEDDING_PROVIDER",
+    "VIBE_RAG_EMBEDDING_MODEL",
+    "VIBE_RAG_EMBEDDING_DIMENSIONS",
+    "VIBE_RAG_OLLAMA_HOST",
+    "VIBE_RAG_CODE_EMBEDDING_MODEL",
+    "VIBE_RAG_DB",
+    "VIBE_RAG_USER_DB",
+    "MISTRAL_API_KEY",
+    "OPENAI_API_KEY",
+    "VOYAGE_API_KEY",
+    "OLLAMA_HOST",
+)
+
+
+@pytest.fixture
+def clean_env(monkeypatch):
+    """Remove all VIBE_RAG_* and provider env vars for a pristine environment.
+
+    Useful for embedder / provider-selection tests that need deterministic
+    environment state.  Each variable is deleted via ``monkeypatch.delenv``
+    so the original values are automatically restored on teardown.
+    """
+    for var in _PROVIDER_ENV_VARS:
+        monkeypatch.delenv(var, raising=False)
+    yield
