@@ -19,7 +19,7 @@ vibe-rag setup-ollama                      # pull default embedding model
 ```
 src/vibe_rag/
   server.py        — FastMCP server, lazy-init for DBs + embedder
-  tools.py         — all MCP tool definitions (core file, ~2200 lines)
+  tools.py         — 12 MCP tool definitions (core file, ~3100 lines); unified search/remember with scope params, update_memory for in-place edits
   cli.py           — Click CLI: init, status, doctor, reindex, serve, setup-ollama, hook-session-start
   hook_bridge.py   — session-start hook renderer for codex/claude/gemini/vibe formats
   chunking.py      — doc chunking (markdown section-aware + plain text)
@@ -38,6 +38,11 @@ src/vibe_rag/
 - **Lazy init**: server.py uses thread-locked singletons for `_project_db`, `_user_db`, `_embedder`
 - **Import side-effect**: `server.py` line 101 does `import vibe_rag.tools` to register all `@mcp.tool()` decorators -- this must stay after `mcp` and helper definitions
 - **Embedding provider fallback**: ollama (local) > mistral > openai > voyage; override with `VIBE_RAG_EMBEDDING_PROVIDER`
+- **Unified search**: `search(query, scope="all|code|docs")` replaces old `search_code`/`search_docs` tools
+- **Unified remember**: `remember(content, scope="project|user")` replaces old `remember`/`remember_structured`; optional structured fields (`summary`, `details`, `memory_kind`)
+- **Match transparency**: all search results include `match_reason` field
+- **In-place editing**: `update_memory(memory_id, ...)` for lightweight corrections without supersede/forget
+- **Memory health in status**: `project_status(include_memory_health=True)` replaces separate `memory_cleanup_report`/`memory_quality_report` tools
 - **Memory classification**: `save_session_memory` auto-classifies into kinds (decision/constraint/todo/fact/note) using term-matching heuristics in tools.py
 
 ## Environment Variables
