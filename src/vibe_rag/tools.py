@@ -949,44 +949,71 @@ def _rrf_merge(*result_sets: tuple[str, list[dict]], k: int = 60, limit: int) ->
     return results[:limit]
 
 
-def _code_result_payload(result: RankedCodeResult) -> CodeSearchResult:
+def _match_reason(query: str, content: str, score: float) -> str:
+    """Generate a human-readable match reason."""
+    reasons: list[str] = []
+    query_terms = query.lower().split()
+    content_lower = content.lower()
+
+    # Check for keyword overlap
+    matching_terms = [t for t in query_terms if t in content_lower]
+    if matching_terms:
+        reasons.append(f"keyword match: {', '.join(matching_terms)}")
+
+    # Semantic similarity bucket
+    if score >= 0.85:
+        reasons.append("strong semantic match")
+    elif score >= 0.7:
+        reasons.append("moderate semantic match")
+    else:
+        reasons.append("weak semantic match")
+
+    return " + ".join(reasons) if reasons else "semantic similarity"
+
+
+def _code_result_payload(result: RankedCodeResult, query: str = "") -> CodeSearchResult:
     provenance: SearchProvenance = {
         "source": "project-index",
         "indexed_at": result.get("indexed_at"),
     }
+    content = str(result["content"])
+    rank_score = round(float(result.get("rank_score") or 0.0), 6)
     return {
         "file_path": str(result["file_path"]),
         "start_line": int(result["start_line"]),
         "end_line": int(result["end_line"]),
-        "content": str(result["content"]),
+        "content": content,
         "language": result.get("language"),
         "symbol": result.get("symbol"),
         "indexed_at": result.get("indexed_at"),
-        "rank_score": round(float(result.get("rank_score") or 0.0), 6),
+        "rank_score": rank_score,
         "match_sources": list(result.get("match_sources") or []),
         "provenance": provenance,
+        "match_reason": _match_reason(query, content, rank_score) if query else "semantic similarity",
     }
 
 
-def _doc_result_payload(result: RankedDocResult) -> DocSearchResult:
+def _doc_result_payload(result: RankedDocResult, query: str = "") -> DocSearchResult:
     content = str(result["content"])
     provenance: SearchProvenance = {
         "source": "project-index",
         "indexed_at": result.get("indexed_at"),
     }
+    rank_score = round(float(result.get("rank_score") or 0.0), 6)
     return {
         "file_path": str(result["file_path"]),
         "chunk_index": int(result["chunk_index"]),
         "content": content,
         "preview": content.replace("\n", " ")[:160],
         "indexed_at": result.get("indexed_at"),
-        "rank_score": round(float(result.get("rank_score") or 0.0), 6),
+        "rank_score": rank_score,
         "match_sources": list(result.get("match_sources") or []),
         "provenance": provenance,
+        "match_reason": _match_reason(query, content, rank_score) if query else "semantic similarity",
     }
 
 
-def _memory_payload(result: MemoryRow, current_project_id: str | None = None) -> MemoryPayload:
+def _memory_payload(result: MemoryRow, current_project_id: str | None = None, query: str = "") -> MemoryPayload:
     metadata = result.get("metadata") or {}
     capture_kind = str(metadata.get("capture_kind") or "").strip() or "unknown"
     superseded_by = _int_or_none(result.get("superseded_by"))
@@ -1029,6 +1056,8 @@ def _memory_payload(result: MemoryRow, current_project_id: str | None = None) ->
         "metadata": metadata,
         "provenance": provenance,
     }
+    if query:
+        payload["match_reason"] = _match_reason(query, result.get("content", ""), payload["score"])
     if isinstance(payload["tags"], str):
         payload["tags"] = [tag.strip() for tag in payload["tags"].split(",") if tag.strip()]
     return payload
@@ -2125,50 +2154,88 @@ def index_project(paths: list[str] | str | None = None) -> dict:
 
 
 @mcp.tool()
+def search(
+    query: str,
+    limit: int = 10,
+    scope: str = "all",
+    language: str | None = None,
+    min_score: float = 0.0,
+) -> dict:
+    """Semantic search across code and docs. Use scope to narrow. Prefer this over grep when you know behavior but not exact symbols."""
+    import math
+
+    if scope not in ("all", "code", "docs"):
+        return _failure("invalid_scope", f"scope must be 'all', 'code', or 'docs', got '{scope}'")
+
+    warnings: list[dict] = []
+    code_results: list[dict] = []
+    doc_results: list[dict] = []
+
+    if scope in ("all", "code"):
+        code_limit = math.ceil(limit * 0.6) if scope == "all" else limit
+        error, filtered = _search_code_results(query, limit=code_limit, language=language, min_score=min_score)
+        if error:
+            if scope == "code":
+                return _failure_from_error(error, query=query, limit=limit, scope=scope, language=language, min_score=min_score)
+            warnings.append({"scope": "code", "error": error})
+        else:
+            code_results = [
+                {**_code_result_payload(result, query=query), "result_type": "code"}
+                for result in filtered
+            ]
+
+    if scope in ("all", "docs"):
+        docs_limit = limit - len(code_results) if scope == "all" else limit
+        docs_limit = max(docs_limit, 1) if scope == "all" else docs_limit
+        error, results = _search_docs_results(query, limit=docs_limit)
+        if error:
+            if scope == "docs":
+                return _failure_from_error(error, query=query, limit=limit, scope=scope)
+            warnings.append({"scope": "docs", "error": error})
+        else:
+            doc_results = [
+                {**_doc_result_payload(result, query=query), "result_type": "doc"}
+                for result in results
+            ]
+
+    if scope == "all":
+        merged = sorted(
+            code_results + doc_results,
+            key=lambda r: r.get("rank_score", 0.0),
+            reverse=True,
+        )[:limit]
+    elif scope == "code":
+        merged = code_results
+    else:
+        merged = doc_results
+
+    return _success(
+        query=query,
+        limit=limit,
+        scope=scope,
+        language=language,
+        min_score=min_score,
+        result_total=len(merged),
+        results=merged,
+        warnings=warnings,
+    )
+
+
+# Keep search_code and search_docs as thin wrappers for backward compatibility
+# (not registered as MCP tools, but importable for tests and internal use).
 def search_code(
     query: str,
     limit: int = 10,
     language: str | None = None,
     min_score: float = 0.0,
 ) -> dict:
-    """Semantic code search. Prefer this over grep when you know behavior but not exact symbols or filenames."""
-    error, filtered = _search_code_results(query, limit=limit, language=language, min_score=min_score)
-    if error:
-        return _failure_from_error(
-            error,
-            query=query,
-            limit=limit,
-            language=language,
-            min_score=min_score,
-        )
-
-    results = [_code_result_payload(result) for result in filtered]
-    return _success(
-        query=query,
-        limit=limit,
-        language=language,
-        min_score=min_score,
-        result_total=len(results),
-        results=results,
-        warnings=[],
-    )
+    """Backward-compatible wrapper around the unified search tool."""
+    return search(query, limit=limit, scope="code", language=language, min_score=min_score)
 
 
-@mcp.tool()
 def search_docs(query: str, limit: int = 10) -> dict:
-    """Semantic docs search for README, plans, specs, and other text files."""
-    error, results = _search_docs_results(query, limit=limit)
-    if error:
-        return _failure_from_error(error, query=query, limit=limit)
-
-    payloads = [_doc_result_payload(result) for result in results]
-    return _success(
-        query=query,
-        limit=limit,
-        result_total=len(payloads),
-        results=payloads,
-        warnings=[],
-    )
+    """Backward-compatible wrapper around the unified search tool."""
+    return search(query, limit=limit, scope="docs")
 
 
 @mcp.tool()
@@ -2296,7 +2363,7 @@ def search_memory(query: str, limit: int = 10) -> dict:
         return _failure_from_error(error, query=query, limit=limit)
 
     payloads = [
-        _memory_payload(result, current_project_id=_ensure_project_id())
+        _memory_payload(result, current_project_id=_ensure_project_id(), query=query)
         for result in results
     ]
     return _success(
@@ -2357,7 +2424,7 @@ def load_session_context(
         payload["errors"]["memory"] = memory_error
     else:
         payload["memories"] = [
-            _memory_payload(result, current_project_id=payload["project_id"])
+            _memory_payload(result, current_project_id=payload["project_id"], query=task)
             for result in memory_results
         ]
 
@@ -2365,13 +2432,13 @@ def load_session_context(
     if code_error:
         payload["errors"]["code"] = code_error
     else:
-        payload["code"] = [_code_result_payload(result) for result in code_results]
+        payload["code"] = [_code_result_payload(result, query=task) for result in code_results]
 
     docs_error, docs_results = _search_docs_results(task, limit=docs_limit)
     if docs_error:
         payload["errors"]["docs"] = docs_error
     else:
-        payload["docs"] = [_doc_result_payload(result) for result in docs_results]
+        payload["docs"] = [_doc_result_payload(result, query=task) for result in docs_results]
 
     payload["briefing"] = _format_briefing(
         payload["pulse"],

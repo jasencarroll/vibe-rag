@@ -62,6 +62,7 @@ class CodeSearchResult(TypedDict):
     rank_score: float
     match_sources: list[str]
     provenance: SearchProvenance
+    match_reason: str
 
 
 class DocChunk(TypedDict):
@@ -91,6 +92,7 @@ class DocSearchResult(TypedDict):
     rank_score: float
     match_sources: list[str]
     provenance: SearchProvenance
+    match_reason: str
 
 
 class MemoryRow(TypedDict, total=False):
@@ -137,6 +139,7 @@ class MemoryPayload(TypedDict):
     stale_reasons: list[str]
     metadata: dict[str, Any]
     provenance: MemoryProvenance
+    match_reason: NotRequired[str]
     cleanup_reasons: NotRequired[list[str]]
     cleanup_priority: NotRequired[int]
 

@@ -22,6 +22,7 @@ from vibe_rag.tools import (
     remember_structured,
     save_session_memory,
     save_session_summary,
+    search,
     search_code,
     search_docs,
     search_memory,
@@ -2467,6 +2468,91 @@ def test_remember_scope_project_is_default(tmp_db, mock_embedder):
 
 def test_remember_scope_invalid_returns_error(tmp_db, mock_embedder):
     result = remember("some content", scope="global")
+# --- Unified search tool tests ---
+
+
+def test_search_scope_code(tmp_db, mock_embedder, tmp_path: Path):
+    """search(scope='code') should behave like old search_code."""
+    import os
+    (tmp_path / "auth.py").write_text("def authenticate(user, password):\n    return True\n")
+
+    old_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        index_project()
+        result = search("authentication", scope="code")
+    finally:
+        os.chdir(old_cwd)
+
+    assert result["ok"] is True
+    assert result["scope"] == "code"
+    assert "auth.py" in _search_paths(result)
+    assert all(r.get("result_type") == "code" for r in result["results"])
+
+
+def test_search_scope_docs(tmp_db, mock_embedder, tmp_path: Path):
+    """search(scope='docs') should behave like old search_docs."""
+    import os
+    (tmp_path / "guide.md").write_text("## Deployment\n\nDeploy to Railway with docker.\n")
+
+    old_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        index_project()
+        result = search("how to deploy", scope="docs")
+    finally:
+        os.chdir(old_cwd)
+
+    assert result["ok"] is True
+    assert result["scope"] == "docs"
+    assert "guide.md" in _search_paths(result)
+    assert all(r.get("result_type") == "doc" for r in result["results"])
+
+
+def test_search_scope_all(tmp_db, mock_embedder, tmp_path: Path):
+    """search(scope='all') should merge code and docs results."""
+    import os
+    (tmp_path / "billing.py").write_text("def create_invoice(customer_id):\n    return customer_id\n")
+    (tmp_path / "billing.md").write_text("## Billing\n\nInvoices are created in the billing flow.\n")
+
+    old_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        index_project()
+        result = search("billing invoices", scope="all")
+    finally:
+        os.chdir(old_cwd)
+
+    assert result["ok"] is True
+    assert result["scope"] == "all"
+    result_types = {r["result_type"] for r in result["results"]}
+    assert "code" in result_types
+    assert "doc" in result_types
+    paths = _search_paths(result)
+    assert "billing.py" in paths
+    assert "billing.md" in paths
+
+
+def test_search_default_scope_is_all(tmp_db, mock_embedder, tmp_path: Path):
+    """search() should default to scope='all'."""
+    import os
+    (tmp_path / "app.py").write_text("def hello():\n    return 1\n")
+    (tmp_path / "notes.md").write_text("## Notes\n\nHello world notes.\n")
+
+    old_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        index_project()
+        result = search("hello")
+    finally:
+        os.chdir(old_cwd)
+
+    assert result["ok"] is True
+    assert result["scope"] == "all"
+
+
+def test_search_invalid_scope(tmp_db, mock_embedder):
+    result = search("anything", scope="invalid")
     assert result["ok"] is False
     assert "scope" in result["error"]["message"]
 
@@ -2618,3 +2704,164 @@ def test_update_memory_invalid_kind(tmp_db, mock_embedder):
     result = update_memory(memory_id=str(mid), memory_kind="bogus")
     assert result["ok"] is False
     assert result["error"]["code"] == "invalid_memory_kind"
+def test_search_scope_code_empty_index(tmp_db, mock_embedder):
+    result = search("anything", scope="code")
+    assert result["ok"] is False
+    assert result["error"]["code"] == "no_code_index"
+
+
+def test_search_scope_docs_empty_index(tmp_db, mock_embedder):
+    result = search("anything", scope="docs")
+    assert result["ok"] is False
+    assert result["error"]["code"] == "no_docs_index"
+
+
+def test_search_scope_code_empty_query(tmp_db, mock_embedder):
+    result = search("", scope="code")
+    assert result["ok"] is False
+    assert result["error"]["code"] == "empty_query"
+
+
+def test_search_scope_docs_empty_query(tmp_db, mock_embedder):
+    result = search("", scope="docs")
+    assert result["ok"] is False
+    assert result["error"]["code"] == "empty_query"
+
+
+def test_search_scope_all_respects_limit(tmp_db, mock_embedder, tmp_path: Path):
+    """scope='all' should return at most 'limit' results."""
+    import os
+    (tmp_path / "a.py").write_text("def alpha():\n    return 1\n")
+    (tmp_path / "b.py").write_text("def beta():\n    return 2\n")
+    (tmp_path / "notes.md").write_text("## Alpha Beta\n\nAlpha and beta notes.\n")
+
+    old_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        index_project()
+        result = search("alpha beta", scope="all", limit=2)
+    finally:
+        os.chdir(old_cwd)
+
+    assert result["ok"] is True
+    assert len(result["results"]) <= 2
+
+
+def test_search_scope_code_with_language_filter(tmp_db, mock_embedder, tmp_path: Path):
+    """search with scope='code' and language filter should work."""
+    import os
+    (tmp_path / "app.py").write_text("def run():\n    pass\n")
+    (tmp_path / "util.js").write_text("function help() { return 1; }\n")
+
+    old_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        index_project()
+        result = search("run", scope="code", language="python")
+    finally:
+        os.chdir(old_cwd)
+
+    assert result["ok"] is True
+    assert "app.py" in _search_paths(result)
+
+
+# --- match_reason tests ---
+
+
+def test_search_code_results_have_match_reason(tmp_db, mock_embedder, tmp_path: Path):
+    """Code search results should include match_reason field."""
+    import os
+    (tmp_path / "auth.py").write_text("def authenticate(user, password):\n    return True\n")
+
+    old_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        index_project()
+        result = search("authentication", scope="code")
+    finally:
+        os.chdir(old_cwd)
+
+    assert result["ok"] is True
+    for r in result["results"]:
+        assert "match_reason" in r
+        assert isinstance(r["match_reason"], str)
+        assert len(r["match_reason"]) > 0
+
+
+def test_search_docs_results_have_match_reason(tmp_db, mock_embedder, tmp_path: Path):
+    """Doc search results should include match_reason field."""
+    import os
+    (tmp_path / "guide.md").write_text("## Deployment\n\nDeploy to Railway with docker.\n")
+
+    old_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        index_project()
+        result = search("deploy", scope="docs")
+    finally:
+        os.chdir(old_cwd)
+
+    assert result["ok"] is True
+    for r in result["results"]:
+        assert "match_reason" in r
+        assert isinstance(r["match_reason"], str)
+        assert "deploy" in r["match_reason"].lower()
+
+
+def test_search_memory_results_have_match_reason(tmp_db, mock_embedder):
+    """Memory search results should include match_reason field."""
+    remember("auth uses JWT tokens for authentication")
+    result = search_memory("JWT authentication")
+
+    assert result["ok"] is True
+    for r in result["results"]:
+        assert "match_reason" in r
+        assert isinstance(r["match_reason"], str)
+        assert len(r["match_reason"]) > 0
+
+
+def test_load_session_context_results_have_match_reason(tmp_db, mock_embedder, tmp_path: Path):
+    """load_session_context results should include match_reason on code, docs, and memories."""
+    import os
+
+    (tmp_path / "billing.py").write_text("def create_invoice(customer_id):\n    return customer_id\n")
+    (tmp_path / "billing.md").write_text("## Billing\n\nInvoices are created in the billing flow.\n")
+
+    old_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        index_project()
+        remember("billing uses invoices and customer ids")
+        result = load_session_context("continue the billing flow", memory_limit=3, code_limit=3, docs_limit=2)
+    finally:
+        os.chdir(old_cwd)
+
+    assert result["ok"] is True
+    for code_r in result["code"]:
+        assert "match_reason" in code_r
+        assert isinstance(code_r["match_reason"], str)
+    for doc_r in result["docs"]:
+        assert "match_reason" in doc_r
+        assert isinstance(doc_r["match_reason"], str)
+    for mem_r in result["memories"]:
+        assert "match_reason" in mem_r
+        assert isinstance(mem_r["match_reason"], str)
+
+
+def test_search_all_results_have_result_type(tmp_db, mock_embedder, tmp_path: Path):
+    """scope='all' results should each have a result_type field."""
+    import os
+    (tmp_path / "app.py").write_text("def hello():\n    return 1\n")
+    (tmp_path / "notes.md").write_text("## Notes\n\nHello world.\n")
+
+    old_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        index_project()
+        result = search("hello", scope="all")
+    finally:
+        os.chdir(old_cwd)
+
+    assert result["ok"] is True
+    for r in result["results"]:
+        assert r["result_type"] in ("code", "doc")
