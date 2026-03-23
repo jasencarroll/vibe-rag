@@ -161,6 +161,10 @@ def _patch_doctor_new_checks(monkeypatch):
     monkeypatch.setattr("vibe_rag.cli._check_language_coverage", lambda db: {"ok": True, "warning": False, "detail": "100 chunks across 3 languages"})
     monkeypatch.setattr("vibe_rag.cli._check_memory_health", lambda db, user_db: {"ok": True, "warning": False, "detail": "5 active"})
     monkeypatch.setattr("vibe_rag.cli._check_tool_count", lambda: {"ok": True, "warning": False, "detail": "15 tools registered"})
+    _not_found = lambda: {"ok": False, "warning": True, "detail": "not found"}
+    monkeypatch.setattr("vibe_rag.cli._claude_cli_status", _not_found)
+    monkeypatch.setattr("vibe_rag.cli._codex_cli_status", _not_found)
+    monkeypatch.setattr("vibe_rag.cli._gemini_cli_status", _not_found)
 
 
 def test_cli_doctor_defaults_to_openrouter(monkeypatch):
@@ -233,7 +237,7 @@ def test_cli_doctor_for_openrouter_without_api_key(monkeypatch):
         lambda: {
             "ok": False,
             "warning": True,
-            "detail": "Vibe CLI not found. Vibe stays bootstrapped, but Claude Code and Codex are the strongest validated clients today.",
+            "detail": "Vibe CLI not found. Install it to use vibe-rag with Vibe.",
         },
     )
     monkeypatch.setattr(
@@ -560,7 +564,7 @@ def test_cli_init_prints_openrouter_golden_path(monkeypatch):
     assert "Default profile: perplexity/pplx-embed-v1-4b @ 2560 dims" in result.output
     assert "Next step: export `RAG_OR_API_KEY=...`" in result.output
     assert "Golden path:" in result.output
-    assert "start Claude Code, Codex, or Vibe in this repo" in result.output
+    assert "start Claude Code, Codex, Gemini CLI, or Vibe in this repo" in result.output
     assert '"load session context for understanding this repo"' in result.output
     assert '"index this project"' in result.output
     assert "memory_load_session_context" in result.output
@@ -620,7 +624,7 @@ def test_cli_init_does_not_install_agent_profiles():
         assert result.exit_code == 0
         assert "Installed agents to ~/.vibe/agents/" not in result.output
         assert "vibe --agent builder" not in result.output
-        assert "start Claude Code, Codex, or Vibe in this repo" in result.output
+        assert "start Claude Code, Codex, Gemini CLI, or Vibe in this repo" in result.output
 
 
 def test_cli_init_writes_memory_first_agents_guide():

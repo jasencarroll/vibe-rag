@@ -37,10 +37,7 @@ OpenRouter is the only supported embedding backend in this generated workflow.
 
 ## Client Scaffolding
 
-- Claude Code is strong.
-- Codex is strong.
-- Vibe is a bootstrapped compatibility client.
-- Gemini CLI is untested.
+- All four agent CLIs are supported: Claude Code, Codex, Gemini CLI, and Vibe.
 - `vibe-rag init` initializes a git repo when one does not already exist so repo-scoped client behavior works.
 - `vibe-rag init` pins the resolved `vibe-rag` binary path in generated client configs so startup does not depend on `PATH` ordering.
 - Generated configs are expected to work from the installed binary, not only from a source checkout.

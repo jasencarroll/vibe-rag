@@ -146,36 +146,53 @@ def _project_mcp_command_status(project_root: Path) -> dict:
     return {"ok": True, "detail": f"{command} -> {resolved}"}
 
 
-def _vibe_cli_status() -> dict:
-    vibe_bin = shutil.which("vibe")
-    if not vibe_bin:
+def _client_cli_status(binary_name: str, display_name: str, version_flag: str = "--version") -> dict:
+    """Check whether a client CLI binary is installed and responds to a version check."""
+    cli_bin = shutil.which(binary_name)
+    if not cli_bin:
         return {
             "ok": False,
             "warning": True,
-            "detail": "Vibe CLI not found. Vibe stays bootstrapped, but Claude Code and Codex are the strongest validated clients today.",
+            "detail": f"{display_name} not found. Install it to use vibe-rag with {display_name}.",
         }
 
     try:
         result = subprocess.run(
-            [vibe_bin, "--version"],
+            [cli_bin, version_flag],
             capture_output=True,
             text=True,
             check=False,
             timeout=10,
         )
     except OSError as exc:
-        return {"ok": False, "warning": True, "detail": f"Vibe CLI failed to start: {exc}"}
+        return {"ok": False, "warning": True, "detail": f"{display_name} failed to start: {exc}"}
     except subprocess.TimeoutExpired:
-        return {"ok": False, "warning": True, "detail": "Vibe CLI version check timed out"}
+        return {"ok": False, "warning": True, "detail": f"{display_name} version check timed out"}
 
     version_output = (result.stdout or result.stderr or "").strip()
     if result.returncode != 0:
         return {
             "ok": False,
             "warning": True,
-            "detail": f"Vibe CLI found at {vibe_bin} but `vibe --version` failed",
+            "detail": f"{display_name} found at {cli_bin} but `{binary_name} {version_flag}` failed",
         }
-    return {"ok": True, "warning": False, "detail": f"{vibe_bin} ({version_output or 'version unknown'})"}
+    return {"ok": True, "warning": False, "detail": f"{cli_bin} ({version_output or 'version unknown'})"}
+
+
+def _vibe_cli_status() -> dict:
+    return _client_cli_status("vibe", "Vibe CLI")
+
+
+def _claude_cli_status() -> dict:
+    return _client_cli_status("claude", "Claude Code")
+
+
+def _codex_cli_status() -> dict:
+    return _client_cli_status("codex", "Codex CLI")
+
+
+def _gemini_cli_status() -> dict:
+    return _client_cli_status("gemini", "Gemini CLI")
 
 
 def _project_vibe_hook_status(project_root: Path) -> dict:
@@ -373,11 +390,8 @@ def init(name: str | None):
     click.echo("    .claude/           — Claude Code session-start hook")
     click.echo("    .gemini/           — Gemini CLI MCP + session-start hook")
     click.echo("    .mcp.json          — Claude Code MCP server config")
-    click.echo("\n  Client posture:")
-    click.echo("    vibe-rag is client-agnostic.")
-    click.echo("    Claude Code and Codex are the strongest validated integrations today.")
-    click.echo("    Vibe remains bootstrapped and maintained.")
-    click.echo("    Gemini CLI is scaffolded but untested.")
+    click.echo("\n  Supported clients:")
+    click.echo("    All four agent CLIs are supported: Claude Code, Codex, Gemini CLI, and Vibe.")
     profile = {
         "model": os.environ.get("RAG_OR_EMBED_MOD", "perplexity/pplx-embed-v1-4b"),
         "dimensions": os.environ.get("RAG_OR_EMBED_DIM", "2560"),
@@ -389,12 +403,12 @@ def init(name: str | None):
     click.echo("\n  Golden path:")
     click.echo(f"    cd {target}")
     click.echo("    export RAG_OR_API_KEY=...")
-    click.echo("    start Claude Code, Codex, or Vibe in this repo")
+    click.echo("    start Claude Code, Codex, Gemini CLI, or Vibe in this repo")
     click.echo('    "load session context for understanding this repo"')
     click.echo('    "index this project"')
     click.echo("\n  Tool naming:")
     click.echo("    The MCP server exposes bare tools like load_session_context, index_project, search, remember, and project_status.")
-    click.echo("    In the generated Vibe config the server is named memory, so some clients show memory_load_session_context, memory_index_project, memory_search, and memory_project_status.")
+    click.echo("    Depending on client config the server may be named memory, so tools appear as memory_load_session_context, memory_index_project, memory_search, and memory_project_status.")
 
 def _initialize_git_repo(target: Path) -> None:
     if (target / ".git").exists():
@@ -624,6 +638,9 @@ def doctor(fix: bool):
     provider = embedding_provider_status()
     project_id = _ensure_project_id()
     mcp_status = _project_mcp_command_status(project_root)
+    claude_cli_st = _claude_cli_status()
+    codex_cli_st = _codex_cli_status()
+    gemini_cli_st = _gemini_cli_status()
     vibe_cli_status = _vibe_cli_status()
     vibe_hook_status = _project_vibe_hook_status(project_root)
     hook_status = _codex_hook_status(project_root)
@@ -711,6 +728,9 @@ def doctor(fix: bool):
         click.echo(f"  [{_status_label(ok, warning)}] {label:<16s} {detail}")
 
     _emit("MCP command", mcp_status["ok"], False, mcp_status["detail"])
+    _emit("Claude Code", claude_cli_st["ok"], claude_cli_st.get("warning", False), claude_cli_st["detail"])
+    _emit("Codex CLI", codex_cli_st["ok"], codex_cli_st.get("warning", False), codex_cli_st["detail"])
+    _emit("Gemini CLI", gemini_cli_st["ok"], gemini_cli_st.get("warning", False), gemini_cli_st["detail"])
     _emit("Vibe CLI", vibe_cli_status["ok"], vibe_cli_status.get("warning", False), vibe_cli_status["detail"])
     _emit("Vibe hooks", vibe_hook_ok, vibe_hook_warning, vibe_hook_detail)
     _emit("SessionStart", codex_hook_ok, codex_hook_warning, codex_hook_detail)
