@@ -1,7 +1,7 @@
 {
   "mcpServers": {
     "vibe-rag": {
-      "command": "vibe-rag",
+      "command": "__VIBE_RAG_BIN__",
       "args": ["serve"]
     }
   },
@@ -12,7 +12,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "vibe-rag hook-session-start --format gemini",
+            "command": "__VIBE_RAG_BIN_SHELL__ hook-session-start --format gemini",
             "timeout": 30000,
             "description": "Load vibe-rag session context on startup"
           }
@@ -23,7 +23,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "vibe-rag hook-session-start --format gemini",
+            "command": "__VIBE_RAG_BIN_SHELL__ hook-session-start --format gemini",
             "timeout": 30000,
             "description": "Load vibe-rag session context on resume"
           }
@@ -34,7 +34,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "vibe-rag hook-session-start --format gemini",
+            "command": "__VIBE_RAG_BIN_SHELL__ hook-session-start --format gemini",
             "timeout": 30000,
             "description": "Load vibe-rag session context after clear"
           }

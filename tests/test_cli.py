@@ -2,6 +2,7 @@ from pathlib import Path
 import os
 import subprocess
 import sys
+import json
 
 from click.testing import CliRunner
 import vibe_rag.cli as cli
@@ -97,7 +98,7 @@ def test_cli_doctor_defaults_to_ollama(monkeypatch):
         lambda path, label: {"ok": True, "warning": False, "detail": f"{label} DB readable ({path})"},
     )
     monkeypatch.setattr("vibe_rag.cli._vibe_cli_status", lambda: {"ok": True, "warning": False, "detail": "/usr/local/bin/vibe (mistral-vibe 0.1.0)"})
-    monkeypatch.setattr("vibe_rag.cli._project_vibe_hook_status", lambda root: {"ok": True, "warning": False, "detail": "background and session memory hooks are enabled"})
+    monkeypatch.setattr("vibe_rag.cli._project_vibe_hook_status", lambda root: {"ok": True, "warning": False, "detail": "SessionStart hook returned context via /usr/local/bin/vibe-rag"})
     monkeypatch.setattr("vibe_rag.server._ensure_project_id", lambda: "demo-project")
     monkeypatch.setattr("vibe_rag.server._get_embedder", lambda: type("Embedder", (), {"embed_text_sync": lambda self, texts: [[0.0] * 1024]})())
     monkeypatch.setattr("vibe_rag.server._get_db", lambda: object())
@@ -151,7 +152,7 @@ def test_cli_doctor_for_ollama_missing_host(monkeypatch):
     )
     monkeypatch.setattr(
         "vibe_rag.cli._project_vibe_hook_status",
-        lambda root: {"ok": False, "warning": True, "detail": "background_mcp_hook is not enabled in .vibe/config.toml"},
+        lambda root: {"ok": False, "warning": True, "detail": "hooks.SessionStart.command is not configured in .vibe/config.toml"},
     )
     monkeypatch.setattr("vibe_rag.server._ensure_project_id", lambda: "demo-project")
     monkeypatch.setattr("vibe_rag.tools._vibe_trust_status", lambda root: {"status": "warn", "detail": "repo not trusted"})
@@ -195,7 +196,7 @@ def test_cli_doctor_fix_invokes_setup_ollama(monkeypatch):
         lambda path, label: {"ok": True, "warning": False, "detail": f"{label} DB readable ({path})"},
     )
     monkeypatch.setattr("vibe_rag.cli._vibe_cli_status", lambda: {"ok": True, "warning": False, "detail": "/usr/local/bin/vibe (mistral-vibe 0.1.0)"})
-    monkeypatch.setattr("vibe_rag.cli._project_vibe_hook_status", lambda root: {"ok": True, "warning": False, "detail": "background and session memory hooks are enabled"})
+    monkeypatch.setattr("vibe_rag.cli._project_vibe_hook_status", lambda root: {"ok": True, "warning": False, "detail": "SessionStart hook returned context via /usr/local/bin/vibe-rag"})
     monkeypatch.setattr("vibe_rag.server._ensure_project_id", lambda: "demo-project")
     monkeypatch.setattr("vibe_rag.tools._vibe_trust_status", lambda root: {"status": "ok", "detail": "trusted"})
     monkeypatch.setattr("vibe_rag.tools._codex_trust_status", lambda root: {"status": "ok", "detail": "trusted"})
@@ -240,7 +241,7 @@ def test_project_vibe_hook_status_distinguishes_missing_and_invalid_toml(tmp_pat
 
     vibe_dir = tmp_path / ".vibe"
     vibe_dir.mkdir()
-    (vibe_dir / "config.toml").write_text("[background_mcp_hook\nenabled = true\n")
+    (vibe_dir / "config.toml").write_text("[hooks\nSessionStart = true\n")
 
     invalid = cli._project_vibe_hook_status(tmp_path)
     assert invalid["ok"] is False
@@ -265,7 +266,7 @@ def test_cli_doctor_reports_stale_state(monkeypatch):
         lambda path, label: {"ok": True, "warning": False, "detail": f"{label} DB readable ({path})"},
     )
     monkeypatch.setattr("vibe_rag.cli._vibe_cli_status", lambda: {"ok": True, "warning": False, "detail": "/usr/local/bin/vibe (mistral-vibe 0.1.0)"})
-    monkeypatch.setattr("vibe_rag.cli._project_vibe_hook_status", lambda root: {"ok": True, "warning": False, "detail": "background and session memory hooks are enabled"})
+    monkeypatch.setattr("vibe_rag.cli._project_vibe_hook_status", lambda root: {"ok": True, "warning": False, "detail": "SessionStart hook returned context via /usr/local/bin/vibe-rag"})
     monkeypatch.setattr("vibe_rag.server._ensure_project_id", lambda: "demo-project")
     monkeypatch.setattr("vibe_rag.server._get_embedder", lambda: type("Embedder", (), {"embed_text_sync": lambda self, texts: [[0.0] * 1024]})())
     monkeypatch.setattr("vibe_rag.server._get_db", lambda: object())
@@ -350,8 +351,9 @@ def test_cli_module_entrypoint():
     assert "0.0.23" in result.stdout
 
 
-def test_cli_init_does_not_persist_secrets():
+def test_cli_init_does_not_persist_secrets(monkeypatch):
     runner = CliRunner()
+    monkeypatch.setattr("vibe_rag.cli._current_vibe_rag_binary", lambda: "/tmp/fake-bin/vibe-rag")
     with runner.isolated_filesystem():
         result = runner.invoke(
             main,
@@ -368,13 +370,13 @@ def test_cli_init_does_not_persist_secrets():
         assert "top-secret-key" not in config_text
         assert "/tmp/vibe-user.db" not in config_text
         assert 'skill_paths = [".vibe/skills"]' in config_text
-        assert 'command = "vibe-rag"' in config_text
+        assert 'command = "/tmp/fake-bin/vibe-rag"' in config_text
         assert "source ~/.zprofile" not in config_text
         assert "source ~/.zshrc" not in config_text
         assert "__VIBE_RAG_BIN__" not in config_text
-        assert "[background_mcp_hook]" in config_text
-        assert 'tool_name = "memory_load_session_context"' in config_text
-        assert "[session_memory_hook]" in config_text
+        assert "__VIBE_RAG_BIN_SHELL__" not in config_text
+        assert "[[hooks.SessionStart]]" in config_text
+        assert 'hook-session-start --format vibe' in config_text
 
 
 def test_cli_init_does_not_install_agent_profiles():
@@ -417,8 +419,9 @@ def test_cli_init_installs_semantic_repo_search_skill():
         assert "Prefer memory tools over `grep`" in skill_text
 
 
-def test_cli_init_installs_codex_and_claude_scaffolding():
+def test_cli_init_installs_codex_and_claude_scaffolding(monkeypatch):
     runner = CliRunner()
+    monkeypatch.setattr("vibe_rag.cli._current_vibe_rag_binary", lambda: "/tmp/fake-bin/vibe-rag")
     with runner.isolated_filesystem():
         result = runner.invoke(main, ["init", "demo"])
 
@@ -431,6 +434,7 @@ def test_cli_init_installs_codex_and_claude_scaffolding():
         claude_mcp = Path("demo/.mcp.json").read_text()
 
         assert "__VIBE_RAG_BIN__" not in codex_config
+        assert "__VIBE_RAG_BIN_SHELL__" not in codex_hooks
         assert "__VIBE_RAG_BIN__" not in codex_hooks
         assert "__VIBE_RAG_BIN__" not in claude_settings
         assert "__VIBE_RAG_BIN__" not in gemini_settings
@@ -438,10 +442,12 @@ def test_cli_init_installs_codex_and_claude_scaffolding():
 
         assert "suppress_unstable_features_warning = true" in codex_config
         assert "codex_hooks = true" in codex_config
+        assert 'command = "/tmp/fake-bin/vibe-rag"' in codex_config
         assert 'args = ["serve"]' in codex_config
-        assert "hook-session-start --format codex" in codex_hooks
-        assert "hook-session-start --format claude" in claude_settings
-        assert "hook-session-start --format gemini" in gemini_settings
+        assert "/tmp/fake-bin/vibe-rag hook-session-start --format codex" in codex_hooks
+        assert "/tmp/fake-bin/vibe-rag hook-session-start --format claude" in claude_settings
+        assert '"/tmp/fake-bin/vibe-rag"' in claude_mcp
+        assert "/tmp/fake-bin/vibe-rag hook-session-start --format gemini" in gemini_settings
         assert '"mcpServers"' in gemini_settings
         assert '"mcpServers"' in claude_mcp
         assert '"vibe-rag"' in claude_mcp
@@ -450,14 +456,8 @@ def test_cli_init_installs_codex_and_claude_scaffolding():
 def test_cli_init_only_rewrites_generated_files(monkeypatch):
     runner = CliRunner()
 
-    def fake_which(name):
-        if name == "vibe-rag":
-            return "/tmp/fake-bin/vibe-rag"
-        if name == "git":
-            return "/usr/bin/git"
-        return None
-
-    monkeypatch.setattr("vibe_rag.cli.shutil.which", fake_which)
+    monkeypatch.setattr("vibe_rag.cli._current_vibe_rag_binary", lambda: "/tmp/fake bin/vibe-rag")
+    monkeypatch.setattr("vibe_rag.cli.shutil.which", lambda name: "/usr/bin/git" if name == "git" else None)
     monkeypatch.setattr("vibe_rag.cli.subprocess.run", lambda *args, **kwargs: None)
 
     with runner.isolated_filesystem():
@@ -469,7 +469,8 @@ def test_cli_init_only_rewrites_generated_files(monkeypatch):
 
         assert result.exit_code == 0
         assert Path("demo/notes.txt").read_text() == "leave __VIBE_RAG_BIN__ untouched"
-        assert 'command = "vibe-rag"' in Path("demo/.codex/config.toml").read_text()
+        assert 'command = "/tmp/fake bin/vibe-rag"' in Path("demo/.codex/config.toml").read_text()
+        assert "'/tmp/fake bin/vibe-rag' hook-session-start --format codex" in Path("demo/.codex/hooks.json").read_text()
 
 
 def test_cli_init_runs_git_init_when_missing(monkeypatch):
@@ -535,9 +536,41 @@ def test_cli_hook_session_start_renders_codex_output(monkeypatch):
     )
 
     assert result.exit_code == 0
-    assert '"hookEventName": "SessionStart"' in result.output
-    assert '"additionalContext": "vibe-rag context for project `demo-project`' in result.output
-    assert "Index warnings:" in result.output
+    payload = json.loads(result.output)
+    assert payload["suppressOutput"] is True
+    assert payload["hookSpecificOutput"]["hookEventName"] == "SessionStart"
+    assert payload["hookSpecificOutput"]["additionalContext"].startswith(
+        "vibe-rag context for project `demo-project`"
+    )
+    assert "Index warnings:" in payload["hookSpecificOutput"]["additionalContext"]
+
+
+def test_cli_hook_session_start_uses_briefing_format(monkeypatch):
+    runner = CliRunner()
+
+    monkeypatch.setattr(
+        "vibe_rag.hook_bridge.load_session_context",
+        lambda **kwargs: {
+            "ok": True,
+            "project_id": "test-project",
+            "briefing": "vibe-rag | test-project | main | clean\n\n! No code index",
+            "memories": [],
+            "code": [],
+            "docs": [],
+        },
+    )
+
+    result = runner.invoke(
+        main,
+        ["hook-session-start", "--format", "claude"],
+        input='{"source":"startup"}',
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    context = payload["hookSpecificOutput"]["additionalContext"]
+    assert "vibe-rag | test-project | main | clean" in context
+    assert "No code index" in context
 
 
 def test_cli_hook_session_start_renders_claude_output(monkeypatch):

@@ -72,17 +72,11 @@ skill_paths = [".vibe/skills"]
 [[mcp_servers]]
 name = "memory"
 transport = "stdio"
-command = "vibe-rag"
+command = "/absolute/path/to/vibe-rag"
 args = ["serve"]
-[background_mcp_hook]
-enabled = true
-tool_name = "memory_load_session_context"
-task_arg = "task"
 
-[session_memory_hook]
-enabled = true
-tool_name = "memory_save_session_memory"
-summary_tool_name = "memory_save_session_summary"
+[[hooks.SessionStart]]
+command = "'/absolute/path/to/vibe-rag' hook-session-start --format vibe"
 ```
 
 Notes:
@@ -97,7 +91,7 @@ If Ollama is running on a non-default host, use:
 [[mcp_servers]]
 name = "memory"
 transport = "stdio"
-command = "vibe-rag"
+command = "/absolute/path/to/vibe-rag"
 args = ["serve"]
 env = {
   VIBE_RAG_OLLAMA_HOST = "http://192.168.1.5:11434",
@@ -152,11 +146,11 @@ Those files do two things:
 
 - register `vibe-rag serve` as an MCP server for the client
 - run `vibe-rag hook-session-start --format <client>` at session start
-- rely on `vibe-rag` being available on `PATH` rather than an absolute binary path
+- pin the resolved `vibe-rag` binary path captured at scaffold time so client startup does not depend on `PATH` ordering
 
 Generated Codex config also sets `suppress_unstable_features_warning = true`.
 
-For this maintainer repo specifically, the tracked `.vibe/`, `.codex/`, `.claude/`, and `.mcp.json` files use `scripts/run-vibe-rag` instead. That repo-local runner is only for the source checkout; generated repos still use `vibe-rag` directly.
+For this maintainer repo specifically, the tracked `.vibe/`, `.codex/`, `.claude/`, and `.mcp.json` files use `scripts/run-vibe-rag` instead. That repo-local runner is only for the source checkout; generated repos pin the resolved installed `vibe-rag` path directly.
 
 Current support level:
 

@@ -13,6 +13,9 @@ import tomllib
 import click
 from vibe_rag import __version__
 
+_VIBE_RAG_BIN_PLACEHOLDER = "__VIBE_RAG_BIN__"
+_VIBE_RAG_SHELL_BIN_PLACEHOLDER = "__VIBE_RAG_BIN_SHELL__"
+
 
 @click.group()
 @click.version_option(version=__version__)
@@ -68,6 +71,48 @@ def _resolve_command(command: str) -> tuple[bool, str]:
     if resolved:
         return True, resolved
     return False, command
+
+
+def _current_vibe_rag_binary() -> str:
+    argv0 = str(Path(sys.argv[0]).expanduser())
+    if Path(argv0).name == "vibe-rag":
+        ok, resolved = _resolve_command(argv0)
+        if ok:
+            return resolved
+
+    ok, resolved = _resolve_command("vibe-rag")
+    if ok:
+        return resolved
+    return "vibe-rag"
+
+
+def _rewrite_generated_client_files(target: Path) -> None:
+    vibe_rag_bin = _current_vibe_rag_binary()
+    shell_vibe_rag_bin = shlex.quote(vibe_rag_bin)
+    replacements = {
+        _VIBE_RAG_BIN_PLACEHOLDER: vibe_rag_bin,
+        _VIBE_RAG_SHELL_BIN_PLACEHOLDER: shell_vibe_rag_bin,
+    }
+    generated_files = (
+        ".vibe/config.toml",
+        ".codex/config.toml",
+        ".codex/hooks.json",
+        ".claude/settings.json",
+        ".gemini/settings.json",
+        ".mcp.json",
+    )
+
+    for relative_path in generated_files:
+        path = target / relative_path
+        if not path.exists():
+            continue
+
+        text = path.read_text()
+        updated = text
+        for placeholder, value in replacements.items():
+            updated = updated.replace(placeholder, value)
+        if updated != text:
+            path.write_text(updated)
 
 
 def _project_mcp_command_status(project_root: Path) -> dict:
@@ -135,30 +180,84 @@ def _project_vibe_hook_status(project_root: Path) -> dict:
             return {"ok": False, "warning": True, "detail": "unreadable .vibe/config.toml"}
         return {"ok": False, "warning": True, "detail": "missing .vibe/config.toml"}
 
+    hooks = vibe_config.get("hooks")
+    if isinstance(hooks, dict):
+        session_start = hooks.get("SessionStart")
+        if isinstance(session_start, list):
+            for item in session_start:
+                if not isinstance(item, dict):
+                    continue
+                command = str(item.get("command") or "").strip()
+                if not command:
+                    continue
+                argv = shlex.split(command)
+                if not argv:
+                    return {"ok": False, "warning": True, "detail": "hooks.SessionStart.command is empty"}
+                ok, resolved = _resolve_command(argv[0])
+                if not ok:
+                    return {"ok": False, "warning": True, "detail": f"hook command not found: {argv[0]}"}
+                try:
+                    result = subprocess.run(
+                        argv,
+                        cwd=project_root,
+                        input='{"source":"startup","task":"Bootstrap likely context for the current work in this repo."}',
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                        timeout=30,
+                    )
+                except OSError as exc:
+                    return {"ok": False, "warning": True, "detail": f"hook failed to start: {exc}"}
+                except subprocess.TimeoutExpired:
+                    return {"ok": False, "warning": True, "detail": "hook timed out after 30s"}
+
+                if result.returncode != 0:
+                    stderr = (result.stderr or "").strip()
+                    return {
+                        "ok": False,
+                        "warning": True,
+                        "detail": f"hook exited {result.returncode}: {stderr or 'no stderr'}",
+                    }
+
+                stdout = (result.stdout or "").strip()
+                if not stdout:
+                    return {"ok": False, "warning": True, "detail": "hook returned no output"}
+
+                try:
+                    payload = json.loads(stdout)
+                except json.JSONDecodeError:
+                    return {"ok": False, "warning": True, "detail": "hook returned invalid JSON"}
+
+                hook_output = payload.get("hookSpecificOutput") or {}
+                if hook_output.get("hookEventName") != "SessionStart":
+                    return {"ok": False, "warning": True, "detail": "hook did not report SessionStart output"}
+                context = hook_output.get("additionalContext")
+                if not isinstance(context, str) or not context.strip():
+                    return {"ok": False, "warning": True, "detail": "hook returned no additionalContext"}
+
+                return {
+                    "ok": True,
+                    "warning": False,
+                    "detail": f"SessionStart hook returned context via {resolved}",
+                }
+
     background = vibe_config.get("background_mcp_hook")
-    session_memory = vibe_config.get("session_memory_hook")
-    if not isinstance(background, dict) or not background.get("enabled"):
-        return {
-            "ok": False,
-            "warning": True,
-            "detail": "background_mcp_hook is not enabled in .vibe/config.toml",
-        }
-    if background.get("tool_name") != "memory_load_session_context":
+    if isinstance(background, dict) and background.get("enabled"):
+        if background.get("tool_name") == "memory_load_session_context":
+            return {
+                "ok": True,
+                "warning": True,
+                "detail": "legacy background_mcp_hook enabled; migrate to [[hooks.SessionStart]]",
+            }
         return {
             "ok": False,
             "warning": True,
             "detail": "background_mcp_hook.tool_name should be memory_load_session_context",
         }
-    if not isinstance(session_memory, dict) or not session_memory.get("enabled"):
-        return {
-            "ok": False,
-            "warning": True,
-            "detail": "session_memory_hook is not enabled in .vibe/config.toml",
-        }
     return {
-        "ok": True,
-        "warning": False,
-        "detail": "background and session memory hooks are enabled",
+        "ok": False,
+        "warning": True,
+        "detail": "hooks.SessionStart.command is not configured in .vibe/config.toml",
     }
 
 
@@ -355,6 +454,7 @@ def init(name: str | None):
     if mcp_json_template.exists():
         shutil.copy2(mcp_json_template, target / ".mcp.json")
 
+    _rewrite_generated_client_files(target)
     _initialize_git_repo(target)
 
     # .gitignore

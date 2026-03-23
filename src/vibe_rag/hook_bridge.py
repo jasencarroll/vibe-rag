@@ -7,7 +7,11 @@ from typing import Any
 from vibe_rag.tools import load_session_context
 
 
-def _session_task(source: str) -> str:
+def _session_task(hook_input: dict[str, Any]) -> str:
+    task = hook_input.get("task")
+    if isinstance(task, str) and task.strip():
+        return task.strip()
+    source = str(hook_input.get("source") or "startup")
     if source == "resume":
         return "Resume prior work in this repo and surface the most relevant memory, code, and docs."
     return "Bootstrap likely context for the current work in this repo."
@@ -109,7 +113,15 @@ def _response_for_format(target_format: str, additional_context: str, system_mes
     if system_message:
         response["systemMessage"] = system_message
 
-    if target_format in {"codex", "claude", "vibe"}:
+    if target_format == "codex":
+        response["suppressOutput"] = system_message is None
+        response["hookSpecificOutput"] = {
+            "hookEventName": "SessionStart",
+            "additionalContext": additional_context,
+        }
+        return response
+
+    if target_format in {"claude", "vibe"}:
         response["hookSpecificOutput"] = {
             "hookEventName": "SessionStart",
             "additionalContext": additional_context,
@@ -130,7 +142,7 @@ def render_session_start_hook(target_format: str, hook_input: dict[str, Any]) ->
 
     try:
         payload = load_session_context(
-            task=_session_task(str(hook_input.get("source") or "startup")),
+            task=_session_task(hook_input),
             refresh_index=False,
             memory_limit=2,
             code_limit=2,
@@ -152,7 +164,8 @@ def render_session_start_hook(target_format: str, hook_input: dict[str, Any]) ->
             f"vibe-rag session hook failed ({_error_category(error)}): {error}",
         )
 
-    return _response_for_format(target_format, _format_context(payload), None)
+    briefing = payload.get("briefing") or _format_context(payload)
+    return _response_for_format(target_format, briefing, None)
 
 
 def render_session_start_hook_json(target_format: str, raw_input: str) -> str:

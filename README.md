@@ -103,13 +103,11 @@ skill_paths = [".vibe/skills"]
 [[mcp_servers]]
 name = "memory"
 transport = "stdio"
-command = "vibe-rag"
+command = "/absolute/path/to/vibe-rag"
 args = ["serve"]
 
-[background_mcp_hook]
-enabled = true
-tool_name = "memory_load_session_context"
-task_arg = "task"
+[[hooks.SessionStart]]
+command = "'/absolute/path/to/vibe-rag' hook-session-start --format vibe"
 ```
 
 Optional Ollama overrides:
@@ -118,7 +116,7 @@ Optional Ollama overrides:
 [[mcp_servers]]
 name = "memory"
 transport = "stdio"
-command = "vibe-rag"
+command = "/absolute/path/to/vibe-rag"
 args = ["serve"]
 env = {
   VIBE_RAG_EMBEDDING_PROVIDER = "ollama",
@@ -153,6 +151,7 @@ vibe-rag hook-session-start --format codex
 
 - effective project id
 - project MCP command resolution
+- Vibe SessionStart hook execution
 - Codex SessionStart hook execution
 - project and user DB readability
 - embedding provider reachability
@@ -200,7 +199,7 @@ These files use:
 
 - `vibe-rag serve` for MCP tools
 - `vibe-rag hook-session-start --format <client>` for session-start context injection
-- `vibe-rag` on `PATH`, not an absolute binary path captured at scaffold time
+- the resolved `vibe-rag` binary path captured at scaffold time so client startup does not depend on `PATH` ordering
 
 Generated Codex config also sets `suppress_unstable_features_warning = true`.
 

@@ -5,15 +5,8 @@ skill_paths = [".vibe/skills"]
 [[mcp_servers]]
 name = "memory"
 transport = "stdio"
-command = "vibe-rag"
+command = "__VIBE_RAG_BIN__"
 args = ["serve"]
 
-[background_mcp_hook]
-enabled = true
-tool_name = "memory_load_session_context"
-task_arg = "task"
-
-[session_memory_hook]
-enabled = true
-tool_name = "memory_save_session_memory"
-summary_tool_name = "memory_save_session_summary"
+[[hooks.SessionStart]]
+command = "__VIBE_RAG_BIN_SHELL__ hook-session-start --format vibe"

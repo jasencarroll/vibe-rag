@@ -17,6 +17,7 @@ DOC_EXTENSIONS = {".md", ".txt", ".rst"}
 SKIP_DIRS = {
     ".git", ".vibe", "node_modules", "__pycache__", ".venv", "venv",
     "dist", "build", ".next", ".nuxt", "target", ".tox", "evals",
+    ".mypy_cache", ".ruff_cache", ".pytest_cache",
     ".claude", ".codex", ".gemini",
 }
 

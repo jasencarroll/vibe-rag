@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import sqlite3
+from datetime import datetime, timezone
 import hashlib
 import inspect
 import json
@@ -21,7 +23,7 @@ from vibe_rag.server import (
     _get_user_db,
     mcp,
 )
-from vibe_rag.indexing.embedder import ProgressCallback
+from vibe_rag.indexing.embedder import ProgressCallback, embedding_provider_status
 from vibe_rag.types import (
     CodeChunk,
     CodeSearchResult,
@@ -41,6 +43,7 @@ from vibe_rag.types import (
 MAX_QUERY_LENGTH = 10_000
 MAX_MEMORY_LENGTH = 10_000
 MAX_TAGS_LENGTH = 512
+BRIEFING_CHAR_BUDGET = 6000
 ALLOWED_MEMORY_KINDS = {"note", "decision", "constraint", "todo", "summary", "fact"}
 INDEX_METADATA_KEY = "project_index_metadata"
 BOILERPLATE_TASK_PATTERNS = (
@@ -92,6 +95,7 @@ TRANSIENT_STATUS_PATTERNS = (
     "done",
     "complete",
 )
+_COMMON_TASK_VERBS = {"fix", "add", "update", "implement", "refactor", "debug", "check", "review", "test", "run", "build", "deploy"}
 STRUCTURED_MEMORY_PRIORITY = {
     "decision": 0,
     "constraint": 1,
@@ -286,6 +290,68 @@ def _metadata_dict(value: object) -> dict:
             return {}
         return parsed if isinstance(parsed, dict) else {}
     return {}
+
+
+def _time_ago(dt_str: str | None) -> str:
+    if not dt_str:
+        return "recently"
+    try:
+        normalized = dt_str.replace("Z", "+00:00")
+        then = datetime.fromisoformat(normalized)
+        if then.tzinfo is None:
+            then = then.replace(tzinfo=timezone.utc)
+        now = datetime.now(timezone.utc)
+        delta = now - then
+        if delta.days > 0:
+            return f"{delta.days} day{'s' if delta.days != 1 else ''} ago"
+        hours = delta.seconds // 3600
+        if hours > 0:
+            return f"{hours} hour{'s' if hours != 1 else ''} ago"
+        minutes = delta.seconds // 60
+        if minutes > 0:
+            return f"{minutes} minute{'s' if minutes != 1 else ''} ago"
+        return "just now"
+    except (ValueError, TypeError):
+        return "recently"
+
+
+def _infer_session_topic(task: str) -> str:
+    terms = _query_terms(task) - _COMMON_TASK_VERBS
+    if not terms:
+        terms = _query_terms(task)
+    return sorted(terms, key=len, reverse=True)[0] if terms else "general"
+
+
+def _infer_session_outcome(response: str) -> str:
+    lowered = response.lower()
+    if any(pattern in lowered for pattern in ("blocked", "cannot", "stuck", "failed to")):
+        return "blocked"
+    if any(pattern in lowered for pattern in TRANSIENT_STATUS_PATTERNS):
+        return "completed"
+    return "in_progress"
+
+
+def _infer_session_metadata(task: str, response: str, existing_metadata: dict) -> dict:
+    enriched = dict(existing_metadata)
+    if "topic" not in enriched:
+        enriched["topic"] = _infer_session_topic(task)
+    if "outcome" not in enriched:
+        enriched["outcome"] = _infer_session_outcome(response)
+    if "session_ended_at" not in enriched:
+        enriched["session_ended_at"] = datetime.now(timezone.utc).isoformat()
+
+    if "files_touched" not in enriched:
+        output = _git_command(["diff", "--name-only", "HEAD~1"], Path.cwd())
+        enriched["files_touched"] = output.splitlines() if output else []
+
+    if "decisions_made" not in enriched:
+        decisions: list[str] = []
+        for sentence in response.split("."):
+            sentence_terms = _query_terms(sentence)
+            if sentence_terms & DECISION_TERMS and len(sentence.strip()) > 20:
+                decisions.append(_truncate(sentence.strip(), 120))
+        enriched["decisions_made"] = decisions[:3]
+    return enriched
 
 
 def _should_skip_session_capture(response: str) -> bool:
@@ -1141,6 +1207,89 @@ def _current_git_head_state(project_root: Path | None = None) -> tuple[str | Non
     return head, None
 
 
+def _git_command(args: list[str], cwd: Path, timeout: float = 2.0) -> str | None:
+    try:
+        result = subprocess.run(
+            ["git", *args],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    return result.stdout.rstrip("\n")
+
+
+def _project_pulse(project_root: Path) -> dict:
+    branch = _git_command(["branch", "--show-current"], project_root)
+    if branch is None:
+        return {
+            "branch": None,
+            "is_default_branch": None,
+            "default_branch": None,
+            "workspace": None,
+            "recent_commits": [],
+        }
+
+    status_output = _git_command(["status", "--short"], project_root) or ""
+    modified, staged, untracked = [], [], []
+    for line in status_output.splitlines():
+        if len(line) < 4:
+            continue
+        index_status = line[0]
+        work_status = line[1]
+        file_path = line[3:].strip()
+        if index_status == "?":
+            untracked.append(file_path)
+        elif index_status != " ":
+            staged.append(file_path)
+        if work_status not in (" ", "?"):
+            modified.append(file_path)
+
+    workspace = {
+        "modified": modified,
+        "staged": staged,
+        "untracked": untracked,
+        "is_clean": not modified and not staged and not untracked,
+    }
+
+    log_output = _git_command(["log", "--oneline", "-5"], project_root) or ""
+    recent_commits = []
+    for line in log_output.splitlines():
+        parts = line.split(" ", 1)
+        if len(parts) == 2:
+            recent_commits.append({"sha": parts[0], "message": parts[1]})
+
+    ref_output = _git_command(["symbolic-ref", "refs/remotes/origin/HEAD"], project_root)
+    default_branch = None
+    is_default_branch = None
+    if ref_output:
+        default_branch = ref_output.split("/")[-1]
+        is_default_branch = branch == default_branch
+
+    pulse: dict = {
+        "branch": branch,
+        "is_default_branch": is_default_branch,
+        "default_branch": default_branch,
+        "workspace": workspace,
+        "recent_commits": recent_commits,
+    }
+
+    if default_branch and not is_default_branch:
+        ahead_str = _git_command(["rev-list", "--count", f"{default_branch}..HEAD"], project_root)
+        behind_str = _git_command(["rev-list", "--count", f"HEAD..{default_branch}"], project_root)
+        if ahead_str is not None:
+            pulse["ahead"] = int(ahead_str)
+        if behind_str is not None:
+            pulse["behind"] = int(behind_str)
+
+    return pulse
+
+
 def _current_git_head(project_root: Path | None = None) -> str | None:
     head, _ = _current_git_head_state(project_root)
     return head
@@ -1220,6 +1369,238 @@ def _current_file_counts(project_root: Path) -> tuple[int, int]:
     return len(code_files), len(doc_files)
 
 
+def _session_narrative(user_db, project_id: str, limit: int = 3) -> str | None:
+    all_memories = user_db.list_memories(
+        limit=max(user_db.memory_count(include_superseded=True) + 10, 20),
+        include_superseded=False,
+        project_id=project_id,
+    )
+    session_memories = [
+        memory
+        for memory in all_memories
+        if _metadata_dict(memory.get("metadata")).get("capture_kind")
+        in ("session_distillation", "session_rollup")
+    ]
+    session_memories.sort(key=lambda memory: str(memory.get("updated_at") or ""), reverse=True)
+    session_memories = session_memories[:limit]
+
+    if not session_memories:
+        return None
+
+    parts: list[str] = []
+    for idx, memory in enumerate(session_memories):
+        metadata = _metadata_dict(memory.get("metadata"))
+        topic = metadata.get("topic")
+        outcome = metadata.get("outcome")
+        decisions = metadata.get("decisions_made") or []
+        summary = str(memory.get("summary") or "")
+
+        if topic and outcome:
+            sentence = f"working on {topic}"
+            if outcome == "completed":
+                sentence += " (completed)"
+            elif outcome == "blocked":
+                sentence += " (blocked)"
+            if decisions:
+                sentence += f". Decided: {'; '.join(decisions[:2])}"
+        elif topic:
+            sentence = f"working on {topic}"
+        else:
+            normalized_summary = re.sub(r"^\s*\d+\.\s*", "", summary)
+            normalized_summary = re.sub(r"\s+\d+\.\s*", "; ", normalized_summary).strip()
+            sentence = f"Last session: {_truncate(normalized_summary or summary, 100)}"
+
+        if idx == 0:
+            time_ago = _time_ago(memory.get("updated_at") and str(memory.get("updated_at")))
+            if sentence.startswith("Last session:"):
+                parts.append(f"You were last here {time_ago}. {sentence}.")
+            else:
+                parts.append(f"You were last here {time_ago} {sentence}.")
+        else:
+            parts.append(f"Before that: {sentence}.")
+
+    return " ".join(parts)
+
+
+def _hazard_scan(project_db, project_root: Path, project_id: str, pulse: dict) -> list[dict]:
+    hazards: list[dict] = []
+
+    if project_db.code_chunk_count() == 0:
+        hazards.append({"level": "error", "category": "no_index", "message": "No code index — run index_project before searching"})
+
+    if pulse.get("recent_commits"):
+        current_head = pulse["recent_commits"][0].get("sha")
+        metadata_state = _index_metadata(project_db)
+        indexed_head = (metadata_state.get("metadata") or {}).get("git_head")
+        if indexed_head and current_head and not indexed_head.startswith(current_head) and not current_head.startswith(indexed_head):
+            hazards.append({"level": "warning", "category": "stale_index", "message": "Index may be stale — HEAD has changed since last index"})
+
+    workspace = pulse.get("workspace")
+    if workspace and not workspace.get("is_clean", True):
+        modified = workspace.get("modified", [])
+        staged = workspace.get("staged", [])
+        total = len(set(modified + staged))
+        if total > 0:
+            hazards.append({"level": "warning", "category": "uncommitted_work", "message": f"{total} files modified but not committed"})
+
+    try:
+        provider_state = embedding_provider_status()
+        if not bool(provider_state.get("ok", False)):
+            hazards.append({"level": "error", "category": "provider_unavailable", "message": f"Embedding provider not available — {provider_state.get('detail', 'unknown error')}"})
+    except RuntimeError as exc:
+        hazards.append({"level": "error", "category": "provider_unavailable", "message": f"Embedding provider status check failed: {exc}"})
+
+    try:
+        candidates = _memory_cleanup_candidates(limit=10)
+        if len(candidates) > 5:
+            hazards.append({"level": "warning", "category": "cleanup_pressure", "message": f"{len(candidates)} memories are cleanup candidates"})
+    except (RuntimeError, sqlite3.OperationalError):
+        pass
+
+    hazards.sort(key=lambda h: 0 if h["level"] == "error" else 1)
+    return hazards
+
+
+def _live_decisions(project_db, user_db, project_id: str, limit: int = 3) -> list[dict]:
+    candidates: list[dict] = []
+    for db, source_db in ((project_db, "project"), (user_db, "user")):
+        memories = db.list_memories(
+            limit=max(db.memory_count() + 10, 20),
+            include_superseded=False,
+            project_id=project_id,
+        )
+        for memory in memories:
+            if memory.get("memory_kind") in ("decision", "constraint"):
+                candidates.append(_with_source_db(memory, source_db))
+
+    candidates.sort(key=lambda m: str(m.get("updated_at") or ""), reverse=True)
+    payloads: list[dict] = []
+    for item in candidates[:limit]:
+        payload = _memory_payload(item, current_project_id=project_id)
+        payload.pop("score", None)
+        payloads.append(payload)
+    return payloads
+
+
+def _briefing_header(pulse: dict, project_id: str) -> str:
+    branch = pulse.get("branch") or "unknown"
+    workspace = pulse.get("workspace")
+    if workspace is None:
+        workspace_summary = "no git"
+    elif workspace.get("is_clean"):
+        workspace_summary = "clean"
+    else:
+        def _change_label(count: int, state: str) -> str:
+            return f"{count} {state} file{'s' if count != 1 else ''}"
+
+        mod_count = len(workspace.get("modified", []))
+        staged_count = len(workspace.get("staged", []))
+        untracked_count = len(workspace.get("untracked", []))
+        parts = []
+        if mod_count:
+            parts.append(_change_label(mod_count, "modified"))
+        if staged_count:
+            parts.append(_change_label(staged_count, "staged"))
+        if untracked_count:
+            parts.append(_change_label(untracked_count, "untracked"))
+        workspace_summary = ", ".join(parts) if parts else "dirty"
+
+    header = f"vibe-rag | {project_id} | {branch} | {workspace_summary}"
+    ahead = pulse.get("ahead")
+    behind = pulse.get("behind")
+    if ahead is not None or behind is not None:
+        divergence_parts = []
+        if ahead:
+            divergence_parts.append(f"{ahead} ahead")
+        if behind:
+            divergence_parts.append(f"{behind} behind")
+        if divergence_parts:
+            header += f" ({', '.join(divergence_parts)})"
+    return header
+
+
+def _briefing_task_context(task_results: dict, char_budget: int) -> str:
+    lines: list[str] = []
+    code = task_results.get("code") or []
+    if code:
+        code_parts = []
+        for item in code[:5]:
+            symbol = item.get("symbol")
+            path = item.get("file_path", "")
+            start = item.get("start_line", "")
+            if symbol:
+                label = f"{path}:{start} {symbol}"
+            else:
+                preview = _single_line(str(item.get("content") or ""))
+                label = f"{path}:{start}"
+                if preview:
+                    label += f" {_truncate(preview, 40)}"
+            code_parts.append(label)
+        lines.append("Code: " + " | ".join(code_parts))
+
+    docs = task_results.get("docs") or []
+    if docs:
+        doc_parts = [item.get("file_path", "") for item in docs[:3]]
+        lines.append("Docs: " + " | ".join(doc_parts))
+
+    memories = task_results.get("memories") or []
+    if memories:
+        mem_parts = []
+        for item in memories[:3]:
+            kind = item.get("memory_kind", "note")
+            summary = _truncate(item.get("summary", ""), 80)
+            mem_parts.append(f"[{kind}] {summary}")
+        lines.append("Memory: " + " | ".join(mem_parts))
+
+    result = "\n".join(lines)
+    return result[:char_budget]
+
+
+def _format_briefing(
+    pulse: dict,
+    narrative: str | None,
+    hazards: list[dict],
+    live_decisions: list[dict],
+    task_results: dict,
+    project_id: str,
+) -> str:
+    remaining = BRIEFING_CHAR_BUDGET
+    sections: list[str] = []
+
+    header = _briefing_header(pulse, project_id)
+    sections.append(header)
+    remaining -= len(header)
+
+    if narrative:
+        trimmed = _truncate(narrative, min(400, max(remaining, 0)))
+        sections.append(trimmed)
+        remaining -= len(trimmed)
+
+    if hazards:
+        hazard_lines = [f"! {hazard['message']}" for hazard in hazards[:3]]
+        hazard_block = "\n".join(hazard_lines)
+        sections.append(hazard_block)
+        remaining -= len(hazard_block)
+
+    if live_decisions:
+        decision_lines = ["Decisions:"]
+        for decision in live_decisions[:3]:
+            summary = _truncate(decision.get("summary", ""), 80)
+            kind = decision.get("memory_kind", "decision")
+            updated = _time_ago(decision.get("updated_at"))
+            decision_lines.append(f"- {summary} ({kind}, {updated})")
+        decision_block = "\n".join(decision_lines)
+        sections.append(decision_block)
+        remaining -= len(decision_block)
+
+    task_block = _briefing_task_context(task_results, max(remaining, 500))
+    if task_block.strip():
+        sections.append(task_block)
+
+    briefing = "\n\n".join(sections)
+    return briefing[:BRIEFING_CHAR_BUDGET]
+
+
 def _stale_state(db, project_root: Path, project_id: str) -> dict:
     metadata_state = _index_metadata(db)
     metadata = metadata_state.get("metadata")
@@ -1249,7 +1630,9 @@ def _stale_state(db, project_root: Path, project_id: str) -> dict:
             }
         )
     indexed_head = metadata.get("git_head")
+    head_changed = False
     if indexed_head and current_head and indexed_head != current_head:
+        head_changed = True
         warnings.append(
             {
                 "kind": "git_head_changed",
@@ -1258,17 +1641,18 @@ def _stale_state(db, project_root: Path, project_id: str) -> dict:
         )
 
     indexed_total = int(metadata.get("code_file_count", 0)) + int(metadata.get("doc_file_count", 0))
-    current_code_count, current_doc_count = _current_file_counts(project_root)
-    current_total = current_code_count + current_doc_count
-    drift = abs(current_total - indexed_total)
-    drift_threshold = max(5, int(indexed_total * 0.2)) if indexed_total else 5
-    if drift >= drift_threshold:
-        warnings.append(
-            {
-                "kind": "file_count_drift",
-                "detail": f"indexed {indexed_total} files, current tree has {current_total}",
-            }
-        )
+    if not head_changed:
+        current_code_count, current_doc_count = _current_file_counts(project_root)
+        current_total = current_code_count + current_doc_count
+        drift = abs(current_total - indexed_total)
+        drift_threshold = max(5, int(indexed_total * 0.2)) if indexed_total else 5
+        if drift >= drift_threshold:
+            warnings.append(
+                {
+                    "kind": "file_count_drift",
+                    "detail": f"indexed {indexed_total} files, current tree has {current_total}",
+                }
+            )
 
     missing = _project_index_paths(db, project_root)
     if missing:
@@ -1844,6 +2228,11 @@ def load_session_context(
         "project_id": _ensure_project_id(),
         "index": None,
         "stale": None,
+        "pulse": None,
+        "narrative": None,
+        "hazards": [],
+        "live_decisions": [],
+        "briefing": "",
         "memories": [],
         "code": [],
         "docs": [],
@@ -1853,8 +2242,16 @@ def load_session_context(
     if refresh_index:
         payload["index"] = index_project(paths=".")
 
-    stale_state = _stale_state(_get_db(), Path.cwd(), payload["project_id"])
+    payload["pulse"] = _project_pulse(Path.cwd())
+
+    project_db = _get_db()
+    stale_state = _stale_state(project_db, Path.cwd(), payload["project_id"])
     payload["stale"] = stale_state
+
+    user_db = _get_user_db()
+    payload["narrative"] = _session_narrative(user_db, payload["project_id"])
+    payload["hazards"] = _hazard_scan(project_db, Path.cwd(), payload["project_id"], payload["pulse"])
+    payload["live_decisions"] = _live_decisions(project_db, user_db, payload["project_id"])
 
     memory_error, memory_results = _search_memory_results(task, limit=memory_limit)
     if memory_error:
@@ -1876,6 +2273,19 @@ def load_session_context(
         payload["errors"]["docs"] = docs_error
     else:
         payload["docs"] = [_doc_result_payload(result) for result in docs_results]
+
+    payload["briefing"] = _format_briefing(
+        payload["pulse"],
+        payload["narrative"],
+        payload["hazards"],
+        payload["live_decisions"],
+        {
+            "memories": payload.get("memories", []),
+            "code": payload.get("code", []),
+            "docs": payload.get("docs", []),
+        },
+        payload["project_id"],
+    )
 
     return payload
 
@@ -1985,6 +2395,8 @@ def save_session_memory(
         capture_kind="session_distillation",
     ):
         return _success(skipped=True, reason="low-signal auto memory")
+
+    enriched_metadata = _infer_session_metadata(task.strip(), response, enriched_metadata)
 
     user_db = _get_user_db()
     existing = user_db.get_memory_by_source(
@@ -2126,6 +2538,7 @@ def save_session_summary(
         "turn_count": len(turns),
         **(metadata or {}),
     }
+    enriched_metadata = _infer_session_metadata(task.strip(), content, enriched_metadata)
     if user_message_id.strip():
         enriched_metadata["user_message_id"] = user_message_id.strip()
 

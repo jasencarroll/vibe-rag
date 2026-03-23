@@ -4,9 +4,13 @@ from pathlib import Path
 from vibe_rag.tools import (
     _embed_sync_with_progress,
     _merge_memory_results,
+    _format_briefing,
     _query_terms,
+    _hazard_scan,
     _rrf_merge,
     _index_project_impl,
+    _live_decisions,
+    _project_pulse,
     cleanup_duplicate_auto_memories,
     forget,
     index_project,
@@ -569,6 +573,506 @@ def test_load_session_context_bundles_memory_code_and_docs(tmp_db, mock_embedder
     assert result["docs"][0]["provenance"]["source"] == "project-index"
 
 
+def test_project_pulse_returns_branch_and_workspace(tmp_path):
+    import subprocess
+
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "--allow-empty", "-m", "init"], cwd=tmp_path, check=True, capture_output=True)
+    (tmp_path / "file.py").write_text("x = 1\n")
+
+    from vibe_rag.tools import _project_pulse
+
+    pulse = _project_pulse(tmp_path)
+
+    assert pulse["branch"] is not None
+    assert pulse["workspace"]["is_clean"] is False
+    assert "file.py" in str(pulse["workspace"]["modified"]) or "file.py" in str(pulse["workspace"]["untracked"])
+    assert len(pulse["recent_commits"]) >= 1
+    assert pulse["recent_commits"][0]["message"] == "init"
+
+
+def test_project_pulse_first_modified_file_is_not_misparsed_as_staged(tmp_path):
+    import subprocess
+
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path, check=True, capture_output=True)
+    (tmp_path / "file.py").write_text("x = 1\n")
+    subprocess.run(["git", "add", "file.py"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=tmp_path, check=True, capture_output=True)
+    (tmp_path / "file.py").write_text("x = 2\n")
+
+    from vibe_rag.tools import _project_pulse
+
+    pulse = _project_pulse(tmp_path)
+
+    assert pulse["workspace"]["modified"] == ["file.py"]
+    assert pulse["workspace"]["staged"] == []
+
+
+def test_project_pulse_non_git_directory(tmp_path):
+    from vibe_rag.tools import _project_pulse
+
+    pulse = _project_pulse(tmp_path)
+
+    assert pulse["branch"] is None
+    assert pulse["workspace"] is None
+    assert pulse["recent_commits"] == []
+
+
+def test_project_pulse_ahead_behind_on_branch(tmp_path):
+    import subprocess
+
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "--allow-empty", "-m", "init"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "checkout", "-b", "feature"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "--allow-empty", "-m", "feature work"], cwd=tmp_path, check=True, capture_output=True)
+
+    from vibe_rag.tools import _project_pulse
+
+    pulse = _project_pulse(tmp_path)
+
+    assert pulse["branch"] == "feature"
+    assert pulse["default_branch"] is None
+    assert pulse["is_default_branch"] is None
+
+
+def test_session_narrative_with_enriched_memories(tmp_db, mock_embedder):
+    import vibe_rag.server as srv
+
+    user_db = srv._get_user_db()
+    project_id = srv._ensure_project_id()
+
+    user_db.remember_structured(
+        summary="Fixed auth token refresh",
+        content="Fixed auth token refresh logic in gateway",
+        embedding=[0.0] * 1024,
+        project_id=project_id,
+        memory_kind="summary",
+        metadata={"capture_kind": "session_distillation", "topic": "auth", "outcome": "completed"},
+    )
+
+    from vibe_rag.tools import _session_narrative
+
+    narrative = _session_narrative(user_db, project_id)
+
+    assert narrative is not None
+    assert "auth" in narrative.lower()
+
+
+def test_session_narrative_no_session_memories(tmp_db, mock_embedder):
+    import vibe_rag.server as srv
+
+    from vibe_rag.tools import _session_narrative
+
+    narrative = _session_narrative(srv._get_user_db(), srv._ensure_project_id())
+    assert narrative is None
+
+
+def test_session_narrative_degrades_for_pre_v010_memories(tmp_db, mock_embedder):
+    import vibe_rag.server as srv
+
+    user_db = srv._get_user_db()
+    project_id = srv._ensure_project_id()
+
+    user_db.remember_structured(
+        summary="Session covered 3 turns about config loading",
+        content="Session covered 3 turns.",
+        embedding=[0.0] * 1024,
+        project_id=project_id,
+        memory_kind="summary",
+        metadata={"capture_kind": "session_rollup"},
+    )
+
+    from vibe_rag.tools import _session_narrative
+
+    narrative = _session_narrative(user_db, project_id)
+
+    assert narrative is not None
+    assert "last session:" in narrative.lower()
+    assert "config loading" in narrative.lower() or "session" in narrative.lower()
+
+
+def test_session_narrative_cleans_numbered_pre_v010_summary(tmp_db, mock_embedder):
+    import vibe_rag.server as srv
+
+    user_db = srv._get_user_db()
+    project_id = srv._ensure_project_id()
+
+    user_db.remember_structured(
+        summary="1. load session context for understanding this repo 2. check the current project status 3. search the code",
+        content="Session covered 3 turns.",
+        embedding=[0.0] * 1024,
+        project_id=project_id,
+        memory_kind="summary",
+        metadata={"capture_kind": "session_rollup"},
+    )
+
+    from vibe_rag.tools import _session_narrative
+
+    narrative = _session_narrative(user_db, project_id)
+
+    assert narrative is not None
+    assert "last session:" in narrative.lower()
+    assert "1." not in narrative
+    assert "; check the current project status" in narrative.lower()
+
+
+def test_session_narrative_filters_by_project_id(tmp_db, mock_embedder):
+    import vibe_rag.server as srv
+
+    user_db = srv._get_user_db()
+
+    user_db.remember_structured(
+        summary="Work on other project",
+        content="Work on other project",
+        embedding=[0.0] * 1024,
+        project_id="other-project-abc",
+        memory_kind="summary",
+        metadata={"capture_kind": "session_distillation", "topic": "billing"},
+    )
+
+    from vibe_rag.tools import _session_narrative
+
+    narrative = _session_narrative(user_db, srv._ensure_project_id())
+    assert narrative is None
+
+
+def test_hazard_scan_empty_index(tmp_db, mock_embedder):
+    import vibe_rag.server as srv
+
+    hazards = _hazard_scan(srv._get_db(), Path.cwd(), srv._ensure_project_id(), {"recent_commits": [], "workspace": None})
+    categories = [item["category"] for item in hazards]
+    assert "no_index" in categories
+
+
+def test_hazard_scan_provider_unavailable(tmp_db, mock_embedder, monkeypatch):
+    import vibe_rag.server as srv
+    import vibe_rag.tools as tools_mod
+
+    monkeypatch.setattr(tools_mod, "embedding_provider_status", lambda: {"ok": False, "provider": "ollama", "detail": "not reachable"})
+    hazards = _hazard_scan(srv._get_db(), Path.cwd(), srv._ensure_project_id(), {"recent_commits": [], "workspace": None})
+    categories = [item["category"] for item in hazards]
+    assert "provider_unavailable" in categories
+
+
+def test_hazard_scan_stale_index(tmp_db, mock_embedder, monkeypatch, tmp_path):
+    import os
+    import subprocess
+    import vibe_rag.server as srv
+    import vibe_rag.tools as tools_mod
+
+    monkeypatch.setattr(tools_mod, "embedding_provider_status", lambda: {"ok": True, "provider": "mock"})
+
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path, check=True, capture_output=True)
+    (tmp_path / "file.py").write_text("x = 1\n")
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "init", "--no-verify"], cwd=tmp_path, check=True, capture_output=True)
+
+    old_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        index_project()
+        subprocess.run(["git", "commit", "--allow-empty", "-m", "new commit"], cwd=tmp_path, check=True, capture_output=True)
+        new_head = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=tmp_path, capture_output=True, text=True).stdout.strip()
+        pulse = {
+            "recent_commits": [{"sha": new_head, "message": "new commit"}],
+            "workspace": {"modified": [], "staged": [], "untracked": [], "is_clean": True},
+        }
+        hazards = _hazard_scan(srv._get_db(), tmp_path, srv._ensure_project_id(), pulse)
+    finally:
+        os.chdir(old_cwd)
+
+    categories = [item["category"] for item in hazards]
+    assert "stale_index" in categories
+
+
+def test_hazard_scan_uncommitted_work(tmp_db, mock_embedder, monkeypatch):
+    import vibe_rag.server as srv
+    import vibe_rag.tools as tools_mod
+
+    monkeypatch.setattr(tools_mod, "embedding_provider_status", lambda: {"ok": True, "provider": "mock"})
+    hazards = _hazard_scan(
+        srv._get_db(),
+        Path.cwd(),
+        srv._ensure_project_id(),
+        {
+            "recent_commits": [],
+            "workspace": {"modified": ["a.py", "b.py"], "staged": [], "untracked": [], "is_clean": False},
+        },
+    )
+    categories = [item["category"] for item in hazards]
+    assert "uncommitted_work" in categories
+    msg = next(item["message"] for item in hazards if item["category"] == "uncommitted_work")
+    assert "2 files" in msg
+
+
+def test_hazard_scan_everything_healthy(tmp_db, mock_embedder, monkeypatch, tmp_path):
+    import os
+    import subprocess
+    import vibe_rag.server as srv
+    import vibe_rag.tools as tools_mod
+
+    monkeypatch.setattr(tools_mod, "embedding_provider_status", lambda: {"ok": True, "provider": "mock"})
+
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path, check=True, capture_output=True)
+    (tmp_path / "file.py").write_text("x = 1\n")
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "init", "--no-verify"], cwd=tmp_path, check=True, capture_output=True)
+    head = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=tmp_path, capture_output=True, text=True).stdout.strip()
+
+    old_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        index_project()
+        pulse = {"recent_commits": [{"sha": head, "message": "init"}], "workspace": {"modified": [], "staged": [], "untracked": [], "is_clean": True}}
+        hazards = _hazard_scan(srv._get_db(), tmp_path, srv._ensure_project_id(), pulse)
+    finally:
+        os.chdir(old_cwd)
+
+    assert hazards == []
+
+
+def test_live_decisions_returns_only_decisions_and_constraints(tmp_db, mock_embedder):
+    import vibe_rag.server as srv
+
+    project_id = srv._ensure_project_id()
+    db = srv._get_db()
+    db.remember_structured(summary="gateway owns tokens", content="gateway owns tokens", embedding=[0.0] * 1024, project_id=project_id, memory_kind="decision")
+    db.remember_structured(summary="max 100 retries", content="max 100 retries", embedding=[0.0] * 1024, project_id=project_id, memory_kind="constraint")
+    db.remember_structured(summary="session note", content="session note", embedding=[0.0] * 1024, project_id=project_id, memory_kind="note")
+
+    decisions = _live_decisions(db, srv._get_user_db(), project_id)
+    kinds = [item["memory_kind"] for item in decisions]
+    assert "decision" in kinds
+    assert "constraint" in kinds
+    assert "note" not in kinds
+    assert all("score" not in item for item in decisions)
+
+
+def test_live_decisions_excludes_superseded(tmp_db, mock_embedder):
+    import vibe_rag.server as srv
+
+    project_id = srv._ensure_project_id()
+    db = srv._get_db()
+    old_id = db.remember_structured(summary="old decision", content="old decision", embedding=[0.0] * 1024, project_id=project_id, memory_kind="decision")
+    db.remember_structured(
+        summary="new decision",
+        content="new decision",
+        embedding=[0.0] * 1024,
+        project_id=project_id,
+        memory_kind="decision",
+        supersedes=old_id,
+    )
+
+    decisions = _live_decisions(db, srv._get_user_db(), project_id)
+    summaries = [item["summary"] for item in decisions]
+    assert "new decision" in summaries
+    assert "old decision" not in summaries
+
+
+def test_format_briefing_full_output():
+    pulse = {
+        "branch": "main",
+        "is_default_branch": True,
+        "default_branch": "main",
+        "workspace": {"modified": ["tools.py"], "staged": [], "untracked": [], "is_clean": False},
+        "recent_commits": [{"sha": "abc1234", "message": "fix auth"}],
+    }
+    narrative = "You were last here 2 hours ago working on auth (completed)."
+    hazards = [
+        {"level": "error", "category": "no_index", "message": "No code index"},
+        {"level": "warning", "category": "uncommitted_work", "message": "1 files modified"},
+    ]
+    decisions = [{"summary": "gateway owns tokens", "memory_kind": "decision", "updated_at": "2026-03-23 10:00:00"}]
+    task_results = {
+        "memories": [],
+        "code": [
+            {
+                "file_path": "src/billing.py",
+                "start_line": 12,
+                "symbol": None,
+                "content": "def issue_invoice(customer_id: str) -> str:",
+            }
+        ],
+        "docs": [],
+    }
+
+    briefing = _format_briefing(pulse, narrative, hazards, decisions, task_results, "test-project")
+
+    assert "test-project" in briefing
+    assert "main" in briefing
+    assert "1 modified file" in briefing
+    assert "You were last here" in briefing
+    assert "No code index" in briefing
+    assert "gateway owns tokens" in briefing
+    assert "src/billing.py:12 def issue_invoice" in briefing
+    assert briefing.index("No code index") < briefing.index("1 files modified")
+
+
+def test_format_briefing_new_project():
+    pulse = {"branch": "main", "is_default_branch": True, "default_branch": "main", "workspace": {"modified": [], "staged": [], "untracked": [], "is_clean": True}, "recent_commits": []}
+    briefing = _format_briefing(pulse, None, [], [], {"memories": [], "code": [], "docs": []}, "new-project")
+
+    assert "new-project" in briefing
+    assert "You were last here" not in briefing
+    assert "!" not in briefing
+    assert "Decisions" not in briefing
+
+
+def test_format_briefing_budget():
+    pulse = {
+        "branch": "main",
+        "is_default_branch": True,
+        "default_branch": "main",
+        "workspace": {"modified": [], "staged": [], "untracked": [], "is_clean": True},
+        "recent_commits": [],
+    }
+    long_narrative = "x " * 4000
+    briefing = _format_briefing(pulse, long_narrative, [], [], {"memories": [], "code": [], "docs": []}, "budget-test")
+
+    assert len(briefing) <= 6000
+
+
+def test_load_session_context_includes_briefing(tmp_db, mock_embedder, tmp_path):
+    import os
+    import subprocess
+
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path, check=True, capture_output=True)
+    (tmp_path / "file.py").write_text("def hello():\n    return 1\n")
+    (tmp_path / "notes.md").write_text("## Notes\n\nProject notes.\n")
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "init", "--no-verify"], cwd=tmp_path, check=True, capture_output=True)
+
+    old_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        index_project()
+        remember("billing uses invoices and customer ids")
+        result = load_session_context("understand the codebase", code_limit=1, docs_limit=1, memory_limit=1)
+    finally:
+        os.chdir(old_cwd)
+
+    assert result["ok"] is True
+    assert isinstance(result.get("briefing"), str)
+    assert result["pulse"]["branch"] is not None
+    assert isinstance(result["hazards"], list)
+    assert isinstance(result["live_decisions"], list)
+    assert "memories" in result
+    assert "code" in result
+    assert "docs" in result
+
+
+def test_load_session_context_briefing_on_fresh_project(tmp_db, mock_embedder):
+    result = load_session_context("explore new project", code_limit=0, docs_limit=0, memory_limit=0)
+
+    assert result["ok"] is True
+    briefing = result["briefing"]
+    assert "You were last here" not in briefing
+    assert "Decisions" not in briefing
+
+
+def test_load_session_context_backward_compat(tmp_db, mock_embedder, tmp_path):
+    import os
+
+    old_cwd = Path.cwd()
+    os.chdir(tmp_path)
+    try:
+        result = load_session_context("test compat", code_limit=0, docs_limit=0, memory_limit=0)
+    finally:
+        os.chdir(old_cwd)
+
+    assert result["ok"] is True
+    assert isinstance(result.get("memories"), list)
+    assert isinstance(result.get("code"), list)
+    assert isinstance(result.get("docs"), list)
+
+
+def test_load_session_context_computes_pulse_before_db(monkeypatch):
+    call_order = []
+
+    monkeypatch.setattr(
+        "vibe_rag.tools._project_pulse",
+        lambda project_root: call_order.append("pulse") or {"branch": None, "workspace": None, "recent_commits": []},
+    )
+    monkeypatch.setattr("vibe_rag.tools._get_db", lambda: call_order.append("db") or object())
+    monkeypatch.setattr("vibe_rag.tools._stale_state", lambda *args, **kwargs: {})
+    monkeypatch.setattr("vibe_rag.tools._get_user_db", lambda: object())
+    monkeypatch.setattr("vibe_rag.tools._session_narrative", lambda *args, **kwargs: None)
+    monkeypatch.setattr("vibe_rag.tools._hazard_scan", lambda *args, **kwargs: [])
+    monkeypatch.setattr("vibe_rag.tools._live_decisions", lambda *args, **kwargs: [])
+    monkeypatch.setattr("vibe_rag.tools._search_memory_results", lambda *args, **kwargs: (None, []))
+    monkeypatch.setattr("vibe_rag.tools._search_code_results", lambda *args, **kwargs: (None, []))
+    monkeypatch.setattr("vibe_rag.tools._search_docs_results", lambda *args, **kwargs: (None, []))
+    monkeypatch.setattr("vibe_rag.tools._format_briefing", lambda *args, **kwargs: "briefing")
+
+    result = load_session_context("test pulse ordering", code_limit=0, docs_limit=0, memory_limit=0)
+
+    assert result["ok"] is True
+    assert call_order[:2] == ["pulse", "db"]
+
+
+def test_current_file_counts_skips_cache_dirs(tmp_path):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "app.py").write_text("print('ok')\n")
+    (tmp_path / "README.md").write_text("# Demo\n")
+    (tmp_path / ".mypy_cache").mkdir()
+    (tmp_path / ".mypy_cache" / "state.json").write_text("{}\n")
+    (tmp_path / ".ruff_cache").mkdir()
+    (tmp_path / ".ruff_cache" / "state.json").write_text("{}\n")
+
+    from vibe_rag.tools import _current_file_counts
+
+    code_count, doc_count = _current_file_counts(tmp_path)
+
+    assert code_count == 1
+    assert doc_count == 1
+
+
+def test_stale_state_skips_file_count_drift_when_git_head_changed(tmp_db, mock_embedder, monkeypatch, tmp_path):
+    import os
+    import subprocess
+    import vibe_rag.server as srv
+
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path, check=True, capture_output=True)
+    (tmp_path / "file.py").write_text("x = 1\n")
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "init", "--no-verify"], cwd=tmp_path, check=True, capture_output=True)
+
+    old_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        index_project()
+        subprocess.run(["git", "commit", "--allow-empty", "-m", "next", "--no-verify"], cwd=tmp_path, check=True, capture_output=True)
+
+        monkeypatch.setattr(
+            "vibe_rag.tools._current_file_counts",
+            lambda project_root: (_ for _ in ()).throw(AssertionError("should not count files when git head already changed")),
+        )
+
+        from vibe_rag.tools import _stale_state
+
+        stale = _stale_state(srv._get_db(), tmp_path, srv._ensure_project_id())
+    finally:
+        os.chdir(old_cwd)
+
+    warning_kinds = [warning["kind"] for warning in stale["warnings"]]
+    assert "git_head_changed" in warning_kinds
+    assert "file_count_drift" not in warning_kinds
+
+
 # --- Edge case tests ---
 
 
@@ -712,6 +1216,22 @@ def test_save_session_memory_distills_and_deduplicates(tmp_db, mock_embedder):
     assert second["memory"]["id"] == first["memory"]["id"]
 
 
+def test_save_session_memory_infers_enriched_metadata(tmp_db, mock_embedder):
+    result = save_session_memory(
+        task="Fix the auth token refresh bug",
+        response="Fixed the token refresh logic. The gateway now validates tokens correctly and refresh passes.",
+        source_session_id="sess-meta",
+        source_message_id="msg-meta",
+    )
+
+    assert result["ok"] is True
+    assert "topic" in result["memory"]["metadata"]
+    assert "outcome" in result["memory"]["metadata"]
+    assert "session_ended_at" in result["memory"]["metadata"]
+    assert result["memory"]["metadata"]["topic"]
+    assert result["memory"]["metadata"]["outcome"] in {"completed", "in_progress", "blocked"}
+
+
 def test_save_session_memory_skips_low_signal_no_memory_response(tmp_db, mock_embedder):
     result = save_session_memory(
         task="What durable memory do you have?",
@@ -757,6 +1277,27 @@ def test_save_session_memory_skips_duplicate_auto_memory(tmp_db, mock_embedder):
     assert second["deduplicated"] is True
     assert second["skipped"] is True
     assert second["reason"] == "duplicate auto memory"
+
+
+def test_save_session_summary_infers_enriched_metadata(tmp_db, mock_embedder):
+    result = save_session_summary(
+        task="Review the auth token refresh implementation",
+        turns=[
+            {
+                "user": "How does token refresh work?",
+                "assistant": "The gateway validates tokens and issues new ones on expiry.",
+            },
+            {"user": "Are there tests?", "assistant": "Yes, test_gateway.py covers the refresh flow."},
+        ],
+        source_session_id="sess-summary-meta",
+        source_message_id="msg-summary-meta",
+    )
+
+    assert result["ok"] is True
+    metadata = result["memory"]["metadata"]
+    assert "topic" in metadata
+    assert "outcome" in metadata
+    assert "session_ended_at" in metadata
 
 
 def test_save_session_memory_skips_non_durable_auto_memory(tmp_db, mock_embedder):

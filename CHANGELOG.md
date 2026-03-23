@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `load_session_context` now synthesizes a situational-awareness briefing with pulse, hazards, live decisions, and task context so session-start hooks can brief the client before the first prompt
+- `vibe-rag doctor` now validates the native Vibe `[[hooks.SessionStart]]` path in generated projects
+
+### Changed
+- Generated Vibe scaffolds now use native `[[hooks.SessionStart]]` hook configuration instead of the older Vibe-only bootstrap path
+- Generated client configs now pin the resolved `vibe-rag` binary path so installed-wheel scaffolds work reliably outside the source checkout
+- Codex hook output now emits `suppressOutput: true` on successful session-start briefings so compatible clients can keep the context hidden from the user transcript
+
+### Fixed
+- `load_session_context` now degrades in the intended order by collecting pulse before database-backed retrieval work
+- Workspace git status parsing no longer misclassifies a leading-space `git status --short` line as staged work
+- Stale index file-count drift no longer counts `.mypy_cache` or `.ruff_cache`, and skips the expensive file walk when git HEAD already proves staleness
+- Pre-v0.1.0 session narrative fallback now renders readable prose instead of dumping the raw prior summary
+- `live_decisions` no longer emits a fake similarity score for recency-ranked memory items
+
 ## [0.0.23] - 2026-03-23
 
 ### Changed

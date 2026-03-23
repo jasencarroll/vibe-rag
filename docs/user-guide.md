@@ -141,8 +141,9 @@ Those clients currently get:
 
 - MCP server registration for `vibe-rag serve`
 - session-start context injection through `vibe-rag hook-session-start`
+- Vibe projects use a native `[[hooks.SessionStart]]` entry in `.vibe/config.toml`
 - automatic `git init` when the scaffold target is not already a repo
-- generated config that calls `vibe-rag` on `PATH`
+- generated config that pins the resolved `vibe-rag` binary path
 - Codex config with `suppress_unstable_features_warning = true`
 
 Vibe is currently the most complete integration, but the core `vibe-rag serve` MCP server is the product identity.
