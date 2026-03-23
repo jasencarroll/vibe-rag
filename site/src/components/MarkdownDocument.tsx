@@ -1,9 +1,16 @@
+import type { ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
 type MarkdownDocumentProps = {
   markdown: string;
   sourcePath: string;
+};
+
+export type MarkdownSection = {
+  id: string;
+  level: 2 | 3;
+  title: string;
 };
 
 export const DOC_ROUTES: Record<string, string> = {
@@ -30,14 +37,70 @@ function normalizeRepoPath(path: string): string {
   return output.join('/');
 }
 
+function flattenText(node: ReactNode): string {
+  if (typeof node === 'string' || typeof node === 'number') {
+    return String(node);
+  }
+  if (Array.isArray(node)) {
+    return node.map(flattenText).join('');
+  }
+  if (node && typeof node === 'object' && 'props' in node) {
+    return flattenText((node as { props?: { children?: ReactNode } }).props?.children ?? '');
+  }
+  return '';
+}
+
+export function slugifyHeading(value: string): string {
+  return value
+    .toLowerCase()
+    .trim()
+    .replace(/`/g, '')
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    .replace(/[^a-z0-9\s-]/g, '')
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-');
+}
+
+export function extractMarkdownSections(markdown: string): MarkdownSection[] {
+  const sections: MarkdownSection[] = [];
+  const lines = markdown.split('\n');
+  let inFence = false;
+
+  for (const line of lines) {
+    if (line.trim().startsWith('```')) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence) continue;
+    const match = /^(##|###)\s+(.+)$/.exec(line.trim());
+    if (!match) continue;
+    const level = match[1] === '##' ? 2 : 3;
+    const title = match[2].trim();
+    const id = slugifyHeading(title);
+    if (!id) continue;
+    sections.push({ id, level, title });
+  }
+
+  return sections;
+}
+
+export function scrollToSection(id: string): void {
+  const target = document.getElementById(id);
+  if (!target) return;
+  target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
 export function resolveMarkdownHref(href: string, sourcePath: string): string {
   if (
     href.startsWith('http://') ||
     href.startsWith('https://') ||
     href.startsWith('mailto:') ||
-    href.startsWith('tel:') ||
-    href.startsWith('#')
+    href.startsWith('tel:')
   ) {
+    return href;
+  }
+
+  if (href.startsWith('#')) {
     return href;
   }
 
@@ -49,7 +112,7 @@ export function resolveMarkdownHref(href: string, sourcePath: string): string {
   const resolvedPath = normalizeRepoPath(combined);
 
   if (DOC_ROUTES[resolvedPath]) {
-    return DOC_ROUTES[resolvedPath];
+    return hash ? `${DOC_ROUTES[resolvedPath]}?section=${encodeURIComponent(hash)}` : DOC_ROUTES[resolvedPath];
   }
 
   return `${GITHUB_BLOB_ROOT}${resolvedPath}${hash ? `#${hash}` : ''}`;
@@ -61,26 +124,58 @@ export function MarkdownDocument({ markdown, sourcePath }: MarkdownDocumentProps
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
-          h1: ({ children }) => <h1 className="mt-0 mb-6 text-4xl font-semibold tracking-tight md:text-5xl">{children}</h1>,
-          h2: ({ children }) => (
-            <h2 className="mt-14 mb-5 border-t border-border pt-8 text-2xl font-semibold tracking-tight md:text-3xl">
-              {children}
-            </h2>
-          ),
-          h3: ({ children }) => <h3 className="mt-10 mb-4 text-xl font-semibold tracking-tight">{children}</h3>,
-          h4: ({ children }) => <h4 className="mt-8 mb-3 text-lg font-semibold">{children}</h4>,
+          h1: ({ children }) => <h1 className="mt-0 mb-6 scroll-mt-28 text-4xl font-semibold tracking-tight md:text-5xl">{children}</h1>,
+          h2: ({ children }) => {
+            const id = slugifyHeading(flattenText(children));
+            return (
+              <h2
+                id={id || undefined}
+                className="mt-14 mb-5 scroll-mt-28 border-t border-border pt-8 text-2xl font-semibold tracking-tight md:text-3xl"
+              >
+                {children}
+              </h2>
+            );
+          },
+          h3: ({ children }) => {
+            const id = slugifyHeading(flattenText(children));
+            return (
+              <h3 id={id || undefined} className="mt-10 mb-4 scroll-mt-28 text-xl font-semibold tracking-tight">
+                {children}
+              </h3>
+            );
+          },
+          h4: ({ children }) => {
+            const id = slugifyHeading(flattenText(children));
+            return (
+              <h4 id={id || undefined} className="mt-8 mb-3 scroll-mt-28 text-lg font-semibold">
+                {children}
+              </h4>
+            );
+          },
           p: ({ children }) => <p className="my-5 leading-8 text-muted-foreground">{children}</p>,
           ul: ({ children }) => <ul className="my-5 list-disc space-y-3 pl-6 text-muted-foreground">{children}</ul>,
           ol: ({ children }) => <ol className="my-5 list-decimal space-y-3 pl-6 text-muted-foreground">{children}</ol>,
           li: ({ children }) => <li className="leading-8">{children}</li>,
-          a: ({ href, children }) => (
-            <a
-              href={href ? resolveMarkdownHref(href, sourcePath) : undefined}
-              className="font-medium text-foreground underline decoration-border underline-offset-4 transition hover:decoration-foreground"
-            >
-              {children}
-            </a>
-          ),
+          a: ({ href, children }) => {
+            const resolved = href ? resolveMarkdownHref(href, sourcePath) : undefined;
+            const isSectionAnchor = resolved?.startsWith('#') && !resolved.startsWith('#/');
+            return (
+              <a
+                href={resolved}
+                onClick={
+                  isSectionAnchor
+                    ? (event) => {
+                        event.preventDefault();
+                        scrollToSection(resolved.slice(1));
+                      }
+                    : undefined
+                }
+                className="font-medium text-foreground underline decoration-border underline-offset-4 transition hover:decoration-foreground"
+              >
+                {children}
+              </a>
+            );
+          },
           strong: ({ children }) => <strong className="font-semibold text-foreground">{children}</strong>,
           code: ({ className, children }) => {
             const block = Boolean(className);

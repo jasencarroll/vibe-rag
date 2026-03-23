@@ -8,7 +8,7 @@ const navClass = ({ isActive }: { isActive: boolean }) =>
 
 export function Header() {
   return (
-    <header className="border-b border-border bg-card/95 backdrop-blur">
+    <header className="sticky top-0 z-50 border-b border-border bg-card/95 backdrop-blur">
       <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
         <Link to="/" className="flex items-center gap-3 no-underline">
           <span className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-border bg-accent text-sm">
