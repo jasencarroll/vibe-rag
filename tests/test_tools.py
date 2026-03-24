@@ -896,7 +896,6 @@ def test_project_pulse_returns_branch_and_workspace(tmp_path):
     subprocess.run(["git", "commit", "--allow-empty", "-m", "init"], cwd=tmp_path, check=True, capture_output=True)
     (tmp_path / "file.py").write_text("x = 1\n")
 
-    from vibe_rag.tools import _project_pulse
 
     pulse = _project_pulse(tmp_path)
 
@@ -918,7 +917,6 @@ def test_project_pulse_first_modified_file_is_not_misparsed_as_staged(tmp_path):
     subprocess.run(["git", "commit", "-m", "init"], cwd=tmp_path, check=True, capture_output=True)
     (tmp_path / "file.py").write_text("x = 2\n")
 
-    from vibe_rag.tools import _project_pulse
 
     pulse = _project_pulse(tmp_path)
 
@@ -927,7 +925,6 @@ def test_project_pulse_first_modified_file_is_not_misparsed_as_staged(tmp_path):
 
 
 def test_project_pulse_non_git_directory(tmp_path):
-    from vibe_rag.tools import _project_pulse
 
     pulse = _project_pulse(tmp_path)
 
@@ -946,7 +943,6 @@ def test_project_pulse_ahead_behind_on_branch(tmp_path):
     subprocess.run(["git", "checkout", "-b", "feature"], cwd=tmp_path, check=True, capture_output=True)
     subprocess.run(["git", "commit", "--allow-empty", "-m", "feature work"], cwd=tmp_path, check=True, capture_output=True)
 
-    from vibe_rag.tools import _project_pulse
 
     pulse = _project_pulse(tmp_path)
 
@@ -3004,8 +3000,10 @@ def test_remember_scope_project_is_default(tmp_db, mock_embedder):
 
 
 def test_remember_scope_invalid_returns_error(tmp_db, mock_embedder):
-    """WARNING: test body has no assertions -- scope='global' call result is never checked."""
+    """Invalid scope='global' should return an error dict."""
     result = remember("some content", scope="global")
+    assert result["ok"] is False
+    assert "error" in result
 # --- Unified search tool tests ---
 
 

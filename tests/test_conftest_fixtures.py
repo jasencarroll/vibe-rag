@@ -1,7 +1,5 @@
 """Tests that exercise the new composite conftest fixtures."""
 
-import pytest
-from pathlib import Path
 
 from vibe_rag.tools import (
     search_code,

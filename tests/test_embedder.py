@@ -1,5 +1,4 @@
 import json
-import subprocess
 
 import httpx
 import pytest
@@ -10,7 +9,6 @@ from vibe_rag.indexing.embedder import (
     DEFAULT_OPENROUTER_MODEL,
     OpenRouterEmbeddingProvider,
     _batch_by_limits,
-    _SHELL_ENV_ATTEMPTED,
     create_embedding_provider,
     embedding_provider_status,
     resolve_embedding_dimensions,

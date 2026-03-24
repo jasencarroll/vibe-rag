@@ -29,7 +29,6 @@ from __future__ import annotations
 
 from datetime import date as calendar_date
 from datetime import datetime, timezone
-from typing import cast
 
 from vibe_rag.server import _ensure_project_id, _get_db, _get_embedder, _get_user_db, mcp
 from vibe_rag.tools._helpers import (

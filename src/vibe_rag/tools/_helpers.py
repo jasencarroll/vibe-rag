@@ -15,21 +15,18 @@ import logging
 import re
 import sqlite3
 import subprocess
-import time
 import tomllib
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, cast
 
-from vibe_rag.chunking import chunk_doc, collect_files, collect_files_with_skips
+from vibe_rag.chunking import collect_files
 from vibe_rag.constants import EXT_TO_LANG
-from vibe_rag.indexing.code_chunker import chunk_code
 from vibe_rag.server import (
     _ensure_project_id,
     _get_db,
     _get_embedder,
     _get_user_db,
-    mcp,
 )
 from vibe_rag.indexing.embedder import (
     ProgressCallback,
@@ -37,9 +34,7 @@ from vibe_rag.indexing.embedder import (
     resolve_embedding_profile,
 )
 from vibe_rag.types import (
-    CodeChunk,
     CodeSearchResult,
-    DocChunk,
     DocSearchResult,
     MemoryKind,
     MemoryPayload,
