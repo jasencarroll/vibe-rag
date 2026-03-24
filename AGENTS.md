@@ -84,8 +84,8 @@ UV_TOOL_DIR="$tmp_tools" UV_TOOL_BIN_DIR="$tmp_bin" \
   uv tool install --python 3.12 --force dist/vibe_rag-<VERSION>-py3-none-any.whl
 
 cd "$tmp_proj"
-PATH="$tmp_bin:$PATH" vibe-rag init demo
-find "$tmp_proj/demo" -maxdepth 4 -print | sort
+PATH="$tmp_bin:$PATH" vibe-rag init
+find "$tmp_proj" -maxdepth 4 -print | sort
 ```
 
 `vibe-rag init` must produce:
@@ -179,13 +179,13 @@ vibe-rag supports four MCP clients equally: Claude, Codex, Gemini, and Vibe. Whe
 - packaged config scaffolding in `src/vibe_rag/template_bundle/` (claude, codex, gemini, vibe)
 - trusted project-local `.vibe/config.toml`
 - OpenRouter config resolving from `~/.vibe-rag/config.toml` or `RAG_OR_*` env overrides
-- local user memory at `~/.vibe/memory.db`
+- local user memory at `~/.vibe-rag/memory.db`
 
 ## E2E Verification Pattern
 
 For a real packaged E2E smoke test:
 
-1. `vibe-rag init demo`
+1. `vibe-rag init`
 2. add small `src/` and `docs/` files
 3. configure OpenRouter credentials in `~/.vibe-rag/config.toml` or via env overrides
 4. trust the repo in the client you are testing

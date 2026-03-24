@@ -19,9 +19,9 @@ Dual-DB design
 ~~~~~~~~~~~~~~
 Memories live in one of two SQLite databases:
 
-- **project** (``scope="project"``) -- stored in ``.vibe/index.db``,
+- **project** (``scope="project"``) -- stored in ``.vibe-rag/index.db``,
   scoped to the current project.
-- **user** (``scope="user"``) -- stored in ``~/.vibe/memory.db``,
+- **user** (``scope="user"``) -- stored in ``~/.vibe-rag/memory.db``,
   shared across all projects for cross-project knowledge.
 """
 

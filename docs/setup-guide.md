@@ -13,10 +13,12 @@ cat > ~/.vibe-rag/config.toml <<'EOF'
 api_key = "your-openrouter-key"
 EOF
 uv tool install --python 3.12 vibe-rag
-vibe-rag init demo
-cd demo
-# start your generated client (vibe, codex, claude, or gemini)
+cd /path/to/existing-repo
+vibe-rag init
+# start your generated client (codex, claude, gemini, or vibe)
 ```
+
+To create a new subdirectory instead, run `vibe-rag init demo`.
 
 Then start the session with:
 
@@ -29,10 +31,12 @@ Target state:
 
 - packaged `vibe-rag` from an installed wheel
 - project-local config for your chosen client
-- local durable memory in `~/.vibe/memory.db`
+- local durable memory in `~/.vibe-rag/memory.db`
 - session bootstrap where supported
 - OpenRouter embeddings with `perplexity/pplx-embed-v1-4b` at `2560` dims
 - client scaffolding for Vibe, Codex, Claude Code, or Gemini CLI
+
+If you are upgrading from an older release, move `.vibe/index.db*` to `.vibe-rag/index.db*` and `~/.vibe/memory.db*` to `~/.vibe-rag/memory.db*` if you want to preserve existing index and memory state. You can also keep the old locations temporarily by setting `RAG_DB` and `RAG_USER_DB`.
 
 `vibe-rag` itself is the MCP server and memory/search layer.
 Client integrations sit on top of that core.
@@ -73,6 +77,12 @@ export RAG_OR_EMBED_DIM="2560"
 ## 2. Scaffold a Repo
 
 ```bash
+vibe-rag init
+```
+
+To create a new subdirectory instead:
+
+```bash
 vibe-rag init demo
 cd demo
 ```
@@ -88,6 +98,7 @@ This writes:
 - `.mcp.json`
 
 If the target directory is not already a git repo, `vibe-rag init` also runs `git init`.
+Re-running `vibe-rag init` refreshes the generated scaffold files in place for the current repo. `vibe-rag init --here` remains an alias.
 
 This is the path that matters for release quality. Generated repos pin the resolved installed `vibe-rag` binary, so you should treat the installed-wheel scaffold as the default reality, not the source checkout.
 
@@ -110,8 +121,8 @@ Claude Code (`.claude/settings.json`), Codex (`.codex/config.toml` + `.codex/hoo
 
 Notes:
 
-- Durable user memory is stored automatically in `~/.vibe/memory.db`.
-- Project code and docs index stay in `.vibe/index.db`.
+- Durable user memory is stored automatically in `~/.vibe-rag/memory.db`.
+- Project code and docs index stay in `.vibe-rag/index.db`.
 - Embeddings use OpenRouter, defaulting to `perplexity/pplx-embed-v1-4b` and `2560` dimensions.
 - Retrieval stays project-scoped by default, including user-memory results used by session bootstrap.
 - `vibe-rag` exposes bare MCP tool names like `load_session_context`, `index_project`, `search`, `remember`, and `project_status`.
@@ -129,7 +140,7 @@ env = {
   RAG_OR_API_KEY = "your-openrouter-key",
   RAG_OR_EMBED_MOD = "perplexity/pplx-embed-v1-4b",
   RAG_OR_EMBED_DIM = "2560",
-  RAG_DB = "/path/to/.vibe/index.db",
+  RAG_DB = "/path/to/.vibe-rag/index.db",
   RAG_USER_DB = "/path/to/user/memory.db"
 }
 ```
@@ -291,7 +302,7 @@ If memory search is empty:
 
 - store one memory explicitly with `remember ...`
 - run `vibe-rag status`
-- check that `~/.vibe/memory.db` exists
+- check that `~/.vibe-rag/memory.db` exists
 
 If project ids feel wrong:
 
@@ -354,7 +365,7 @@ The saved summary now shows:
 - whether the artifact is stale relative to the repo's current git `HEAD`
 
 The trend view rolls those metrics across multiple saved artifacts so you can see whether retrieval quality and memory hygiene are improving or drifting over time.
-The persistent-memory snapshot path uses the real repo and `~/.vibe/memory.db`, so it gives you a separate maintainer-memory history instead of eval-local temp DB numbers.
+The persistent-memory snapshot path uses the real repo and `~/.vibe-rag/memory.db`, so it gives you a separate maintainer-memory history instead of eval-local temp DB numbers.
 One-turn auto session captures now also infer stronger memory kinds and can surface merge/supersede suggestions when a new capture looks like an update to an existing durable memory.
 
 To inspect memory hygiene in the current repo after a session-heavy run, call:

@@ -32,6 +32,10 @@ htmlcov/
 .vibe/index.db-shm
 .vibe/index.db-wal
 .vibe/backups/
+.vibe-rag/index.db
+.vibe-rag/index.db-shm
+.vibe-rag/index.db-wal
+.vibe-rag/backups/
 .gemini/
 .claude/.ralph-*.md
 

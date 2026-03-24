@@ -15,10 +15,12 @@ cat > ~/.vibe-rag/config.toml <<'EOF'
 api_key = "your-openrouter-key"
 EOF
 uv tool install --python 3.12 vibe-rag
-vibe-rag init my-project
-cd my-project
-vibe
+cd my-existing-repo
+vibe-rag init
+codex
 ```
+
+To create a new subdirectory instead, run `vibe-rag init my-project`.
 
 First prompts:
 
@@ -66,10 +68,16 @@ Environment variables still work and override the home config:
 
 Storage is local and simple:
 
-- project index: `.vibe/index.db`
-- user memory: `~/.vibe/memory.db`
+- project index: `.vibe-rag/index.db`
+- user memory: `~/.vibe-rag/memory.db`
 
 No external database is required.
+
+If you are upgrading from an older release:
+
+- move project index data from `.vibe/index.db*` to `.vibe-rag/index.db*` if you want to keep the old local index
+- move user memory from `~/.vibe/memory.db*` to `~/.vibe-rag/memory.db*` if you want to keep existing durable memory
+- or keep the old locations temporarily by setting `RAG_DB` / `RAG_USER_DB` explicitly
 
 Trust model:
 
@@ -114,7 +122,7 @@ vibe-rag --version
 Pinned release:
 
 ```bash
-uv tool install vibe-rag@0.1.1
+uv tool install vibe-rag@0.2.0
 ```
 
 CI runs `pytest` and `uv build` on pushes and pull requests, and the `Release` workflow can perform the version bump, changelog promotion, commit, push, and GitHub release creation from `main`.
@@ -135,9 +143,16 @@ cat > ~/.vibe-rag/config.toml <<'EOF'
 [embedding]
 api_key = "your-openrouter-key"
 EOF
+vibe-rag init
+codex
+```
+
+To create a new subdirectory instead, run:
+
+```bash
 vibe-rag init my-project
 cd my-project
-vibe
+codex
 ```
 
 Project config:
@@ -221,7 +236,7 @@ vibe-rag reset-user-memory
 Success looks like:
 
 - `index this project` reports code and docs indexed
-- `vibe-rag reindex` refreshes the local `.vibe/index.db` directly from the CLI
+- `vibe-rag reindex` refreshes the local `.vibe-rag/index.db` directly from the CLI
 - `vibe-rag reindex --full` forces a full rebuild when the embedding profile changes
 - `search the code for ...` returns structured results with `ok`, `results`, and ranking metadata
 - `search docs for ...` returns structured doc hits
@@ -239,6 +254,7 @@ Success looks like:
 - `.mcp.json`
 
 If the target directory is not already a git repo, `vibe-rag init` also runs `git init`.
+`vibe-rag init` stamps or refreshes the current repo by default. `vibe-rag init --here` remains an alias, and `vibe-rag init NAME` creates a new subdirectory.
 
 These files use:
 
@@ -257,8 +273,8 @@ All four clients (Claude Code, Codex, Vibe, Gemini CLI) are supported via `vibe-
 
 | Layer | Purpose | Storage | Tools |
 | --- | --- | --- | --- |
-| Project index | semantic code and docs retrieval in the current repo | `.vibe/index.db` | `index_project`, `search(scope="code")`, `search(scope="docs")`, `project_status` |
-| User memory | durable cross-session memory | `~/.vibe/memory.db` | `remember`, `search_memory`, `summarize_thread`, `forget`, `load_session_context` |
+| Project index | semantic code and docs retrieval in the current repo | `.vibe-rag/index.db` | `index_project`, `search(scope="code")`, `search(scope="docs")`, `project_status` |
+| User memory | durable cross-session memory | `~/.vibe-rag/memory.db` | `remember`, `search_memory`, `summarize_thread`, `forget`, `load_session_context` |
 
 ## MCP Tool Contract
 
@@ -292,7 +308,7 @@ For real local repo evals, copy [evals/local_repos.toml.example](/Users/jasen/de
 uv run python scripts/run_retrieval_eval.py evals/local_repos.toml
 ```
 
-The runner uses temporary sqlite DBs so it does not overwrite a repo's normal `.vibe/index.db`.
+The runner uses temporary sqlite DBs so it does not overwrite a repo's normal `.vibe-rag/index.db`.
 
 To inspect the latest saved artifact for a manifest without rerunning embeddings:
 

@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-03-24
+
+### Added
+- clearer `doctor` diagnostics for embedding config resolution, including the checked config path and whether settings came from env or home config
+- explicit upgrade notes for moving existing `.vibe` / `~/.vibe` DBs to the new `.vibe-rag` defaults
+
+### Changed
+- `vibe-rag init` now stamps or refreshes the current repo by default, with `vibe-rag init NAME` as the explicit new-subdirectory path
+- vibe-rag-owned runtime state now defaults to `.vibe-rag/index.db` and `~/.vibe-rag/memory.db`
+- generated scaffold guidance and public docs now describe `.vibe-rag` storage and current-directory init as the normal operator flow
+
+### Fixed
+- built wheels now preserve the new init flow and `.vibe-rag` storage defaults on the installed-binary path
+- indexing now skips `.vibe-rag` runtime state so local DB files do not get swept into code/doc collection
+
 ## [0.1.1] - 2026-03-24
 
 ### Added

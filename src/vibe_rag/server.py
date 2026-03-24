@@ -21,6 +21,7 @@ from vibe_rag.indexing.embedder import (
     create_embedding_provider,
     resolve_embedding_dimensions,
 )
+from vibe_rag.paths import project_index_db_path, user_memory_db_path
 
 mcp = FastMCP(name="vibe-rag")
 
@@ -42,7 +43,7 @@ def _project_db_path() -> Path:
     db_path_raw = os.environ.get("RAG_DB", "")
     if db_path_raw:
         return Path(db_path_raw).resolve()
-    return (Path.cwd() / ".vibe" / "index.db").resolve()
+    return project_index_db_path().resolve()
 
 
 def _user_db_path() -> Path:
@@ -50,7 +51,7 @@ def _user_db_path() -> Path:
     db_path_raw = os.environ.get("RAG_USER_DB", "")
     if db_path_raw:
         return Path(db_path_raw).resolve()
-    return (Path.home() / ".vibe" / "memory.db").resolve()
+    return user_memory_db_path().resolve()
 
 
 def _get_db() -> SqliteVecDB:

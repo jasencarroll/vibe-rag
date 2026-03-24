@@ -2,8 +2,8 @@
 
 Provides :class:`SqliteVecDB`, the single storage abstraction used by
 both the **project index** (code chunks, doc chunks, file hashes -- stored
-at ``.vibe/index.db``) and the **user memory** store (memories -- stored
-at ``~/.vibe/memory.db``).  The wrapper combines regular SQLite tables for
+at ``.vibe-rag/index.db``) and the **user memory** store (memories -- stored
+at ``~/.vibe-rag/memory.db``).  The wrapper combines regular SQLite tables for
 metadata with ``sqlite-vec`` virtual tables for cosine-distance vector
 search.
 

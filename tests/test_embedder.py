@@ -109,6 +109,8 @@ def test_embedding_provider_status_ready_when_key_present(monkeypatch):
     assert status["detail"] == "ready"
     assert status["model"] == "custom/model"
     assert status["dimensions"] == 512
+    assert status["source"] == "env"
+    assert status["config_path"].endswith(".vibe-rag/config.toml")
 
 
 def test_embedding_provider_status_not_ready_without_key(monkeypatch):
@@ -122,8 +124,10 @@ def test_embedding_provider_status_not_ready_without_key(monkeypatch):
 
     assert status["provider"] == "openrouter"
     assert status["ok"] is False
-    assert status["detail"] == "RAG_OR_API_KEY not set"
+    assert status["detail"].startswith("RAG_OR_API_KEY not set; checked ")
     assert status["dimensions"] == DEFAULT_OPENROUTER_DIMENSIONS
+    assert status["source"] == "missing"
+    assert status["config_path"].endswith(".vibe-rag/config.toml")
 
 
 def test_embedding_provider_status_reports_invalid_user_config(isolate_user_embedding_config, monkeypatch):
@@ -161,7 +165,7 @@ def test_create_embedding_provider_requires_api_key(monkeypatch):
     monkeypatch.setattr(embedder, "_load_embedding_env_from_shell", lambda: None)
     monkeypatch.setattr(embedder, "_SHELL_ENV_ATTEMPTED", False)
     monkeypatch.delenv("RAG_OR_API_KEY", raising=False)
-    with pytest.raises(RuntimeError, match="RAG_OR_API_KEY not set"):
+    with pytest.raises(RuntimeError, match=r"RAG_OR_API_KEY not set; checked .*config.toml"):
         create_embedding_provider()
 
 

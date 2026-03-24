@@ -40,10 +40,22 @@ def test_get_embedder_without_key_raises(monkeypatch):
     monkeypatch.delenv("RAG_DB", raising=False)
     monkeypatch.delenv("RAG_USER_DB", raising=False)
     try:
-        with pytest.raises(RuntimeError, match="RAG_OR_API_KEY not set"):
+        with pytest.raises(RuntimeError, match=r"RAG_OR_API_KEY not set; checked .*config.toml"):
             srv._get_embedder()
     finally:
         srv._embedder = old_embedder
+
+
+def test_project_db_path_defaults_to_vibe_rag(monkeypatch, tmp_path: Path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("RAG_DB", raising=False)
+    assert srv._project_db_path() == (tmp_path / ".vibe-rag" / "index.db").resolve()
+
+
+def test_user_db_path_defaults_to_vibe_rag(monkeypatch, tmp_path: Path):
+    monkeypatch.delenv("RAG_USER_DB", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert srv._user_db_path() == (tmp_path / ".vibe-rag" / "memory.db").resolve()
 
 
 def test_get_db_creates_and_returns_db(tmp_path: Path, monkeypatch):

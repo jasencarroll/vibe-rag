@@ -103,8 +103,8 @@ UV_TOOL_DIR="$tmp_tools" UV_TOOL_BIN_DIR="$tmp_bin" \
   uv tool install --python 3.12 --force dist/vibe_rag-<VERSION>-py3-none-any.whl
 
 cd "$tmp_proj"
-PATH="$tmp_bin:$PATH" vibe-rag init demo
-find "$tmp_proj/demo" -maxdepth 4 -print | sort
+PATH="$tmp_bin:$PATH" vibe-rag init
+find "$tmp_proj" -maxdepth 4 -print | sort
 ```
 
 Expected generated files:
@@ -168,11 +168,11 @@ When session bootstrap or scaffold behavior changes, verify:
 - packaged `vibe-rag`
 - trusted project-local config for each client (`.vibe/config.toml`, `.codex/config.toml`, `.claude/settings.json`, `.gemini/settings.json`)
 - home-scoped OpenRouter config in `~/.vibe-rag/config.toml` plus env override behavior (`RAG_OR_*`)
-- local user memory at `~/.vibe/memory.db`
+- local user memory at `~/.vibe-rag/memory.db`
 
 For a real packaged E2E smoke:
 
-1. `vibe-rag init demo`
+1. `vibe-rag init`
 2. add small `src/` and `docs/` files
 3. configure OpenRouter credentials in `~/.vibe-rag/config.toml` or via env overrides
 4. run `vibe-rag doctor`

@@ -8,8 +8,8 @@ Use `vibe-rag` as two systems inside your coding client:
 
 | System | Purpose | Storage |
 | --- | --- | --- |
-| Project index | semantic code and docs retrieval in the current repo | `.vibe/index.db` |
-| User memory | durable cross-session memory | `~/.vibe/memory.db` |
+| Project index | semantic code and docs retrieval in the current repo | `.vibe-rag/index.db` |
+| User memory | durable cross-session memory | `~/.vibe-rag/memory.db` |
 
 If setup is not done yet, start with the [Setup Guide](setup-guide.md).
 
@@ -31,6 +31,10 @@ api_key = "your-openrouter-key"
 model = "perplexity/pplx-embed-v1-4b"
 dimensions = 2560
 ```
+
+If a repo has not been scaffolded yet, run `vibe-rag init` from that repo root before starting the normal loop. `vibe-rag init --here` remains an alias.
+
+If you are upgrading from older `.vibe` / `~/.vibe` defaults, move the old DB files to `.vibe-rag/` / `~/.vibe-rag/` or keep the old locations temporarily via `RAG_DB` and `RAG_USER_DB`.
 
 ## Golden Path
 
@@ -218,6 +222,8 @@ One-turn auto session captures now infer stronger kinds such as `decision`, `con
 - Codex
 - Gemini CLI
 - Vibe
+
+To retrofit an existing repo or refresh generated config after upgrading `vibe-rag`, run `vibe-rag init` from the repo root. `vibe-rag init --here` remains an alias.
 
 Each client's generated config provides:
 

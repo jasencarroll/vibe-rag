@@ -47,6 +47,7 @@ from pathlib import Path
 from typing import Protocol
 
 import httpx
+from vibe_rag.paths import user_config_path
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -98,7 +99,7 @@ _SHELL_ENV_ATTEMPTED = False
 
 def _embedding_user_config_path() -> Path:
     """Return the home-scoped vibe-rag config path."""
-    return Path.home() / ".vibe-rag" / "config.toml"
+    return user_config_path()
 
 
 def _read_embedding_user_config() -> tuple[dict[str, str], str | None]:
@@ -163,6 +164,55 @@ def _read_embedding_user_config() -> tuple[dict[str, str], str | None]:
         resolved["RAG_OR_EMBED_DIM"] = str(value)
 
     return resolved, None
+
+
+def _missing_api_key_detail() -> str:
+    """Return a concrete error message for a missing OpenRouter API key."""
+    path = _embedding_user_config_path()
+    if not path.exists():
+        return f"RAG_OR_API_KEY not set; checked {path} (missing)"
+
+    try:
+        data = tomllib.loads(path.read_text())
+    except OSError as exc:
+        return f"RAG_OR_API_KEY not set; {path} unreadable: {exc}"
+    except tomllib.TOMLDecodeError as exc:
+        return f"RAG_OR_API_KEY not set; {path} contains invalid TOML: {exc}"
+
+    embedding = data.get("embedding")
+    if embedding is None:
+        return f"RAG_OR_API_KEY not set; checked {path} ([embedding] missing)"
+    if not isinstance(embedding, dict):
+        return f"RAG_OR_API_KEY not set; {path} [embedding] must be a table"
+
+    api_key = embedding.get("api_key")
+    if api_key is None:
+        return f"RAG_OR_API_KEY not set; checked {path} ([embedding].api_key missing)"
+    if not isinstance(api_key, str):
+        return f"RAG_OR_API_KEY not set; {path} [embedding].api_key must be a string"
+    if not api_key.strip():
+        return f"RAG_OR_API_KEY not set; checked {path} ([embedding].api_key blank)"
+    return f"RAG_OR_API_KEY not set; checked {path}"
+
+
+def _resolve_api_key() -> tuple[str, str]:
+    """Resolve the OpenRouter API key and where it came from."""
+    raw = os.environ.get("RAG_OR_API_KEY", "").strip()
+    if raw:
+        return raw, "env"
+
+    config, error = _read_embedding_user_config()
+    if error:
+        raise RuntimeError(error)
+    configured = config.get("RAG_OR_API_KEY", "").strip()
+    if configured:
+        return configured, "home_config"
+
+    _load_embedding_env_from_shell()
+    shell_value = os.environ.get("RAG_OR_API_KEY", "").strip()
+    if shell_value:
+        return shell_value, "shell"
+    return "", "missing"
 
 
 def _resolve_embedding_env_value(env_key: str, *, default: str = "") -> str:
@@ -603,9 +653,9 @@ def create_embedding_provider() -> EmbeddingProvider:
     Raises:
         RuntimeError: If ``RAG_OR_API_KEY`` is missing or blank.
     """
-    api_key = _resolve_embedding_env_value("RAG_OR_API_KEY")
+    api_key, _source = _resolve_api_key()
     if not api_key:
-        raise RuntimeError("RAG_OR_API_KEY not set")
+        raise RuntimeError(_missing_api_key_detail())
     return OpenRouterEmbeddingProvider(
         api_key=api_key,
         model=resolve_embedding_model(),
@@ -626,7 +676,7 @@ def embedding_provider_status() -> dict[str, object]:
     * ``dimensions`` -- the resolved embedding dimensions
     """
     try:
-        api_key = _resolve_embedding_env_value("RAG_OR_API_KEY")
+        api_key, source = _resolve_api_key()
         model = resolve_embedding_model()
         dimensions = resolve_embedding_dimensions()
     except RuntimeError as exc:
@@ -636,15 +686,19 @@ def embedding_provider_status() -> dict[str, object]:
             "detail": str(exc),
             "model": None,
             "dimensions": None,
+            "source": "error",
+            "config_path": str(_embedding_user_config_path()),
         }
 
     if not api_key:
         return {
             "provider": DEFAULT_PROVIDER,
             "ok": False,
-            "detail": "RAG_OR_API_KEY not set",
+            "detail": _missing_api_key_detail(),
             "model": model,
             "dimensions": dimensions,
+            "source": source,
+            "config_path": str(_embedding_user_config_path()),
         }
     return {
         "provider": DEFAULT_PROVIDER,
@@ -652,6 +706,8 @@ def embedding_provider_status() -> dict[str, object]:
         "detail": "ready",
         "model": model,
         "dimensions": dimensions,
+        "source": source,
+        "config_path": str(_embedding_user_config_path()),
     }
 
 

@@ -25,9 +25,19 @@ from pathlib import Path
 
 import click
 from vibe_rag import __version__
+from vibe_rag.paths import project_index_db_path, user_config_path, user_memory_db_path
 
 _VIBE_RAG_BIN_PLACEHOLDER = "__VIBE_RAG_BIN__"
 _VIBE_RAG_SHELL_BIN_PLACEHOLDER = "__VIBE_RAG_BIN_SHELL__"
+_GENERATED_SCAFFOLD_FILES = (
+    "AGENTS.md",
+    ".vibe/config.toml",
+    ".codex/config.toml",
+    ".codex/hooks.json",
+    ".claude/settings.json",
+    ".gemini/settings.json",
+    ".mcp.json",
+)
 
 
 @click.group()
@@ -133,16 +143,9 @@ def _rewrite_generated_client_files(target: Path) -> None:
         _VIBE_RAG_BIN_PLACEHOLDER: vibe_rag_bin,
         _VIBE_RAG_SHELL_BIN_PLACEHOLDER: shell_vibe_rag_bin,
     }
-    generated_files = (
-        ".vibe/config.toml",
-        ".codex/config.toml",
-        ".codex/hooks.json",
-        ".claude/settings.json",
-        ".gemini/settings.json",
-        ".mcp.json",
-    )
-
-    for relative_path in generated_files:
+    for relative_path in _GENERATED_SCAFFOLD_FILES:
+        if relative_path == "AGENTS.md":
+            continue
         path = target / relative_path
         if not path.exists():
             continue
@@ -153,6 +156,17 @@ def _rewrite_generated_client_files(target: Path) -> None:
             updated = updated.replace(placeholder, value)
         if updated != text:
             path.write_text(updated)
+
+
+def _generated_scaffold_exists(target: Path) -> bool:
+    """Return True when *target* already contains vibe-rag scaffold files."""
+    return any((target / relative_path).exists() for relative_path in _GENERATED_SCAFFOLD_FILES)
+
+
+def _clear_generated_scaffold(target: Path) -> None:
+    """Remove only the known generated scaffold files, preserving repo data like .vibe-rag/index.db."""
+    for relative_path in _GENERATED_SCAFFOLD_FILES:
+        (target / relative_path).unlink(missing_ok=True)
 
 
 def _project_mcp_command_status(project_root: Path) -> dict:
@@ -363,35 +377,37 @@ def _openrouter_setup_hint() -> str:
 
 @main.command()
 @click.argument("name", required=False)
-def init(name: str | None):
-    """Scaffold a new project with MCP config for all supported agent CLIs."""
+@click.option("--here", is_flag=True, help="Write vibe-rag scaffold into the current directory.")
+def init(name: str | None, here: bool):
+    """Scaffold a new project or stamp the current repo with MCP config for all supported agent CLIs."""
     from importlib.resources import files as pkg_files
 
     templates_dir = Path(str(pkg_files("vibe_rag") / "templates"))
     bundle_dir = Path(str(pkg_files("vibe_rag") / "template_bundle"))
 
-    if not name:
-        name = click.prompt("\n  Project name")
-    if not name:
-        click.echo("  Error: project name required")
-        return
+    if here and name:
+        raise click.UsageError("pass either a project name or `--here`, not both")
 
-    target = Path.cwd() / name
+    in_place = here or name in {None, ".", "./"}
+
+    target = Path.cwd() if in_place else Path.cwd() / name
 
     if target.exists():
-        click.echo(f"\n  {target} already exists.")
-        if (target / ".vibe").exists():
-            if click.confirm("  Re-stamp .vibe config?", default=False):
-                shutil.rmtree(target / ".vibe", ignore_errors=True)
-                (target / "AGENTS.md").unlink(missing_ok=True)
+        if not target.is_dir():
+            raise click.ClickException(f"{target} exists and is not a directory")
+        if in_place:
+            _clear_generated_scaffold(target)
+        else:
+            click.echo(f"\n  {target} already exists.")
+            if _generated_scaffold_exists(target):
+                prompt = "  Re-stamp vibe-rag scaffold in the existing directory?"
+            else:
+                prompt = "  Write vibe-rag scaffold into the existing directory?"
+            if click.confirm(prompt, default=False):
+                _clear_generated_scaffold(target)
             else:
                 click.echo("  Aborted.")
                 return
-        elif click.confirm("  Delete and recreate?", default=False):
-            shutil.rmtree(target)
-        else:
-            click.echo("  Aborted.")
-            return
 
     target.mkdir(parents=True, exist_ok=True)
 
@@ -420,10 +436,10 @@ def init(name: str | None):
     # .gitignore
     gitignore = target / ".gitignore"
     ignore_lines = [
-        ".vibe/index.db",
-        ".vibe/index.db-shm",
-        ".vibe/index.db-wal",
-        ".vibe/backups/",
+        ".vibe-rag/index.db",
+        ".vibe-rag/index.db-shm",
+        ".vibe-rag/index.db-wal",
+        ".vibe-rag/backups/",
     ]
     if gitignore.exists():
         text = gitignore.read_text()
@@ -433,13 +449,15 @@ def init(name: str | None):
     else:
         gitignore.write_text("\n".join(ignore_lines) + "\n")
 
-    click.echo(f"\n  ✓ {name} created at {target}\n")
+    created_label = target.name if in_place else name
+    click.echo(f"\n  ✓ {created_label} created at {target}\n")
     click.echo("    AGENTS.md          — project coding rules")
-    click.echo("    .vibe/config.toml  — Vibe MCP + hooks")
     click.echo("    .codex/            — Codex MCP + session-start hook")
     click.echo("    .claude/           — Claude Code session-start hook")
     click.echo("    .gemini/           — Gemini CLI MCP + session-start hook")
     click.echo("    .mcp.json          — Claude Code MCP server config")
+    click.echo("    .vibe/config.toml  — Vibe MCP + hooks")
+    click.echo("    .vibe-rag/         — project-local vibe-rag runtime state")
     click.echo("\n  Supported clients:")
     click.echo("    All four agent CLIs are supported: Claude Code, Codex, Gemini CLI, and Vibe.")
     profile = {
@@ -451,12 +469,15 @@ def init(name: str | None):
     click.echo(f"    Default profile: {profile['model']} @ {profile['dimensions']} dims")
     click.echo(f"    Setup hint: {_openrouter_setup_hint()}")
     click.echo("\n  Golden path:")
-    click.echo(f"    cd {target}")
+    click.echo(f"    cd {target}" if not in_place else "    already in the repo root")
     click.echo("    write ~/.vibe-rag/config.toml once with your OpenRouter key")
     click.echo("    or use RAG_OR_API_KEY=... as a shell/session override")
     click.echo("    start Claude Code, Codex, Gemini CLI, or Vibe in this repo")
     click.echo('    "load session context for understanding this repo"')
     click.echo('    "index this project"')
+    click.echo("    if tools or hooks are missing, run vibe-rag doctor")
+    click.echo("\n  New repo path:")
+    click.echo("    to create a new subdirectory instead: vibe-rag init NAME")
     click.echo("\n  Tool naming:")
     click.echo("    The MCP server exposes bare tools like load_session_context, index_project, search, remember, and project_status.")
     click.echo("    Depending on client config the server may be named memory, so tools appear as memory_load_session_context, memory_index_project, memory_search, memory_search_memory, memory_remember, and memory_project_status.")
@@ -541,8 +562,8 @@ def status():
     from vibe_rag.server import _ensure_project_id
     from vibe_rag.tools import _stale_state
 
-    db_path = Path(os.environ.get("RAG_DB", Path.cwd() / ".vibe" / "index.db")).expanduser()
-    user_db_path = Path(os.environ.get("RAG_USER_DB", Path.home() / ".vibe" / "memory.db")).expanduser()
+    db_path = Path(os.environ.get("RAG_DB", project_index_db_path())).expanduser()
+    user_db_path = Path(os.environ.get("RAG_USER_DB", user_memory_db_path())).expanduser()
     embedding_dimensions = _embedding_dimensions()
     click.echo(f"\n  vibe-rag {__version__}")
     click.echo(f"  DB: {db_path}\n")
@@ -667,7 +688,7 @@ def reset_user_memory():
     """Delete and recreate the user memory DB with the current embedding dimensions."""
     from vibe_rag.db.sqlite import SqliteVecDB
 
-    user_db_path = Path(os.environ.get("RAG_USER_DB", Path.home() / ".vibe" / "memory.db")).expanduser()
+    user_db_path = Path(os.environ.get("RAG_USER_DB", user_memory_db_path())).expanduser()
     embedding_dimensions = _embedding_dimensions()
 
     click.echo()
@@ -743,8 +764,8 @@ def doctor(fix: bool):
     from vibe_rag.tools import _codex_trust_status, _stale_state, _vibe_trust_status
 
     project_root = Path.cwd().resolve()
-    project_db_path = Path(os.environ.get("RAG_DB", project_root / ".vibe" / "index.db")).expanduser()
-    user_db_path = Path(os.environ.get("RAG_USER_DB", Path.home() / ".vibe" / "memory.db")).expanduser()
+    project_db_path = Path(os.environ.get("RAG_DB", project_index_db_path(project_root))).expanduser()
+    user_db_path = Path(os.environ.get("RAG_USER_DB", user_memory_db_path())).expanduser()
     provider = embedding_provider_status()
     project_id = _ensure_project_id()
     mcp_status = _project_mcp_command_status(project_root)
@@ -815,6 +836,8 @@ def doctor(fix: bool):
     click.echo(f"  Project DB:   {project_db_path}")
     click.echo(f"  User DB:      {user_db_path}")
     click.echo(f"  Provider:     {provider['provider']}")
+    click.echo(f"  Config path:  {provider.get('config_path') or user_config_path()}")
+    click.echo(f"  Config source: {provider.get('source') or 'unknown'}")
     click.echo(f"  Model:        {provider['model'] or 'unset'}")
     click.echo(f"  Dimensions:   {provider.get('dimensions') or 'unset'}")
     click.echo("  Golden path:  OpenRouter embeddings with one API key")
