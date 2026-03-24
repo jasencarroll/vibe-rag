@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-03-24
+
+### Added
+- `vibe-rag reindex --full` and `vibe-rag reset-index` for explicit full index rebuilds after embedding-profile changes
+- `doctor` now checks Claude Code, Codex, Gemini CLI, and Vibe CLI availability, plus index-compatibility diagnostics with explicit rebuild guidance
+- Generated scaffold guidance now explains bare MCP tool names and client-prefixed `memory_*` tool names consistently across supported clients
+
+### Changed
+- Embeddings now use OpenRouter only, defaulting to `perplexity/pplx-embed-v1-4b` at 2560 dimensions
+- Runtime env vars now use `RAG_OR_*` for embeddings and `RAG_DB` / `RAG_USER_DB` for DB overrides
+- README, setup/user/maintainer docs, and generated `AGENTS.md` now present Claude Code, Codex, Gemini CLI, and Vibe as equally supported client paths
+
+### Removed
+- The older multi-provider embedding path, including the `setup-ollama` command and provider-specific configuration flow
+- Stale generated `.vibe` template files that still referenced the old provider stack
+
 ## [0.0.30] - 2026-03-23
 
 ### Fixed
