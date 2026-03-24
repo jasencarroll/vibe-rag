@@ -1,3 +1,15 @@
+"""Click CLI for vibe-rag.
+
+Commands:
+    init               Scaffold a new project with MCP config for all supported agent CLIs.
+    status             Show index, memory, and health summary for the current project.
+    reindex            Re-index code and docs (incremental by default, --full for rebuild).
+    reset-index        Alias for ``reindex --full``.
+    doctor             Run diagnostic checks on setup, embedding provider, index, and memory.
+    hook-session-start Emit SessionStart hook JSON for a given agent CLI format.
+    serve              Launch the MCP stdio server (called by agent CLIs, not directly).
+"""
+
 from __future__ import annotations
 
 import json
@@ -27,6 +39,7 @@ def main():
 
 
 def _embedding_dimensions() -> int:
+    """Resolve the configured embedding dimension count, or abort with a ClickException."""
     try:
         from vibe_rag.indexing.embedder import resolve_embedding_dimensions
 
@@ -36,6 +49,7 @@ def _embedding_dimensions() -> int:
 
 
 def _status_label(ok: bool, warning: bool = False) -> str:
+    """Return a colored pass/warn/FAIL label for doctor output."""
     if warning:
         return click.style("warn", fg="yellow")
     if ok:
@@ -53,6 +67,7 @@ def _plain_status_label(ok: bool, warning: bool = False) -> str:
 
 
 def _read_toml_state(path: Path) -> tuple[dict | None, str]:
+    """Parse a TOML file and return (data, state) where state is 'ok', 'missing', 'unreadable', or 'corrupt'."""
     if not path.exists():
         return None, "missing"
     try:
@@ -64,11 +79,13 @@ def _read_toml_state(path: Path) -> tuple[dict | None, str]:
 
 
 def _read_toml(path: Path) -> dict | None:
+    """Parse a TOML file, returning the dict or None on any failure."""
     parsed, _ = _read_toml_state(path)
     return parsed
 
 
 def _resolve_command(command: str) -> tuple[bool, str]:
+    """Resolve a command string to (found, absolute_path). Handles both bare names and paths."""
     if not command:
         return False, "missing command"
     if os.path.sep in command:
@@ -81,6 +98,7 @@ def _resolve_command(command: str) -> tuple[bool, str]:
 
 
 def _current_vibe_rag_binary() -> str:
+    """Return the absolute path to the running vibe-rag binary, for template rewriting."""
     argv0 = str(Path(sys.argv[0]).expanduser())
     if Path(argv0).name == "vibe-rag":
         ok, resolved = _resolve_command(argv0)
@@ -94,6 +112,11 @@ def _current_vibe_rag_binary() -> str:
 
 
 def _rewrite_generated_client_files(target: Path) -> None:
+    """Replace __VIBE_RAG_BIN__ placeholders in scaffolded config files with the real binary path.
+
+    Only touches known generated files (.vibe/config.toml, .codex/*, .claude/*,
+    .gemini/*, .mcp.json) -- user files in the project are never modified.
+    """
     vibe_rag_bin = _current_vibe_rag_binary()
     shell_vibe_rag_bin = shlex.quote(vibe_rag_bin)
     replacements = {
@@ -123,6 +146,7 @@ def _rewrite_generated_client_files(target: Path) -> None:
 
 
 def _project_mcp_command_status(project_root: Path) -> dict:
+    """Check that .vibe/config.toml declares a 'memory' MCP server whose command resolves on disk."""
     vibe_config, state = _read_toml_state(project_root / ".vibe" / "config.toml")
     if vibe_config is None:
         if state == "corrupt":
@@ -180,22 +204,31 @@ def _client_cli_status(binary_name: str, display_name: str, version_flag: str = 
 
 
 def _vibe_cli_status() -> dict:
+    """Check whether the Vibe CLI binary is installed."""
     return _client_cli_status("vibe", "Vibe CLI")
 
 
 def _claude_cli_status() -> dict:
+    """Check whether the Claude Code CLI binary is installed."""
     return _client_cli_status("claude", "Claude Code")
 
 
 def _codex_cli_status() -> dict:
+    """Check whether the Codex CLI binary is installed."""
     return _client_cli_status("codex", "Codex CLI")
 
 
 def _gemini_cli_status() -> dict:
+    """Check whether the Gemini CLI binary is installed."""
     return _client_cli_status("gemini", "Gemini CLI")
 
 
 def _project_vibe_hook_status(project_root: Path) -> dict:
+    """Check that .vibe/config.toml has a SessionStart hook whose command resolves on disk.
+
+    Also detects and warns about the legacy background_mcp_hook format.
+    Does NOT execute the hook command -- only verifies it exists.
+    """
     vibe_config, state = _read_toml_state(project_root / ".vibe" / "config.toml")
     if vibe_config is None:
         if state == "corrupt":
@@ -245,6 +278,10 @@ def _project_vibe_hook_status(project_root: Path) -> dict:
 
 
 def _codex_hook_status(project_root: Path) -> dict:
+    """Check that .codex/hooks.json has a SessionStart hook whose command resolves on disk.
+
+    Does NOT execute the hook command -- only verifies it exists.
+    """
     hooks_path = project_root / ".codex" / "hooks.json"
     if not hooks_path.exists():
         return {"ok": False, "detail": "missing .codex/hooks.json"}
@@ -289,6 +326,7 @@ def _codex_hook_status(project_root: Path) -> dict:
 
 
 def _db_readable_status(db_path: Path, *, label: str) -> dict:
+    """Open a sqlite-vec DB to verify it exists and is readable."""
     from vibe_rag.db.sqlite import SqliteVecDB
 
     if not db_path.exists():
@@ -305,6 +343,7 @@ def _db_readable_status(db_path: Path, *, label: str) -> dict:
 
 
 def _openrouter_setup_hint() -> str:
+    """Return a one-line hint for configuring OpenRouter embedding credentials."""
     return (
         "export `RAG_OR_API_KEY=...` "
         "(optional: `RAG_OR_EMBED_MOD=perplexity/pplx-embed-v1-4b`, `RAG_OR_EMBED_DIM=2560`)"
@@ -411,6 +450,7 @@ def init(name: str | None):
     click.echo("    Depending on client config the server may be named memory, so tools appear as memory_load_session_context, memory_index_project, memory_search, and memory_project_status.")
 
 def _initialize_git_repo(target: Path) -> None:
+    """Run ``git init`` in *target* if it is not already a git repo and git is available."""
     if (target / ".git").exists():
         return
 
@@ -543,7 +583,12 @@ def status():
 )
 @click.argument("paths", nargs=-1)
 def reindex(paths: tuple[str, ...], full: bool):
-    """Re-index code and docs for the current project."""
+    """Re-index code and docs for the current project.
+
+    Incremental by default (only changed files). Pass --full to clear state
+    and rebuild everything. Optional PATHS restrict indexing to specific
+    directories or files (cannot be combined with --full).
+    """
     from vibe_rag.tools import index_project
     from vibe_rag.tools.index import _index_project_impl
 
@@ -571,7 +616,7 @@ def reindex(paths: tuple[str, ...], full: bool):
 
 @main.command("reset-index")
 def reset_index():
-    """Clear incremental index state and rebuild the full project index."""
+    """Alias for ``reindex --full``. Clears incremental state and rebuilds the full project index."""
     ctx = click.get_current_context()
     ctx.invoke(reindex, paths=(), full=True)
 
@@ -626,7 +671,13 @@ def _check_tool_count() -> dict:
 @main.command()
 @click.option("--fix", is_flag=True, help="Retained for compatibility; doctor no longer performs provider setup.")
 def doctor(fix: bool):
-    """Run diagnostic checks on setup, OpenRouter configuration, index, and memory health."""
+    """Run diagnostic checks on MCP config, agent CLIs, hooks, DBs, embedding, trust, index, and memory health.
+
+    Checks: MCP command, Claude/Codex/Gemini/Vibe CLI presence, Vibe and
+    Codex session-start hooks, project and user DB readability, embedding
+    provider connectivity, Vibe and Codex repo trust, language coverage,
+    memory staleness, registered MCP tool count, and index state freshness.
+    """
     from vibe_rag.db.sqlite import SqliteVecDB
     from vibe_rag.indexing.embedder import embedding_provider_status
     from vibe_rag.server import _ensure_project_id, _get_db, _get_embedder
@@ -769,7 +820,11 @@ def doctor(fix: bool):
 @main.command("hook-session-start")
 @click.option("--format", "target_format", type=click.Choice(["codex", "claude", "gemini", "vibe"]), required=True)
 def hook_session_start(target_format: str):
-    """Emit SessionStart hook JSON for a given agent CLI format."""
+    """Emit SessionStart hook JSON for a given agent CLI format.
+
+    Reads hook input from stdin and writes the formatted JSON response
+    to stdout. Called by agent CLIs at session start, not directly by users.
+    """
     from vibe_rag.hook_bridge import render_session_start_hook_json
 
     raw_input = sys.stdin.read()
