@@ -37,7 +37,7 @@ src/vibe_rag/
 
 - **Dual-DB design**: project index at `.vibe/index.db`, user memory at `~/.vibe/memory.db`
 - **Lazy init**: server.py uses thread-locked singletons for `_project_db`, `_user_db`, `_embedder`
-- **Import side-effect**: `server.py` line 112 does `import vibe_rag.tools` to register all `@mcp.tool()` decorators -- this must stay after `mcp` and helper definitions
+- **Import side-effect**: `server.py` line 140 does `import vibe_rag.tools` to register all `@mcp.tool()` decorators -- this must stay after `mcp` and helper definitions
 - **Embedding provider**: OpenRouter only (default model: `perplexity/pplx-embed-v1-4b`); override model/dimensions with `RAG_OR_EMBED_MOD`/`RAG_OR_EMBED_DIM`
 - **Unified search**: `search(query, scope="all|code|docs")` replaces old `search_code`/`search_docs` tools
 - **Unified remember**: `remember(content, scope="project|user")` replaces old `remember`/`remember_structured`; optional structured fields (`summary`, `details`, `memory_kind`)
@@ -51,8 +51,8 @@ src/vibe_rag/
 - `RAG_OR_API_KEY` — OpenRouter API key (required for embedding)
 - `RAG_OR_EMBED_MOD` — override embedding model (default: `perplexity/pplx-embed-v1-4b`)
 - `RAG_OR_EMBED_DIM` — override embedding dimensions (default: 2560)
-- `VIBE_RAG_DB` — override project DB path
-- `VIBE_RAG_USER_DB` — override user memory DB path
+- `RAG_DB` — override project DB path
+- `RAG_USER_DB` — override user memory DB path
 
 ## Testing
 
