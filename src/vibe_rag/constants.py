@@ -1,4 +1,8 @@
-"""Constants for vibe-rag file processing and chunking."""
+"""Constants for vibe-rag file processing and chunking.
+
+Centralises file-extension sets, directory/file skip-lists, size limits,
+and chunk-size parameters used by the indexing and chunking pipelines.
+"""
 
 from __future__ import annotations
 
@@ -40,6 +44,10 @@ EXT_TO_LANG = {
 # Maximum file size (in bytes) to consider for indexing
 MAX_FILE_SIZE = 250_000
 
-# Doc chunking
+# Maximum number of characters per documentation chunk.
+# Markdown sections or plain-text windows are split to stay within this limit.
 DOC_CHUNK_SIZE = 2000
+
+# Number of characters of overlap between consecutive documentation chunks.
+# Provides context continuity across chunk boundaries during vector search.
 DOC_CHUNK_OVERLAP = 200
