@@ -14,7 +14,7 @@ class FakeEmbedder:
     Produces fixed-width 2560-dimensional vectors derived from token hashing
     (blake2b), so identical inputs always yield identical vectors.  Only the
     first 64 dimensions carry signal; the remaining 2496 are zero-padded to
-    match the default ``VIBE_RAG_EMBEDDING_DIMENSIONS=2560`` used by the
+    match the default ``RAG_OR_EMBED_DIM=2560`` used by the
     project's SqliteVecDB instances.
 
     No network calls, no API keys, no Ollama -- safe for CI and offline use.

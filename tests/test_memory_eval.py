@@ -1,3 +1,4 @@
+"""Tests for memory retrieval quality -- structured vs freeform, supersede, cross-project isolation."""
 from __future__ import annotations
 
 import vibe_rag.server as srv

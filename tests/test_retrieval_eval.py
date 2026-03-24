@@ -1,3 +1,4 @@
+"""Tests for scripts/run_retrieval_eval.py -- retrieval quality fixtures and artifact reports."""
 from __future__ import annotations
 
 import importlib.util

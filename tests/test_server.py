@@ -31,6 +31,7 @@ def test_ensure_project_id_returns_path_derived_id():
 
 
 def test_get_embedder_without_key_raises(monkeypatch):
+    """_get_embedder raises RuntimeError when RAG_OR_API_KEY is unset."""
     old_embedder = srv._embedder
     srv._embedder = None
     monkeypatch.delenv("RAG_OR_API_KEY", raising=False)
@@ -102,6 +103,8 @@ def test_get_user_db_creates_and_returns_db(tmp_path: Path, monkeypatch):
 
 
 def test_cleanup_closes_embedder_and_clears_global():
+    """_cleanup calls embedder.close() and resets _embedder to None."""
+
     class FakeEmbedder:
         def __init__(self):
             self.closed = False

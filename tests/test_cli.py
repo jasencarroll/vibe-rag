@@ -300,6 +300,7 @@ def test_cli_doctor_warns_for_embedding_provider_warning(monkeypatch):
 
 
 def test_cli_doctor_does_not_show_provider_fast_path(monkeypatch):
+    """Verify the removed Ollama fast-path banner no longer appears in doctor output."""
     runner = CliRunner()
     monkeypatch.setattr(
         "vibe_rag.indexing.embedder.embedding_provider_status",

@@ -81,6 +81,7 @@ class TestClearOperations:
         assert db.doc_count() == 0
 
     def test_compat_clear_alias(self, db: SqliteVecDB):
+        """Legacy clear() delegates to clear_code() for backward compatibility."""
         chunk = {"file_path": "a.py", "chunk_index": 0, "content": "x",
                  "language": None, "symbol": None, "start_line": 1, "end_line": 1}
         db.upsert_chunks([chunk], [_fake_embedding()])
