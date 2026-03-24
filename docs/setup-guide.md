@@ -7,6 +7,11 @@ If you already have the tool installed and want the day-to-day operating flow, j
 If you just want the working path first, do this:
 
 ```bash
+mkdir -p ~/.vibe-rag
+cat > ~/.vibe-rag/config.toml <<'EOF'
+[embedding]
+api_key = "your-openrouter-key"
+EOF
 uv tool install --python 3.12 vibe-rag
 vibe-rag init demo
 cd demo
@@ -47,10 +52,22 @@ If `uv` defaults to Python 3.13:
 uv tool install --python 3.12 vibe-rag
 ```
 
-Set the OpenRouter key once in your environment:
+Set the OpenRouter key once in the user-level vibe-rag config:
+
+```toml
+[embedding]
+api_key = "your-openrouter-key"
+model = "perplexity/pplx-embed-v1-4b"
+dimensions = 2560
+```
+
+That file lives at `~/.vibe-rag/config.toml`.
+Environment variables still work and override it when needed:
 
 ```bash
 export RAG_OR_API_KEY="..."
+export RAG_OR_EMBED_MOD="perplexity/pplx-embed-v1-4b"
+export RAG_OR_EMBED_DIM="2560"
 ```
 
 ## 2. Scaffold a Repo
@@ -98,7 +115,7 @@ Notes:
 - Embeddings use OpenRouter, defaulting to `perplexity/pplx-embed-v1-4b` and `2560` dimensions.
 - Retrieval stays project-scoped by default, including user-memory results used by session bootstrap.
 - `vibe-rag` exposes bare MCP tool names like `load_session_context`, `index_project`, `search`, `remember`, and `project_status`.
-- When a client's MCP config names the server (e.g. `memory`), those same tools may appear prefixed as `memory_load_session_context`, `memory_index_project`, `memory_search`, `memory_remember`, and `memory_project_status`.
+- When a client's MCP config names the server (e.g. `memory`), those same tools may appear prefixed as `memory_load_session_context`, `memory_index_project`, `memory_search`, `memory_search_memory`, `memory_remember`, and `memory_project_status`.
 
 Optional embed/storage env block:
 
@@ -113,15 +130,22 @@ env = {
   RAG_OR_EMBED_MOD = "perplexity/pplx-embed-v1-4b",
   RAG_OR_EMBED_DIM = "2560",
   RAG_DB = "/path/to/.vibe/index.db",
-  RAG_USER_DB = "/path/to/.vibe/memory.db"
+  RAG_USER_DB = "/path/to/user/memory.db"
 }
 ```
+
+That project-local `env` block is optional and should be treated as an
+override path. The default setup is a single `~/.vibe-rag/config.toml`
+shared across repos.
 
 Helper commands:
 
 ```bash
 vibe-rag doctor
-vibe-rag doctor --fix
+vibe-rag reindex
+vibe-rag reindex --full
+vibe-rag reset-index
+vibe-rag reset-user-memory
 vibe-rag hook-session-start --format codex
 ```
 
@@ -136,6 +160,7 @@ vibe-rag hook-session-start --format codex
 - stale index warnings
 
 `doctor` does not execute repo-configured hook commands. It only inspects the configured command and reports trust state.
+`doctor --fix` is retained for compatibility, but it does not configure providers or repair databases.
 
 If you want to refresh the local index outside the client loop, run:
 
@@ -151,7 +176,14 @@ vibe-rag reindex --full
 vibe-rag reset-index
 ```
 
-If `RAG_OR_API_KEY` is missing, `vibe-rag` reports a provider configuration error.
+If the durable user memory DB becomes unreadable or mismatched, run:
+
+```bash
+vibe-rag reset-user-memory
+```
+
+If no API key resolves from `~/.vibe-rag/config.toml` or env overrides,
+`vibe-rag` reports a provider configuration error.
 
 ## 3A. Per-Client Scaffolding
 
@@ -236,7 +268,8 @@ If code or docs search is empty:
 - or run `vibe-rag reindex`
 - if the index is incompatible, run `vibe-rag reindex --full` or `vibe-rag reset-index`
 - run `vibe-rag doctor`
-- verify `RAG_OR_API_KEY` is set and `RAG_OR_EMBED_DIM` is `2560` when needed
+- verify `~/.vibe-rag/config.toml` has an API key, or that your env override is set
+- verify the active embedding dimensions are `2560` when needed
 
 If `vibe-rag doctor` reports stale state:
 
@@ -247,6 +280,11 @@ If `vibe-rag doctor` reports stale state:
 If `vibe-rag doctor` reports an incompatible index:
 
 - run `vibe-rag reindex --full` or `vibe-rag reset-index`
+- then rerun `vibe-rag doctor`
+
+If `vibe-rag doctor` reports an unreadable user memory DB:
+
+- run `vibe-rag reset-user-memory`
 - then rerun `vibe-rag doctor`
 
 If memory search is empty:

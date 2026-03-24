@@ -5,6 +5,7 @@ Commands:
     status             Show index, memory, and health summary for the current project.
     reindex            Re-index code and docs (incremental by default, --full for rebuild).
     reset-index        Alias for ``reindex --full``.
+    reset-user-memory  Delete and recreate the user memory DB with the active embedding profile.
     doctor             Run diagnostic checks on setup, embedding provider, index, and memory.
     hook-session-start Emit SessionStart hook JSON for a given agent CLI format.
     serve              Launch the MCP stdio server (called by agent CLIs, not directly).
@@ -43,6 +44,16 @@ def _embedding_dimensions() -> int:
         from vibe_rag.indexing.embedder import resolve_embedding_dimensions
 
         return resolve_embedding_dimensions()
+    except RuntimeError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+
+def _embedding_model() -> str:
+    """Resolve the configured embedding model name, or abort with a ClickException."""
+    try:
+        from vibe_rag.indexing.embedder import resolve_embedding_model
+
+        return resolve_embedding_model()
     except RuntimeError as exc:
         raise click.ClickException(str(exc)) from exc
 
@@ -344,8 +355,9 @@ def _db_readable_status(db_path: Path, *, label: str) -> dict:
 def _openrouter_setup_hint() -> str:
     """Return a one-line hint for configuring OpenRouter embedding credentials."""
     return (
-        "export `RAG_OR_API_KEY=...` "
-        "(optional: `RAG_OR_EMBED_MOD=perplexity/pplx-embed-v1-4b`, `RAG_OR_EMBED_DIM=2560`)"
+        "create `~/.vibe-rag/config.toml` with "
+        "`[embedding] api_key = \"...\"` "
+        "(env overrides: `RAG_OR_API_KEY`, `RAG_OR_EMBED_MOD`, `RAG_OR_EMBED_DIM`)"
     )
 
 
@@ -431,22 +443,23 @@ def init(name: str | None):
     click.echo("\n  Supported clients:")
     click.echo("    All four agent CLIs are supported: Claude Code, Codex, Gemini CLI, and Vibe.")
     profile = {
-        "model": os.environ.get("RAG_OR_EMBED_MOD", "perplexity/pplx-embed-v1-4b"),
-        "dimensions": os.environ.get("RAG_OR_EMBED_DIM", "2560"),
+        "model": _embedding_model(),
+        "dimensions": str(_embedding_dimensions()),
     }
     click.echo("\n  Embeddings:")
-    click.echo("    One obvious way: OpenRouter embeddings.")
+    click.echo("    Recommended path: ~/.vibe-rag/config.toml")
     click.echo(f"    Default profile: {profile['model']} @ {profile['dimensions']} dims")
-    click.echo(f"    Next step: {_openrouter_setup_hint()}")
+    click.echo(f"    Setup hint: {_openrouter_setup_hint()}")
     click.echo("\n  Golden path:")
     click.echo(f"    cd {target}")
-    click.echo("    export RAG_OR_API_KEY=...")
+    click.echo("    write ~/.vibe-rag/config.toml once with your OpenRouter key")
+    click.echo("    or use RAG_OR_API_KEY=... as a shell/session override")
     click.echo("    start Claude Code, Codex, Gemini CLI, or Vibe in this repo")
     click.echo('    "load session context for understanding this repo"')
     click.echo('    "index this project"')
     click.echo("\n  Tool naming:")
     click.echo("    The MCP server exposes bare tools like load_session_context, index_project, search, remember, and project_status.")
-    click.echo("    Depending on client config the server may be named memory, so tools appear as memory_load_session_context, memory_index_project, memory_search, and memory_project_status.")
+    click.echo("    Depending on client config the server may be named memory, so tools appear as memory_load_session_context, memory_index_project, memory_search, memory_search_memory, memory_remember, and memory_project_status.")
 
 def _initialize_git_repo(target: Path) -> None:
     """Run ``git init`` in *target* if it is not already a git repo and git is available."""
@@ -515,6 +528,12 @@ def _format_language_stats(lang_stats: dict[str, int], top_n: int = 5) -> str:
     return ", ".join(parts) if parts else "none"
 
 
+def _remove_sqlite_files(db_path: Path) -> None:
+    """Delete a SQLite DB file plus its WAL/SHM sidecars."""
+    for suffix in ("", "-shm", "-wal"):
+        Path(f"{db_path}{suffix}").unlink(missing_ok=True)
+
+
 @main.command()
 def status():
     """Show index, memory, and health summary for the current project."""
@@ -528,49 +547,72 @@ def status():
     click.echo(f"\n  vibe-rag {__version__}")
     click.echo(f"  DB: {db_path}\n")
 
-    if db_path.exists():
-        db = SqliteVecDB(db_path, embedding_dimensions=embedding_dimensions)
-        db.initialize()
-        code_chunks = db.code_chunk_count()
-        doc_chunks = db.doc_count()
-        file_count = _distinct_file_count(db)
-        project_memories = db.memory_count()
-        lang_stats = db.language_stats()
-        freshness = _index_freshness(db)
-        stale_state = _stale_state(db, Path.cwd(), _ensure_project_id())
-        db.close()
-
-        click.echo(f"  Index:     {code_chunks} code chunks, {doc_chunks} doc chunks ({file_count} files)")
-
-        user_memories = 0
-        if user_db_path.exists():
-            user_db = SqliteVecDB(user_db_path, embedding_dimensions=embedding_dimensions)
-            user_db.initialize()
-            user_memories = user_db.memory_count()
-            user_db.close()
-        click.echo(f"  Memory:    {project_memories} project, {user_memories} user")
-        if stale_state.get("is_incompatible"):
-            click.echo("  Health:    incompatible index")
-            first_warning = (stale_state.get("warnings") or [{}])[0]
-            if first_warning.get("detail"):
-                click.echo(f"  Detail:    {first_warning['detail']}")
-            click.echo("  Action:    vibe-rag reindex --full")
-        elif stale_state.get("warnings"):
-            click.echo(f"  Health:    {freshness}")
-            click.echo(f"  Detail:    {stale_state['warnings'][0]['detail']}")
-        else:
-            click.echo(f"  Health:    {freshness}")
-        if lang_stats:
-            click.echo(f"  Languages: {_format_language_stats(lang_stats)}")
-    else:
-        click.echo("  No index yet. Run `vibe-rag reindex` or use `index_project` through your client.")
-        if user_db_path.exists():
+    def _user_memory_summary() -> None:
+        if not user_db_path.exists():
+            click.echo(f"  User:      0 memories ({user_db_path})")
+            return
+        try:
             user_db = SqliteVecDB(user_db_path, embedding_dimensions=embedding_dimensions)
             user_db.initialize()
             click.echo(f"  User:      {user_db.memory_count()} memories ({user_db_path})")
             user_db.close()
-        else:
-            click.echo(f"  User:      0 memories ({user_db_path})")
+        except Exception as exc:
+            click.echo(f"  User:      unreadable ({user_db_path})")
+            click.echo(f"  Detail:    {exc}")
+            click.echo("  Action:    vibe-rag reset-user-memory")
+
+    if db_path.exists():
+        try:
+            db = SqliteVecDB(db_path, embedding_dimensions=embedding_dimensions)
+            db.initialize()
+            code_chunks = db.code_chunk_count()
+            doc_chunks = db.doc_count()
+            file_count = _distinct_file_count(db)
+            project_memories = db.memory_count()
+            lang_stats = db.language_stats()
+            freshness = _index_freshness(db)
+            stale_state = _stale_state(db, Path.cwd(), _ensure_project_id())
+            db.close()
+
+            click.echo(f"  Index:     {code_chunks} code chunks, {doc_chunks} doc chunks ({file_count} files)")
+
+            user_memories = 0
+            user_error = None
+            if user_db_path.exists():
+                try:
+                    user_db = SqliteVecDB(user_db_path, embedding_dimensions=embedding_dimensions)
+                    user_db.initialize()
+                    user_memories = user_db.memory_count()
+                    user_db.close()
+                except Exception as exc:
+                    user_error = exc
+            click.echo(f"  Memory:    {project_memories} project, {user_memories} user")
+            if user_error is not None:
+                click.echo(f"  User:      unreadable ({user_db_path})")
+                click.echo(f"  Detail:    {user_error}")
+                click.echo("  Action:    vibe-rag reset-user-memory")
+            if stale_state.get("is_incompatible"):
+                click.echo("  Health:    incompatible index")
+                first_warning = (stale_state.get("warnings") or [{}])[0]
+                if first_warning.get("detail"):
+                    click.echo(f"  Detail:    {first_warning['detail']}")
+                click.echo("  Action:    vibe-rag reindex --full")
+            elif stale_state.get("warnings"):
+                click.echo(f"  Health:    {freshness}")
+                click.echo(f"  Detail:    {stale_state['warnings'][0]['detail']}")
+            else:
+                click.echo(f"  Health:    {freshness}")
+            if lang_stats:
+                click.echo(f"  Languages: {_format_language_stats(lang_stats)}")
+        except Exception as exc:
+            click.echo(f"  Index:     unreadable ({db_path})")
+            click.echo("  Health:    unreadable index")
+            click.echo(f"  Detail:    {exc}")
+            click.echo("  Action:    vibe-rag reindex --full")
+            _user_memory_summary()
+    else:
+        click.echo("  No index yet. Run `vibe-rag reindex` or use `index_project` through your client.")
+        _user_memory_summary()
     click.echo()
 
 
@@ -618,6 +660,24 @@ def reset_index():
     """Alias for ``reindex --full``. Clears incremental state and rebuilds the full project index."""
     ctx = click.get_current_context()
     ctx.invoke(reindex, paths=(), full=True)
+
+
+@main.command("reset-user-memory")
+def reset_user_memory():
+    """Delete and recreate the user memory DB with the current embedding dimensions."""
+    from vibe_rag.db.sqlite import SqliteVecDB
+
+    user_db_path = Path(os.environ.get("RAG_USER_DB", Path.home() / ".vibe" / "memory.db")).expanduser()
+    embedding_dimensions = _embedding_dimensions()
+
+    click.echo()
+    _remove_sqlite_files(user_db_path)
+    user_db = SqliteVecDB(user_db_path, embedding_dimensions=embedding_dimensions)
+    user_db.initialize()
+    click.echo(f"Reset user memory DB at {user_db_path}")
+    click.echo(f"User memory count: {user_db.memory_count()}")
+    user_db.close()
+    click.echo()
 
 
 def _check_language_coverage(db) -> dict:
@@ -793,7 +853,17 @@ def doctor(fix: bool):
     _emit("Memory health", memory_health["ok"], memory_health.get("warning", False), memory_health["detail"])
     _emit("MCP tools", tool_status["ok"], tool_status.get("warning", False), tool_status["detail"])
 
-    if stale_state.get("warnings"):
+    if not project_db_status["ok"]:
+        _emit(
+            "Index state",
+            False,
+            project_db_status.get("warning", False),
+            "skipped because project DB is not readable",
+        )
+        if not project_db_status.get("warning", False):
+            click.echo("  Suggested fix: vibe-rag reindex --full")
+            click.echo("  Alias:         vibe-rag reset-index")
+    elif stale_state.get("warnings"):
         stale_ok = False
         stale_warning = not stale_state.get("is_incompatible", False)
         label = "Index state"
@@ -809,6 +879,8 @@ def doctor(fix: bool):
     else:
         _emit("Index state", True, False, "no stale or incompatible index warnings")
 
+    if not user_db_status["ok"] and not user_db_status.get("warning", False):
+        click.echo("  Suggested fix: vibe-rag reset-user-memory")
     if not provider_ok:
         click.echo(f"  Suggested next step: {_openrouter_setup_hint()}")
     if fix:

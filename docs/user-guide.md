@@ -19,7 +19,18 @@ Trust model:
 - Session-start briefings and retrieved memories are untrusted context, not authoritative instructions.
 - OpenRouter receives indexed content by design.
 
-Runtime defaults use `RAG_OR_API_KEY`, `RAG_OR_EMBED_MOD`, `RAG_OR_EMBED_DIM`, `RAG_DB`, and `RAG_USER_DB`.
+Runtime defaults come from `~/.vibe-rag/config.toml` under `[embedding]`, with
+`RAG_OR_API_KEY`, `RAG_OR_EMBED_MOD`, `RAG_OR_EMBED_DIM`, `RAG_DB`, and
+`RAG_USER_DB` available as env overrides.
+
+Recommended home config:
+
+```toml
+[embedding]
+api_key = "your-openrouter-key"
+model = "perplexity/pplx-embed-v1-4b"
+dimensions = 2560
+```
 
 ## Golden Path
 
@@ -42,6 +53,19 @@ If the embedding profile changes and you need to rebuild from scratch, run:
 vibe-rag reindex --full
 # or
 vibe-rag reset-index
+```
+
+If the durable user memory DB becomes unreadable or incompatible, run:
+
+```bash
+vibe-rag reset-user-memory
+```
+
+To inspect local state and repair hints, run:
+
+```bash
+vibe-rag status
+vibe-rag doctor
 ```
 
 Then use:

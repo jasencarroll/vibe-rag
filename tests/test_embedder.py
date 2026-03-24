@@ -16,7 +16,6 @@ from vibe_rag.indexing.embedder import (
     resolve_embedding_profile,
 )
 
-
 def test_batch_by_limits_splits_by_item_count():
     assert _batch_by_limits(["a", "b", "c"], max_items=2) == [["a", "b"], ["c"]]
     assert _batch_by_limits(["a", "b", "c"], max_items=3) == [["a", "b", "c"]]
@@ -37,6 +36,15 @@ def test_resolve_embedding_model_reads_env(monkeypatch):
     assert resolve_embedding_model() == "custom/openrouter-model"
 
 
+def test_resolve_embedding_model_reads_user_config(isolate_user_embedding_config, monkeypatch):
+    isolate_user_embedding_config.parent.mkdir(parents=True, exist_ok=True)
+    isolate_user_embedding_config.write_text('[embedding]\nmodel = "custom/openrouter-model"\n')
+    monkeypatch.setattr(embedder, "_load_embedding_env_from_shell", lambda: None)
+    monkeypatch.setattr(embedder, "_SHELL_ENV_ATTEMPTED", False)
+    monkeypatch.delenv("RAG_OR_EMBED_MOD", raising=False)
+    assert resolve_embedding_model() == "custom/openrouter-model"
+
+
 def test_resolve_embedding_dimensions_defaults_to_openrouter_dim(monkeypatch):
     monkeypatch.setattr(embedder, "_load_embedding_env_from_shell", lambda: None)
     monkeypatch.setattr(embedder, "_SHELL_ENV_ATTEMPTED", False)
@@ -49,6 +57,15 @@ def test_resolve_embedding_dimensions_accepts_explicit_integer(monkeypatch):
     monkeypatch.setattr(embedder, "_SHELL_ENV_ATTEMPTED", False)
     monkeypatch.setenv("RAG_OR_EMBED_DIM", "1024")
     assert resolve_embedding_dimensions() == 1024
+
+
+def test_resolve_embedding_dimensions_reads_user_config(isolate_user_embedding_config, monkeypatch):
+    isolate_user_embedding_config.parent.mkdir(parents=True, exist_ok=True)
+    isolate_user_embedding_config.write_text("[embedding]\ndimensions = 1536\n")
+    monkeypatch.setattr(embedder, "_load_embedding_env_from_shell", lambda: None)
+    monkeypatch.setattr(embedder, "_SHELL_ENV_ATTEMPTED", False)
+    monkeypatch.delenv("RAG_OR_EMBED_DIM", raising=False)
+    assert resolve_embedding_dimensions() == 1536
 
 
 def test_resolve_embedding_dimensions_rejects_invalid_integer(monkeypatch):
@@ -109,6 +126,23 @@ def test_embedding_provider_status_not_ready_without_key(monkeypatch):
     assert status["dimensions"] == DEFAULT_OPENROUTER_DIMENSIONS
 
 
+def test_embedding_provider_status_reports_invalid_user_config(isolate_user_embedding_config, monkeypatch):
+    isolate_user_embedding_config.parent.mkdir(parents=True, exist_ok=True)
+    isolate_user_embedding_config.write_text("[embedding]\ndimensions = 'abc'\n")
+    monkeypatch.setattr(embedder, "_load_embedding_env_from_shell", lambda: None)
+    monkeypatch.setattr(embedder, "_SHELL_ENV_ATTEMPTED", False)
+    monkeypatch.delenv("RAG_OR_API_KEY", raising=False)
+    monkeypatch.delenv("RAG_OR_EMBED_MOD", raising=False)
+    monkeypatch.delenv("RAG_OR_EMBED_DIM", raising=False)
+
+    status = embedding_provider_status()
+
+    assert status["ok"] is False
+    assert "[embedding].dimensions must be an integer" in status["detail"]
+    assert status["model"] is None
+    assert status["dimensions"] is None
+
+
 def test_create_embedding_provider_builds_openrouter_client(monkeypatch):
     monkeypatch.setattr(embedder, "_load_embedding_env_from_shell", lambda: None)
     monkeypatch.setattr(embedder, "_SHELL_ENV_ATTEMPTED", False)
@@ -129,6 +163,75 @@ def test_create_embedding_provider_requires_api_key(monkeypatch):
     monkeypatch.delenv("RAG_OR_API_KEY", raising=False)
     with pytest.raises(RuntimeError, match="RAG_OR_API_KEY not set"):
         create_embedding_provider()
+
+
+def test_create_embedding_provider_reads_user_config(isolate_user_embedding_config, monkeypatch):
+    isolate_user_embedding_config.parent.mkdir(parents=True, exist_ok=True)
+    isolate_user_embedding_config.write_text(
+        '[embedding]\napi_key = "user-key"\nmodel = "custom/model"\ndimensions = 512\n'
+    )
+    monkeypatch.setattr(embedder, "_load_embedding_env_from_shell", lambda: None)
+    monkeypatch.setattr(embedder, "_SHELL_ENV_ATTEMPTED", False)
+    monkeypatch.delenv("RAG_OR_API_KEY", raising=False)
+    monkeypatch.delenv("RAG_OR_EMBED_MOD", raising=False)
+    monkeypatch.delenv("RAG_OR_EMBED_DIM", raising=False)
+
+    provider = create_embedding_provider()
+
+    assert isinstance(provider, OpenRouterEmbeddingProvider)
+    assert provider._api_key == "user-key"
+    assert provider._model == "custom/model"
+    assert provider._dimensions == 512
+
+
+def test_create_embedding_provider_combines_env_and_user_config(isolate_user_embedding_config, monkeypatch):
+    isolate_user_embedding_config.parent.mkdir(parents=True, exist_ok=True)
+    isolate_user_embedding_config.write_text('[embedding]\nmodel = "config/model"\ndimensions = 384\n')
+    monkeypatch.setattr(embedder, "_load_embedding_env_from_shell", lambda: None)
+    monkeypatch.setattr(embedder, "_SHELL_ENV_ATTEMPTED", False)
+    monkeypatch.setenv("RAG_OR_API_KEY", "env-key")
+    monkeypatch.delenv("RAG_OR_EMBED_MOD", raising=False)
+    monkeypatch.delenv("RAG_OR_EMBED_DIM", raising=False)
+
+    provider = create_embedding_provider()
+
+    assert provider._api_key == "env-key"
+    assert provider._model == "config/model"
+    assert provider._dimensions == 384
+
+
+def test_create_embedding_provider_prefers_env_over_user_config(isolate_user_embedding_config, monkeypatch):
+    isolate_user_embedding_config.parent.mkdir(parents=True, exist_ok=True)
+    isolate_user_embedding_config.write_text('[embedding]\napi_key = "user-key"\nmodel = "config/model"\n')
+    monkeypatch.setattr(embedder, "_load_embedding_env_from_shell", lambda: None)
+    monkeypatch.setattr(embedder, "_SHELL_ENV_ATTEMPTED", False)
+    monkeypatch.setenv("RAG_OR_API_KEY", "env-key")
+    monkeypatch.setenv("RAG_OR_EMBED_MOD", "env/model")
+
+    provider = create_embedding_provider()
+
+    assert provider._api_key == "env-key"
+    assert provider._model == "env/model"
+
+
+def test_create_embedding_provider_uses_shell_fallback_when_user_config_missing(isolate_user_embedding_config, monkeypatch):
+    monkeypatch.setattr(embedder, "_SHELL_ENV_ATTEMPTED", False)
+    monkeypatch.delenv("RAG_OR_API_KEY", raising=False)
+    monkeypatch.delenv("RAG_OR_EMBED_MOD", raising=False)
+    monkeypatch.delenv("RAG_OR_EMBED_DIM", raising=False)
+
+    def fake_shell_load():
+        monkeypatch.setenv("RAG_OR_API_KEY", "shell-key")
+        monkeypatch.setenv("RAG_OR_EMBED_MOD", "shell/model")
+        monkeypatch.setenv("RAG_OR_EMBED_DIM", "256")
+
+    monkeypatch.setattr(embedder, "_load_embedding_env_from_shell", fake_shell_load)
+
+    provider = create_embedding_provider()
+
+    assert provider._api_key == "shell-key"
+    assert provider._model == "shell/model"
+    assert provider._dimensions == 256
 
 
 def test_openrouter_provider_posts_model_and_dimensions(httpx_mock, monkeypatch):

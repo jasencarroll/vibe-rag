@@ -17,7 +17,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from vibe_rag.server import _ensure_project_id, _get_db, _get_user_db, mcp
+from vibe_rag.server import _ensure_project_id, _get_db, mcp
 from vibe_rag.tools._helpers import (
     _all_memory_payloads as _all_memory_payloads_impl,
     _delete_memory_by_source_db as _delete_memory_by_source_db_impl,
@@ -25,6 +25,7 @@ from vibe_rag.tools._helpers import (
     _failure,
     _index_metadata,
     _memory_cleanup_candidates,
+    _optional_user_db,
     _stale_state,
     _success,
 )
@@ -62,17 +63,19 @@ def _resolve_delete_memory_by_source_db(source_db, memory_id):
     return fn(source_db, memory_id)
 
 
-def _current_project_user_memory_count() -> int:
-    """Return the number of non-superseded user-scoped memories for the current project."""
+def _current_project_user_memory_count() -> tuple[int, dict | None]:
+    """Return ``(count, error_or_none)`` for current-project user memories."""
     current_project_id = _ensure_project_id()
-    user_db = _get_user_db()
+    user_db, error = _optional_user_db()
+    if user_db is None:
+        return 0, error
     return len(
         user_db.list_memories(
             limit=max(user_db.memory_count() + 10, 20),
             include_superseded=False,
             project_id=current_project_id,
         )
-    )
+    ), None
 
 
 def _memory_health_summary() -> dict:
@@ -171,19 +174,22 @@ def project_status(include_memory_health: bool = True) -> dict:
     stale = _stale_state(db, Path.cwd(), _ensure_project_id())
     language_stats = db.language_stats()
     cleanup_candidates = _memory_cleanup_candidates(limit=3)
+    user_memory_count, user_db_error = _current_project_user_memory_count()
 
     status: dict[str, Any] = {
         "counts": {
             "code_chunks": db.code_chunk_count(),
             "doc_chunks": db.doc_count(),
             "project_memories": db.memory_count(),
-            "user_memories": _current_project_user_memory_count(),
+            "user_memories": user_memory_count,
         },
         "metadata": metadata_state,
         "stale": stale,
         "language_stats": language_stats,
         "cleanup_candidates": [_cleanup_candidate_summary(item) for item in cleanup_candidates],
     }
+    if user_db_error:
+        status["warnings"] = [user_db_error]
 
     if include_memory_health:
         status["memory_health"] = _memory_health_summary()

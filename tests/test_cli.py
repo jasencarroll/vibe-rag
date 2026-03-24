@@ -13,7 +13,7 @@ def test_cli_version():
     runner = CliRunner()
     result = runner.invoke(main, ["--version"])
     assert result.exit_code == 0
-    assert "0.1.0" in result.output
+    assert "0.1.1" in result.output
 
 
 def test_cli_help_uses_broader_product_framing():
@@ -52,6 +52,72 @@ def test_cli_status_uses_env_db_paths_and_dimensions(monkeypatch, tmp_path):
     assert result.exit_code == 0
     assert str(project_db) in result.output
     assert str(user_db) in result.output
+
+
+def test_cli_status_handles_unreadable_user_db(monkeypatch, tmp_path):
+    runner = CliRunner()
+    project_db = tmp_path / "project.db"
+    user_db = tmp_path / "user.db"
+    project_db.write_text("")
+    user_db.write_text("")
+
+    class FakeSqliteVecDB:
+        def __init__(self, path, embedding_dimensions=None):
+            self.path = Path(path)
+
+        def initialize(self):
+            if self.path == user_db:
+                raise RuntimeError("Embedding dimension mismatch: db=1024, requested=2560")
+            return None
+
+        def code_chunk_count(self):
+            return 5
+
+        def doc_count(self):
+            return 2
+
+        def memory_count(self):
+            return 3
+
+        def language_stats(self):
+            return {"python": 5}
+
+        def _get_conn(self):
+            class _Conn:
+                def execute(self, _query):
+                    class _Row:
+                        def fetchone(self):
+                            return [3]
+
+                    return _Row()
+
+            return _Conn()
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr("vibe_rag.db.sqlite.SqliteVecDB", FakeSqliteVecDB)
+    monkeypatch.setattr("vibe_rag.cli._index_freshness", lambda db: "fresh")
+    monkeypatch.setattr(
+        "vibe_rag.tools._stale_state",
+        lambda db, root, project_id: {"is_stale": False, "is_incompatible": False, "warnings": []},
+    )
+    monkeypatch.setattr("vibe_rag.server._ensure_project_id", lambda: "demo-project")
+
+    result = runner.invoke(
+        main,
+        ["status"],
+        env={
+            "RAG_DB": str(project_db),
+            "RAG_USER_DB": str(user_db),
+            "RAG_OR_EMBED_DIM": "2560",
+        },
+    )
+
+    assert result.exit_code == 0
+    assert "Memory:    3 project, 0 user" in result.output
+    assert f"User:      unreadable ({user_db})" in result.output
+    assert "Action:    vibe-rag reset-user-memory" in result.output
 
 
 def test_cli_reindex_uses_index_project(monkeypatch):
@@ -144,6 +210,37 @@ def test_cli_reset_index_alias_uses_full_rebuild(monkeypatch):
     assert "Full rebuild requested." in result.output
 
 
+def test_cli_reset_user_memory_recreates_db(tmp_path):
+    from vibe_rag.db.sqlite import SqliteVecDB
+
+    runner = CliRunner()
+    user_db_path = tmp_path / "user.db"
+    user_db_path.write_text("stale")
+    (tmp_path / "user.db-shm").write_text("stale")
+    (tmp_path / "user.db-wal").write_text("stale")
+
+    result = runner.invoke(
+        main,
+        ["reset-user-memory"],
+        env={
+            "RAG_USER_DB": str(user_db_path),
+            "RAG_OR_EMBED_DIM": "2560",
+        },
+    )
+
+    assert result.exit_code == 0
+    assert f"Reset user memory DB at {user_db_path}" in result.output
+    assert "User memory count: 0" in result.output
+    assert user_db_path.exists()
+    assert not (tmp_path / "user.db-shm").exists()
+    assert not (tmp_path / "user.db-wal").exists()
+
+    db = SqliteVecDB(user_db_path, embedding_dimensions=2560)
+    db.initialize()
+    assert db.memory_count() == 0
+    db.close()
+
+
 def _patch_doctor_new_checks(monkeypatch):
     """Patch the new doctor checks (language coverage, memory health, tool count)."""
     class FakeSqliteVecDB:
@@ -185,7 +282,7 @@ def test_cli_doctor_defaults_to_openrouter(monkeypatch):
         "vibe_rag.cli._db_readable_status",
         lambda path, label: {"ok": True, "warning": False, "detail": f"{label} DB readable ({path})"},
     )
-    monkeypatch.setattr("vibe_rag.cli._vibe_cli_status", lambda: {"ok": True, "warning": False, "detail": "/usr/local/bin/vibe (vibe 0.1.0)"})
+    monkeypatch.setattr("vibe_rag.cli._vibe_cli_status", lambda: {"ok": True, "warning": False, "detail": "/usr/local/bin/vibe (vibe 0.1.1)"})
     monkeypatch.setattr("vibe_rag.cli._project_vibe_hook_status", lambda root: {"ok": True, "warning": False, "detail": "SessionStart hook returned context via /usr/local/bin/vibe-rag"})
     monkeypatch.setattr("vibe_rag.server._ensure_project_id", lambda: "demo-project")
     monkeypatch.setattr("vibe_rag.server._get_embedder", lambda: type("Embedder", (), {"embed_text_sync": lambda self, texts: [[0.0] * 2560]})())
@@ -255,7 +352,7 @@ def test_cli_doctor_for_openrouter_without_api_key(monkeypatch):
     assert "[warn] Vibe hooks" in result.output
     assert "[warn] Project DB" in result.output
     assert "Suggested next step:" in result.output
-    assert "export `RAG_OR_API_KEY=...`" in result.output
+    assert "~/.vibe-rag/config.toml" in result.output
 
 
 def test_cli_doctor_warns_for_embedding_provider_warning(monkeypatch):
@@ -282,7 +379,7 @@ def test_cli_doctor_warns_for_embedding_provider_warning(monkeypatch):
         "vibe_rag.cli._db_readable_status",
         lambda path, label: {"ok": True, "warning": False, "detail": f"{label} DB readable ({path})"},
     )
-    monkeypatch.setattr("vibe_rag.cli._vibe_cli_status", lambda: {"ok": True, "warning": False, "detail": "/usr/local/bin/vibe (vibe 0.1.0)"})
+    monkeypatch.setattr("vibe_rag.cli._vibe_cli_status", lambda: {"ok": True, "warning": False, "detail": "/usr/local/bin/vibe (vibe 0.1.1)"})
     monkeypatch.setattr("vibe_rag.cli._project_vibe_hook_status", lambda root: {"ok": True, "warning": False, "detail": "SessionStart hook returned context via /usr/local/bin/vibe-rag"})
     monkeypatch.setattr("vibe_rag.server._ensure_project_id", lambda: "demo-project")
     monkeypatch.setattr("vibe_rag.tools._vibe_trust_status", lambda root: {"status": "ok", "detail": "trusted"})
@@ -296,7 +393,48 @@ def test_cli_doctor_warns_for_embedding_provider_warning(monkeypatch):
     assert result.exit_code == 0
     assert "[warn] Embedding" in result.output
     assert "provider temporarily unavailable" in result.output
-    assert "Automatic provider setup was removed." in result.output
+
+
+def test_cli_doctor_suggests_reset_user_memory_for_unreadable_user_db(monkeypatch):
+    runner = CliRunner()
+    monkeypatch.setattr(
+        "vibe_rag.indexing.embedder.embedding_provider_status",
+        lambda: {
+            "provider": "openrouter",
+            "ok": True,
+            "detail": "ready",
+            "model": "perplexity/pplx-embed-v1-4b",
+            "dimensions": 2560,
+        },
+    )
+    monkeypatch.setattr("vibe_rag.cli._project_mcp_command_status", lambda root: {"ok": True, "detail": "uv -> /usr/bin/uv"})
+    monkeypatch.setattr("vibe_rag.cli._codex_hook_status", lambda root: {"ok": True, "detail": "hook returned session context"})
+
+    def fake_db_status(path, label):
+        if label == "User":
+            return {"ok": False, "warning": False, "detail": f"{label} DB unreadable: Embedding dimension mismatch: db=1024, requested=2560"}
+        return {"ok": True, "warning": False, "detail": f"{label} DB readable ({path})"}
+
+    monkeypatch.setattr("vibe_rag.cli._db_readable_status", fake_db_status)
+    monkeypatch.setattr("vibe_rag.cli._vibe_cli_status", lambda: {"ok": True, "warning": False, "detail": "/usr/local/bin/vibe (vibe 0.1.1)"})
+    monkeypatch.setattr("vibe_rag.cli._project_vibe_hook_status", lambda root: {"ok": True, "warning": False, "detail": "SessionStart hook returned context via /usr/local/bin/vibe-rag"})
+    monkeypatch.setattr("vibe_rag.server._ensure_project_id", lambda: "demo-project")
+    monkeypatch.setattr("vibe_rag.server._get_embedder", lambda: type("Embedder", (), {"embed_text_sync": lambda self, texts: [[0.0] * 2560]})())
+    monkeypatch.setattr("vibe_rag.server._get_db", lambda: object())
+    monkeypatch.setattr("vibe_rag.tools._vibe_trust_status", lambda root: {"status": "ok", "detail": "trusted in ~/.vibe/trusted_folders.toml"})
+    monkeypatch.setattr("vibe_rag.tools._codex_trust_status", lambda root: {"status": "ok", "detail": "trusted in ~/.codex/config.toml"})
+    monkeypatch.setattr(
+        "vibe_rag.tools._stale_state",
+        lambda db, root, project_id: {"is_stale": False, "is_incompatible": False, "warnings": []},
+    )
+    _patch_doctor_new_checks(monkeypatch)
+
+    result = runner.invoke(main, ["doctor"])
+
+    assert result.exit_code == 0
+    assert "[FAIL] User DB" in result.output
+    assert "Suggested fix: vibe-rag reset-user-memory" in result.output
+    assert "Automatic provider setup was removed." not in result.output
 
 
 def test_cli_doctor_does_not_show_provider_fast_path(monkeypatch):
@@ -318,7 +456,7 @@ def test_cli_doctor_does_not_show_provider_fast_path(monkeypatch):
         "vibe_rag.cli._db_readable_status",
         lambda path, label: {"ok": True, "warning": False, "detail": f"{label} DB readable ({path})"},
     )
-    monkeypatch.setattr("vibe_rag.cli._vibe_cli_status", lambda: {"ok": True, "warning": False, "detail": "/usr/local/bin/vibe (vibe 0.1.0)"})
+    monkeypatch.setattr("vibe_rag.cli._vibe_cli_status", lambda: {"ok": True, "warning": False, "detail": "/usr/local/bin/vibe (vibe 0.1.1)"})
     monkeypatch.setattr(
         "vibe_rag.cli._project_vibe_hook_status",
         lambda root: {"ok": False, "warning": True, "detail": "hooks.SessionStart.command is not configured in .vibe/config.toml"},
@@ -438,7 +576,7 @@ def test_cli_doctor_warns_for_configured_hooks_in_untrusted_repo(monkeypatch):
         "vibe_rag.cli._db_readable_status",
         lambda path, label: {"ok": True, "warning": False, "detail": f"{label} DB readable ({path})"},
     )
-    monkeypatch.setattr("vibe_rag.cli._vibe_cli_status", lambda: {"ok": True, "warning": False, "detail": "/usr/local/bin/vibe (vibe 0.1.0)"})
+    monkeypatch.setattr("vibe_rag.cli._vibe_cli_status", lambda: {"ok": True, "warning": False, "detail": "/usr/local/bin/vibe (vibe 0.1.1)"})
     monkeypatch.setattr(
         "vibe_rag.cli._project_vibe_hook_status",
         lambda root: {"ok": True, "warning": False, "detail": "SessionStart hook configured (not executed): /usr/local/bin/vibe-rag"},
@@ -481,7 +619,7 @@ def test_cli_doctor_reports_stale_state(monkeypatch):
         "vibe_rag.cli._db_readable_status",
         lambda path, label: {"ok": True, "warning": False, "detail": f"{label} DB readable ({path})"},
     )
-    monkeypatch.setattr("vibe_rag.cli._vibe_cli_status", lambda: {"ok": True, "warning": False, "detail": "/usr/local/bin/vibe (vibe 0.1.0)"})
+    monkeypatch.setattr("vibe_rag.cli._vibe_cli_status", lambda: {"ok": True, "warning": False, "detail": "/usr/local/bin/vibe (vibe 0.1.1)"})
     monkeypatch.setattr("vibe_rag.cli._project_vibe_hook_status", lambda root: {"ok": True, "warning": False, "detail": "SessionStart hook returned context via /usr/local/bin/vibe-rag"})
     monkeypatch.setattr("vibe_rag.server._ensure_project_id", lambda: "demo-project")
     monkeypatch.setattr("vibe_rag.server._get_embedder", lambda: type("Embedder", (), {"embed_text_sync": lambda self, texts: [[0.0] * 2560]})())
@@ -527,7 +665,7 @@ def test_cli_doctor_reports_incompatible_index_with_full_rebuild_fix(monkeypatch
         "vibe_rag.cli._db_readable_status",
         lambda path, label: {"ok": True, "warning": False, "detail": f"{label} DB readable ({path})"},
     )
-    monkeypatch.setattr("vibe_rag.cli._vibe_cli_status", lambda: {"ok": True, "warning": False, "detail": "/usr/local/bin/vibe (vibe 0.1.0)"})
+    monkeypatch.setattr("vibe_rag.cli._vibe_cli_status", lambda: {"ok": True, "warning": False, "detail": "/usr/local/bin/vibe (vibe 0.1.1)"})
     monkeypatch.setattr("vibe_rag.cli._project_vibe_hook_status", lambda root: {"ok": True, "warning": False, "detail": "SessionStart hook returned context via /usr/local/bin/vibe-rag"})
     monkeypatch.setattr("vibe_rag.server._ensure_project_id", lambda: "demo-project")
     monkeypatch.setattr("vibe_rag.server._get_embedder", lambda: type("Embedder", (), {"embed_text_sync": lambda self, texts: [[0.0] * 2560]})())
@@ -561,14 +699,17 @@ def test_cli_init_prints_openrouter_golden_path(monkeypatch):
         result = runner.invoke(main, ["init", "demo"])
 
     assert result.exit_code == 0
-    assert "One obvious way: OpenRouter embeddings." in result.output
+    assert "Recommended path: ~/.vibe-rag/config.toml" in result.output
     assert "Default profile: perplexity/pplx-embed-v1-4b @ 2560 dims" in result.output
-    assert "Next step: export `RAG_OR_API_KEY=...`" in result.output
+    assert "Setup hint: create `~/.vibe-rag/config.toml`" in result.output
     assert "Golden path:" in result.output
+    assert "write ~/.vibe-rag/config.toml once with your OpenRouter key" in result.output
+    assert "RAG_OR_API_KEY=... as a shell/session override" in result.output
     assert "start Claude Code, Codex, Gemini CLI, or Vibe in this repo" in result.output
     assert '"load session context for understanding this repo"' in result.output
     assert '"index this project"' in result.output
     assert "memory_load_session_context" in result.output
+    assert "memory_search_memory" in result.output
     assert "memory_project_status" in result.output
 
 
@@ -587,7 +728,7 @@ def test_cli_module_entrypoint():
     )
 
     assert result.returncode == 0
-    assert "0.1.0" in result.stdout
+    assert "0.1.1" in result.stdout
 
 
 def test_cli_init_does_not_persist_secrets(monkeypatch):
@@ -642,6 +783,8 @@ def test_cli_init_writes_memory_first_agents_guide():
         assert "memory_search_memory" in agents_text
         assert "memory_project_status" in agents_text
         assert "Use the memory MCP tools first" in agents_text
+        assert "~/.vibe-rag/config.toml" in agents_text
+        assert "vibe-rag reset-user-memory" in agents_text
 
 
 def test_cli_init_installs_codex_and_claude_scaffolding(monkeypatch):

@@ -178,7 +178,7 @@ vibe-rag supports four MCP clients equally: Claude, Codex, Gemini, and Vibe. Whe
 
 - packaged config scaffolding in `src/vibe_rag/template_bundle/` (claude, codex, gemini, vibe)
 - trusted project-local `.vibe/config.toml`
-- `RAG_OR_API_KEY` in the MCP server `env`
+- OpenRouter config resolving from `~/.vibe-rag/config.toml` or `RAG_OR_*` env overrides
 - local user memory at `~/.vibe/memory.db`
 
 ## E2E Verification Pattern
@@ -187,7 +187,7 @@ For a real packaged E2E smoke test:
 
 1. `vibe-rag init demo`
 2. add small `src/` and `docs/` files
-3. add `RAG_OR_API_KEY` to `.vibe/config.toml`
+3. configure OpenRouter credentials in `~/.vibe-rag/config.toml` or via env overrides
 4. trust the repo in the client you are testing
 5. run prompts for:
    - `index this project`

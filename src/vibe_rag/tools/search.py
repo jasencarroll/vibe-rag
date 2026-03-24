@@ -226,7 +226,8 @@ def search_memory(
           ``project_id``, ``memory_kind``, ``tags``, ``created_at``,
           ``updated_at``, ``supersedes``, ``superseded_by``,
           ``match_reason``, ``stale_reasons``, and ``provenance``.
-        * **warnings** -- always ``[]`` (reserved for future use).
+        * **warnings** -- partial-retrieval warnings when one memory
+          store is unavailable but the other still returned results.
 
         ``{"ok": False, "error": {...}}`` on failure (invalid query,
         invalid tags, no memories stored, embedding error, etc.).
@@ -247,7 +248,7 @@ def search_memory(
         since=since,
         until=until,
     )
-    if error:
+    if error and not results:
         return _failure_from_error(
             error,
             query=query,
@@ -262,6 +263,9 @@ def search_memory(
         _memory_payload(result, current_project_id=_ensure_project_id(), query=query)
         for result in results
     ]
+    warnings = []
+    if error:
+        warnings.append(error)
     return _success(
         query=query,
         limit=limit,
@@ -271,5 +275,5 @@ def search_memory(
         until=until,
         result_total=len(payloads),
         results=payloads,
-        warnings=[],
+        warnings=warnings,
     )

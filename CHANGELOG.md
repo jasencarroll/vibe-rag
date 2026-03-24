@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-03-24
+
+### Added
+- `vibe-rag reset-user-memory` for recreating the durable user-memory DB with the active embedding profile
+
+### Changed
+- OpenRouter config can now come from `~/.vibe-rag/config.toml`, with `RAG_OR_*` env vars as overrides
+- README, setup/user/maintainer docs, generated `AGENTS.md`, and CLI setup output now present one consistent home-config and repair story for all four supported clients
+
+### Fixed
+- `doctor` and `status` now point unreadable user-memory DBs at `vibe-rag reset-user-memory` instead of leaving recovery ambiguous
+- Memory search, session bootstrap, and status surfaces now degrade more cleanly when the durable user-memory DB is unreadable
+
 ## [0.1.0] - 2026-03-24
 
 ### Added

@@ -179,19 +179,35 @@ def load_session_context(
     stale_state = pkg._stale_state(project_db, Path.cwd(), payload["project_id"])
     payload["stale"] = stale_state
 
-    user_db = pkg._get_user_db()
-    payload["narrative"] = pkg._session_narrative(user_db, payload["project_id"])
+    user_db = None
+    user_db_error = None
+    try:
+        user_db = pkg._get_user_db()
+    except Exception as exc:
+        user_db_error = pkg._tool_error("user_db_unavailable", f"user memory DB unavailable: {exc}")
+
+    if user_db is not None:
+        payload["narrative"] = pkg._session_narrative(user_db, payload["project_id"])
     payload["hazards"] = pkg._hazard_scan(project_db, Path.cwd(), payload["project_id"], payload["pulse"])
+    if user_db_error:
+        payload["hazards"].append(
+            {
+                "level": "warning",
+                "category": "user_memory_unavailable",
+                "message": user_db_error["message"],
+            }
+        )
+        payload["errors"]["memory"] = user_db_error
     payload["live_decisions"] = pkg._live_decisions(project_db, user_db, payload["project_id"])
 
     memory_error, memory_results = pkg._search_memory_results(task, limit=memory_limit)
-    if memory_error:
-        payload["errors"]["memory"] = memory_error
-    else:
+    if memory_results:
         payload["memories"] = [
             _memory_payload(result, current_project_id=payload["project_id"], query=task)
             for result in memory_results
         ]
+    if memory_error:
+        payload["errors"]["memory"] = memory_error
 
     code_error, code_results = pkg._search_code_results(task, limit=code_limit)
     if code_error:

@@ -253,6 +253,22 @@ def test_search_memory_filters_by_time_window(tmp_db, mock_embedder):
     assert result["results"][0]["summary"] == "retrospective auth note from today"
 
 
+def test_search_memory_returns_project_results_with_warning_when_user_db_unavailable(tmp_db, mock_embedder, monkeypatch):
+    remember("gateway validates tokens in project scope")
+
+    monkeypatch.setattr(
+        "vibe_rag.tools._helpers._get_user_db",
+        lambda: (_ for _ in ()).throw(RuntimeError("Embedding dimension mismatch: db=1024, requested=2560")),
+    )
+
+    result = search_memory("gateway validates tokens")
+
+    assert result["ok"] is True
+    assert result["result_total"] == 1
+    assert result["results"][0]["summary"] == "gateway validates tokens in project scope"
+    assert result["warnings"][0]["code"] == "user_db_unavailable"
+
+
 def test_summarize_thread_returns_counts_and_latest_first(tmp_db, mock_embedder):
     remember(
         content="gateway owns token validation during the auth refactor",
@@ -2045,6 +2061,37 @@ def test_load_session_context_uses_user_memory_results(tmp_db, mock_embedder, tm
     assert "project_id_mismatch" not in result["memories"][0]["stale_reasons"]
 
 
+def test_load_session_context_degrades_when_user_db_unavailable(tmp_db, mock_embedder, monkeypatch, tmp_path: Path):
+    import os
+
+    (tmp_path / "auth.py").write_text("def validate_token(token):\n    return token\n")
+    (tmp_path / "guide.md").write_text("## Auth\n\nToken validation happens in the gateway.\n")
+    remember("gateway validates tokens in project scope")
+
+    old_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        index_project()
+        monkeypatch.setattr(
+            "vibe_rag.tools._get_user_db",
+            lambda: (_ for _ in ()).throw(RuntimeError("Embedding dimension mismatch: db=1024, requested=2560")),
+        )
+        monkeypatch.setattr(
+            "vibe_rag.tools._helpers._get_user_db",
+            lambda: (_ for _ in ()).throw(RuntimeError("Embedding dimension mismatch: db=1024, requested=2560")),
+        )
+        result = load_session_context("continue token validation", memory_limit=3, code_limit=2, docs_limit=1)
+    finally:
+        os.chdir(old_cwd)
+
+    assert result["ok"] is True
+    assert result["errors"]["memory"]["code"] == "user_db_unavailable"
+    assert result["memories"]
+    assert result["code"]
+    assert result["docs"]
+    assert any(hazard["category"] == "user_memory_unavailable" for hazard in result["hazards"])
+
+
 def test_supersede_memory_marks_replacement(tmp_db, mock_embedder):
     import vibe_rag.server as srv
 
@@ -2726,6 +2773,29 @@ def test_project_status_without_memory_health(tmp_db, mock_embedder):
     assert result["ok"] is True
     assert result["status"]["counts"]["code_chunks"] == 0
     assert "memory_health" not in result["status"]
+
+
+def test_project_status_degrades_when_user_db_unavailable(tmp_db, mock_embedder, monkeypatch):
+    remember("project-only note")
+    monkeypatch.setattr(
+        "vibe_rag.tools.status._optional_user_db",
+        lambda: (
+            None,
+            {
+                "code": "user_db_unavailable",
+                "message": "user memory DB unavailable: Embedding dimension mismatch: db=1024, requested=2560",
+                "details": {},
+            },
+        ),
+    )
+
+    result = project_status()
+
+    assert result["ok"] is True
+    assert result["status"]["counts"]["project_memories"] == 1
+    assert result["status"]["counts"]["user_memories"] == 0
+    assert result["status"]["warnings"][0]["code"] == "user_db_unavailable"
+    assert "memory_health" in result["status"]
 
 
 def test_project_status_scopes_user_memory_count_to_current_project(tmp_db, mock_embedder):

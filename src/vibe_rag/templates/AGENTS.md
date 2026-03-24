@@ -25,8 +25,10 @@ OpenRouter is the only supported embedding backend in this generated workflow.
 ## Rules
 
 - Prefer memory tools over `grep` when the user does not know the exact identifier.
+- Put OpenRouter credentials in `~/.vibe-rag/config.toml`; use env overrides only when you need a repo-specific override.
 - Re-index after pulling changes or after large edits.
 - If memory and source disagree, trust the source and re-index.
+- If the durable user memory DB is unreadable, run `vibe-rag reset-user-memory`.
 - Never store secrets.
 
 ## Storage

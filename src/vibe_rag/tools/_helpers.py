@@ -175,6 +175,19 @@ def _failure_from_error(error: ToolError, **details: Any) -> dict:
     return _failure(error["code"], error["message"], **merged)
 
 
+def _user_db_unavailable_error(exc: Exception) -> ToolError:
+    """Build a consistent error payload when the user memory DB cannot be opened."""
+    return _tool_error("user_db_unavailable", f"user memory DB unavailable: {exc}")
+
+
+def _optional_user_db() -> tuple[Any | None, ToolError | None]:
+    """Return the user DB when readable, or ``(None, ToolError)`` when not."""
+    try:
+        return _get_user_db(), None
+    except Exception as exc:
+        return None, _user_db_unavailable_error(exc)
+
+
 def _int_or_none(value: object) -> int | None:
     try:
         return int(value) if value is not None else None
@@ -1293,7 +1306,7 @@ def _cleanup_candidate_score(result: dict, current_project_id: str | None) -> tu
 def _memory_cleanup_candidates(limit: int = 10) -> list[dict]:
     current_project_id = _ensure_project_id()
     project_db = _get_db()
-    user_db = _get_user_db()
+    user_db, _ = _optional_user_db()
     candidates: list[dict] = []
 
     candidates.extend(
@@ -1304,12 +1317,13 @@ def _memory_cleanup_candidates(limit: int = 10) -> list[dict]:
             project_id=current_project_id,
         )
     )
-    candidates.extend(
-        _with_source_db(result, "user")
-        for result in user_db.list_memories(
-            limit=max(limit * 5, 30), include_superseded=True, project_id=current_project_id
+    if user_db is not None:
+        candidates.extend(
+            _with_source_db(result, "user")
+            for result in user_db.list_memories(
+                limit=max(limit * 5, 30), include_superseded=True, project_id=current_project_id
+            )
         )
-    )
 
     ranked = []
     for result in candidates:
@@ -1334,7 +1348,7 @@ def _memory_cleanup_candidates(limit: int = 10) -> list[dict]:
 def _all_memory_payloads() -> list[dict]:
     current_project_id = _ensure_project_id()
     project_db = _get_db()
-    user_db = _get_user_db()
+    user_db, _ = _optional_user_db()
     payloads: list[dict] = []
 
     for result in project_db.list_memories(
@@ -1345,14 +1359,15 @@ def _all_memory_payloads() -> list[dict]:
         payloads.append(
             _memory_payload(_with_source_db(result, "project"), current_project_id=current_project_id)
         )
-    for result in user_db.list_memories(
-        limit=max(user_db.memory_count() + 10, 20),
-        include_superseded=True,
-        project_id=current_project_id,
-    ):
-        payloads.append(
-            _memory_payload(_with_source_db(result, "user"), current_project_id=current_project_id)
-        )
+    if user_db is not None:
+        for result in user_db.list_memories(
+            limit=max(user_db.memory_count() + 10, 20),
+            include_superseded=True,
+            project_id=current_project_id,
+        ):
+            payloads.append(
+                _memory_payload(_with_source_db(result, "user"), current_project_id=current_project_id)
+            )
     return payloads
 
 
@@ -1818,7 +1833,10 @@ def _hazard_scan(project_db, project_root: Path, project_id: str, pulse: dict) -
 def _live_decisions(project_db, user_db, project_id: str, limit: int = 3) -> list[dict]:
     """Return the most recent decision/constraint memories for the session briefing."""
     candidates: list[dict] = []
-    for db, source_db in ((project_db, "project"), (user_db, "user")):
+    db_sources = [(project_db, "project")]
+    if user_db is not None:
+        db_sources.append((user_db, "user"))
+    for db, source_db in db_sources:
         memories = db.list_memories(
             limit=max(db.memory_count() + 10, 20),
             include_superseded=False,
@@ -2252,9 +2270,11 @@ def _search_memory_results(
         return error, []
 
     project_db = _get_db()
-    user_db = _get_user_db()
-    if project_db.memory_count() == 0 and user_db.memory_count() == 0:
-        return _tool_error("no_memories", "no memories stored yet"), []
+    user_db, user_db_error = _optional_user_db()
+    project_memory_count = project_db.memory_count()
+    user_memory_count = user_db.memory_count() if user_db is not None else 0
+    if project_memory_count == 0 and user_memory_count == 0:
+        return user_db_error or _tool_error("no_memories", "no memories stored yet"), []
     try:
         embeddings = _get_embedder().embed_text_sync([query])
     except Exception as e:
@@ -2270,9 +2290,11 @@ def _search_memory_results(
     )
     # Keep search_all_user_projects in-band for compatibility, but remain project-scoped to prevent
     # accidental cross-project leakage when project boundaries are expected.
-    user_results = user_db.search_memories(
-        embeddings[0], limit=max(user_limit, 10), project_id=current_project_id
-    )
+    user_results = []
+    if user_db is not None:
+        user_results = user_db.search_memories(
+            embeddings[0], limit=max(user_limit, 10), project_id=current_project_id
+        )
     results = _merge_memory_results(
         [_with_source_db(result, "project") for result in project_results],
         [_with_source_db(result, "user") for result in user_results],
@@ -2305,7 +2327,7 @@ def _search_memory_results(
         return filter_error, []
 
     results = results[:limit]
-    return None, results
+    return user_db_error, results
 
 
 def _list_thread_memory_results(

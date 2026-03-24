@@ -9,7 +9,11 @@ It is an MCP server for semantic repo search, durable coding memory, and session
 Use the packaged `vibe-rag` binary with OpenRouter-backed embeddings and generated client scaffolding.
 
 ```bash
-export RAG_OR_API_KEY=...
+mkdir -p ~/.vibe-rag
+cat > ~/.vibe-rag/config.toml <<'EOF'
+[embedding]
+api_key = "your-openrouter-key"
+EOF
 uv tool install --python 3.12 vibe-rag
 vibe-rag init my-project
 cd my-project
@@ -43,7 +47,16 @@ It adds:
 - model: `perplexity/pplx-embed-v1-4b`
 - dimensions: `2560`
 
-Set these environment variables for OpenRouter and storage:
+Set embedding defaults once in `~/.vibe-rag/config.toml`:
+
+```toml
+[embedding]
+api_key = "your-openrouter-key"
+model = "perplexity/pplx-embed-v1-4b"
+dimensions = 2560
+```
+
+Environment variables still work and override the home config:
 
 - `RAG_OR_API_KEY` (required)
 - `RAG_OR_EMBED_MOD` (optional, defaults above)
@@ -101,7 +114,7 @@ vibe-rag --version
 Pinned release:
 
 ```bash
-uv tool install vibe-rag@0.1.0
+uv tool install vibe-rag@0.1.1
 ```
 
 CI runs `pytest` and `uv build` on pushes and pull requests, and the `Release` workflow can perform the version bump, changelog promotion, commit, push, and GitHub release creation from `main`.
@@ -117,6 +130,11 @@ uv tool install --python 3.12 vibe-rag
 For the default bootstrap flow:
 
 ```bash
+mkdir -p ~/.vibe-rag
+cat > ~/.vibe-rag/config.toml <<'EOF'
+[embedding]
+api_key = "your-openrouter-key"
+EOF
 vibe-rag init my-project
 cd my-project
 vibe
@@ -152,14 +170,18 @@ env = {
 }
 ```
 
+Project-local `env = { ... }` remains optional. It is useful when you want a
+repo-specific override, but the normal path is a single user-level
+`~/.vibe-rag/config.toml` file plus env overrides when needed.
+
 Helper commands:
 
 ```bash
 vibe-rag doctor
-vibe-rag doctor --fix
 vibe-rag reindex
 vibe-rag reindex --full
 vibe-rag reset-index
+vibe-rag reset-user-memory
 vibe-rag hook-session-start --format codex
 ```
 
@@ -174,6 +196,7 @@ vibe-rag hook-session-start --format codex
 - stale index warnings
 
 `doctor` inspects hook configuration and trust state. It does not execute repo-configured hook commands.
+`doctor --fix` is retained for compatibility, but it does not perform provider setup or DB repair.
 
 When `doctor` reports stale state, run:
 
@@ -187,6 +210,12 @@ When `doctor` reports an incompatible index after an embedding-profile change, r
 vibe-rag reindex --full
 # or
 vibe-rag reset-index
+```
+
+When `doctor` reports an unreadable or incompatible user memory DB, run:
+
+```bash
+vibe-rag reset-user-memory
 ```
 
 Success looks like:
@@ -250,12 +279,10 @@ The natural-language prompts in the golden path are still the intended operator 
 
 ## Embedding and Storage Config
 
+- Recommended config lives in `~/.vibe-rag/config.toml`
 - OpenRouter-only, with `perplexity/pplx-embed-v1-4b` at `2560` dimensions
-- `RAG_OR_API_KEY` (required)
-- `RAG_OR_EMBED_MOD` (optional)
-- `RAG_OR_EMBED_DIM` (optional)
-- `RAG_DB` (optional)
-- `RAG_USER_DB` (optional)
+- Env overrides: `RAG_OR_API_KEY`, `RAG_OR_EMBED_MOD`, `RAG_OR_EMBED_DIM`
+- DB overrides: `RAG_DB`, `RAG_USER_DB`
 
 ## Local Evals
 

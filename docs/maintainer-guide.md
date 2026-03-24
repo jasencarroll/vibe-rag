@@ -167,15 +167,16 @@ When session bootstrap or scaffold behavior changes, verify:
 
 - packaged `vibe-rag`
 - trusted project-local config for each client (`.vibe/config.toml`, `.codex/config.toml`, `.claude/settings.json`, `.gemini/settings.json`)
-- OpenRouter env behavior (`RAG_OR_*`) and DB env behavior
+- home-scoped OpenRouter config in `~/.vibe-rag/config.toml` plus env override behavior (`RAG_OR_*`)
 - local user memory at `~/.vibe/memory.db`
 
 For a real packaged E2E smoke:
 
 1. `vibe-rag init demo`
 2. add small `src/` and `docs/` files
-3. run `vibe-rag doctor`
-4. run `vibe-rag reindex`
-5. confirm the client sees session-start context and retrieval
+3. configure OpenRouter credentials in `~/.vibe-rag/config.toml` or via env overrides
+4. run `vibe-rag doctor`
+5. run `vibe-rag reindex`
+6. confirm the client sees session-start context and retrieval
 
 On macOS, remember that `/tmp/...` may resolve to `/private/tmp/...` for trust checks.

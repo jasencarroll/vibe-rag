@@ -28,8 +28,10 @@ Environment variables
     integer when set.
 
 If none of the above are present in the process environment, the module
-performs a one-shot login-shell fallback (see :func:`_load_embedding_env_from_shell`)
-to inherit them from the user's shell profile.
+looks for ``~/.vibe-rag/config.toml`` under an ``[embedding]`` table, then
+performs a one-shot login-shell fallback (see
+:func:`_load_embedding_env_from_shell`) to inherit them from the user's shell
+profile.
 """
 
 from __future__ import annotations
@@ -38,8 +40,10 @@ import hashlib
 import json
 import os
 import subprocess
+import tomllib
 from collections import OrderedDict
 from collections.abc import Callable
+from pathlib import Path
 from typing import Protocol
 
 import httpx
@@ -90,6 +94,100 @@ EMBEDDING_ENV_KEYS = (
 
 _SHELL_ENV_ATTEMPTED = False
 """Module-level flag ensuring the shell env fallback runs at most once."""
+
+
+def _embedding_user_config_path() -> Path:
+    """Return the home-scoped vibe-rag config path."""
+    return Path.home() / ".vibe-rag" / "config.toml"
+
+
+def _read_embedding_user_config() -> tuple[dict[str, str], str | None]:
+    """Read embedding settings from ``~/.vibe-rag/config.toml``.
+
+    Returns a mapping keyed by :data:`EMBEDDING_ENV_KEYS` plus an optional
+    error string. Missing files or missing ``[embedding]`` tables are treated
+    as absent config, not as errors.
+    """
+    path = _embedding_user_config_path()
+    if not path.exists():
+        return {}, None
+
+    try:
+        data = tomllib.loads(path.read_text())
+    except OSError as exc:
+        return {}, f"{path} unreadable: {exc}"
+    except tomllib.TOMLDecodeError as exc:
+        return {}, f"{path} contains invalid TOML: {exc}"
+
+    embedding = data.get("embedding")
+    if embedding is None:
+        return {}, None
+    if not isinstance(embedding, dict):
+        return {}, f"{path} [embedding] must be a table"
+
+    resolved: dict[str, str] = {}
+
+    api_key = embedding.get("api_key")
+    if api_key is not None:
+        if not isinstance(api_key, str):
+            return {}, f"{path} [embedding].api_key must be a string"
+        if api_key.strip():
+            resolved["RAG_OR_API_KEY"] = api_key.strip()
+
+    model = embedding.get("model")
+    if model is not None:
+        if not isinstance(model, str):
+            return {}, f"{path} [embedding].model must be a string"
+        if model.strip():
+            resolved["RAG_OR_EMBED_MOD"] = model.strip()
+
+    dimensions = embedding.get("dimensions")
+    if dimensions is not None:
+        if isinstance(dimensions, bool):
+            return {}, f"{path} [embedding].dimensions must be a positive integer"
+        if isinstance(dimensions, int):
+            value = dimensions
+        elif isinstance(dimensions, str):
+            raw = dimensions.strip()
+            if not raw:
+                value = 0
+            else:
+                try:
+                    value = int(raw)
+                except ValueError:
+                    return {}, f"{path} [embedding].dimensions must be an integer"
+        else:
+            return {}, f"{path} [embedding].dimensions must be an integer"
+        if value <= 0:
+            return {}, f"{path} [embedding].dimensions must be a positive integer"
+        resolved["RAG_OR_EMBED_DIM"] = str(value)
+
+    return resolved, None
+
+
+def _resolve_embedding_env_value(env_key: str, *, default: str = "") -> str:
+    """Resolve a single embedding setting across env, user config, and shell.
+
+    Resolution order is:
+    1. process environment
+    2. ``~/.vibe-rag/config.toml`` ``[embedding]`` values
+    3. login-shell env fallback
+    4. caller-provided default
+    """
+    raw = os.environ.get(env_key, "").strip()
+    if raw:
+        return raw
+
+    config, error = _read_embedding_user_config()
+    if error:
+        raise RuntimeError(error)
+
+    configured = config.get(env_key, "").strip()
+    if configured:
+        return configured
+
+    _load_embedding_env_from_shell()
+    return os.environ.get(env_key, "").strip() or default
 
 
 def _emit_progress(progress_callback: ProgressCallback | None, **event: object) -> None:
@@ -187,8 +285,7 @@ def resolve_embedding_model() -> str:
     Reads ``RAG_OR_EMBED_MOD`` (after the shell-env fallback), falling back to
     :data:`DEFAULT_OPENROUTER_MODEL` when the variable is unset or blank.
     """
-    _load_embedding_env_from_shell()
-    return os.environ.get("RAG_OR_EMBED_MOD", "").strip() or DEFAULT_OPENROUTER_MODEL
+    return _resolve_embedding_env_value("RAG_OR_EMBED_MOD", default=DEFAULT_OPENROUTER_MODEL)
 
 
 def resolve_embedding_dimensions() -> int:
@@ -200,10 +297,10 @@ def resolve_embedding_dimensions() -> int:
     Raises:
         RuntimeError: If the value is not a valid positive integer.
     """
-    _load_embedding_env_from_shell()
-    raw = os.environ.get("RAG_OR_EMBED_DIM", "").strip()
-    if not raw:
-        return DEFAULT_OPENROUTER_DIMENSIONS
+    raw = _resolve_embedding_env_value(
+        "RAG_OR_EMBED_DIM",
+        default=str(DEFAULT_OPENROUTER_DIMENSIONS),
+    )
     try:
         value = int(raw)
     except ValueError as exc:
@@ -506,8 +603,7 @@ def create_embedding_provider() -> EmbeddingProvider:
     Raises:
         RuntimeError: If ``RAG_OR_API_KEY`` is missing or blank.
     """
-    _load_embedding_env_from_shell()
-    api_key = os.environ.get("RAG_OR_API_KEY", "").strip()
+    api_key = _resolve_embedding_env_value("RAG_OR_API_KEY")
     if not api_key:
         raise RuntimeError("RAG_OR_API_KEY not set")
     return OpenRouterEmbeddingProvider(
@@ -529,22 +625,33 @@ def embedding_provider_status() -> dict[str, object]:
     * ``model`` -- the resolved model name
     * ``dimensions`` -- the resolved embedding dimensions
     """
-    _load_embedding_env_from_shell()
-    api_key = os.environ.get("RAG_OR_API_KEY", "").strip()
+    try:
+        api_key = _resolve_embedding_env_value("RAG_OR_API_KEY")
+        model = resolve_embedding_model()
+        dimensions = resolve_embedding_dimensions()
+    except RuntimeError as exc:
+        return {
+            "provider": DEFAULT_PROVIDER,
+            "ok": False,
+            "detail": str(exc),
+            "model": None,
+            "dimensions": None,
+        }
+
     if not api_key:
         return {
             "provider": DEFAULT_PROVIDER,
             "ok": False,
             "detail": "RAG_OR_API_KEY not set",
-            "model": resolve_embedding_model(),
-            "dimensions": resolve_embedding_dimensions(),
+            "model": model,
+            "dimensions": dimensions,
         }
     return {
         "provider": DEFAULT_PROVIDER,
         "ok": True,
         "detail": "ready",
-        "model": resolve_embedding_model(),
-        "dimensions": resolve_embedding_dimensions(),
+        "model": model,
+        "dimensions": dimensions,
     }
 
 

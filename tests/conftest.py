@@ -239,6 +239,14 @@ _PROVIDER_ENV_VARS = (
 )
 
 
+@pytest.fixture(autouse=True)
+def isolate_user_embedding_config(tmp_path: Path, monkeypatch):
+    """Redirect ``~/.vibe-rag/config.toml`` lookups to a test-local path."""
+    config_path = tmp_path / ".vibe-rag" / "config.toml"
+    monkeypatch.setattr("vibe_rag.indexing.embedder._embedding_user_config_path", lambda: config_path)
+    yield config_path
+
+
 @pytest.fixture
 def clean_env(monkeypatch):
     """Strip all vibe-rag-related environment variables for a pristine env.
