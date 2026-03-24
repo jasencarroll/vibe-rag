@@ -1,10 +1,15 @@
 {
-  "phase": 1,
+  "phase": 2,
   "sprint": 1,
   "step": "recon",
   "defect_log": ".claude/deep-scan-defects.md",
   "sprint_reports": ".claude/deep-scan-reports/",
   "tests_passing": true,
-  "last_commit": "b9fc3b5",
-  "iterations": 1
+  "last_commit": "0e53ea6",
+  "iterations": 1,
+  "completed_phases": [0, 1],
+  "summary": {
+    "phase_0": "9 sprints: prototyping artifacts removed, client parity established across all 4 CLIs",
+    "phase_1": "9 sprints: all core runtime files documented (server, tools package, all 15 MCP tools, _helpers public API)"
+  }
 }
