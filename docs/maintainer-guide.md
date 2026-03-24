@@ -111,7 +111,6 @@ Expected generated files:
 
 - `AGENTS.md`
 - `.vibe/config.toml`
-- `.vibe/skills/semantic-repo-search/SKILL.md`
 
 ### 3. Commit the release
 

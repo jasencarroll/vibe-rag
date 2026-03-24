@@ -11,7 +11,7 @@ uv build                                   # build wheel
 vibe-rag status                            # check index/memory counts
 vibe-rag doctor                            # full health check
 vibe-rag reindex                           # re-index current project
-vibe-rag hook-session-start vibe            # render session-start hook
+vibe-rag hook-session-start --format vibe   # render session-start hook
 ```
 
 ## Architecture
@@ -27,7 +27,7 @@ src/vibe_rag/
   types.py         — shared TypedDict and type definitions
   db/sqlite.py     — SqliteVecDB wrapper (sqlite-vec for vector search)
   indexing/
-    embedder.py    — OpenRouter embedding (default model: pplx-embed-v1-4b)
+    embedder.py    — OpenRouter embedding (default model: perplexity/pplx-embed-v1-4b)
     code_chunker.py — tree-sitter syntax-aware code chunking
   templates/       — AGENTS.md template for `vibe-rag init`
   template_bundle/ — vibe/codex/claude/gemini config scaffolding for `vibe-rag init`

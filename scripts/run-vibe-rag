@@ -1,4 +1,8 @@
 #!/bin/zsh
+# Wrapper script that runs the vibe-rag CLI via uv from the repository root.
+# Used by .mcp.json and .claude/settings.json hooks so the MCP server and
+# session-start hook resolve the correct project directory regardless of the
+# caller's working directory.
 
 set -euo pipefail
 

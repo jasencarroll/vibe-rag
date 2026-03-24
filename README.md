@@ -125,9 +125,6 @@ vibe
 Project config:
 
 ```toml
-active_model = "devstral-2"
-skill_paths = [".vibe/skills"]
-
 [[mcp_servers]]
 name = "memory"
 transport = "stdio"

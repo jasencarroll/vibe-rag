@@ -1,3 +1,25 @@
+"""Run local retrieval quality evaluations against real repositories.
+
+Reads a TOML manifest (default: evals/local_repos.toml) that declares repos and
+retrieval tasks with expected/unexpected results.  For each repo the script
+indexes it into a temporary DB, executes every task query via load_session_context,
+and scores hits against the manifest expectations.  Results are written as
+timestamped JSON artifacts under --artifact-dir for regression tracking.
+
+Sub-commands (via flags):
+    (default)                  Run evals and write a new artifact.
+    --summary / --artifact     Print the latest (or a specific) artifact summary.
+    --trends                   Print cross-artifact trend summary.
+    --persistent-memory        Write a persistent-memory snapshot for a repo.
+    --persistent-memory-summary / --persistent-memory-trends
+                               Summarize or trend persistent-memory snapshots.
+    --release-evidence         Render compact release-evidence from latest artifacts.
+
+Usage:
+    uv run python scripts/run_retrieval_eval.py
+    uv run python scripts/run_retrieval_eval.py --summary
+    uv run python scripts/run_retrieval_eval.py --trends --trend-limit 10
+"""
 from __future__ import annotations
 
 import argparse

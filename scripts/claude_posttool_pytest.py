@@ -1,4 +1,12 @@
 #!/usr/bin/env python3
+"""Claude Code PostToolUse hook that runs the test suite after file edits.
+
+Triggered after Write/Edit/MultiEdit tool calls, this hook runs
+``uv run pytest tests/ -x -q --tb=short`` from the repo root and reports
+whether the suite passed or failed.  Output is trimmed to the last 40
+non-empty lines to keep the feedback concise.  A non-zero exit (code 2)
+signals to Claude Code that the edit may have introduced a regression.
+"""
 from __future__ import annotations
 
 import subprocess

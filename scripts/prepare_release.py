@@ -1,4 +1,14 @@
 #!/usr/bin/env python3
+"""Prepare a vibe-rag release by bumping version strings across the repo.
+
+Updates version in pyproject.toml, src/vibe_rag/__init__.py, tests/test_cli.py,
+README.md, and uv.lock, then promotes the CHANGELOG [Unreleased] section into a
+dated release entry.  Optionally writes extracted release notes to a file for use
+by the GitHub Actions release workflow.
+
+Usage:
+    python scripts/prepare_release.py --version 0.0.31
+"""
 from __future__ import annotations
 
 import argparse

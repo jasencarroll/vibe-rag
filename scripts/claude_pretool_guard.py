@@ -1,4 +1,12 @@
 #!/usr/bin/env python3
+"""Claude Code PreToolUse hook that guards protected files from direct edits.
+
+Reads the hook payload from stdin (JSON with tool_input containing file paths)
+and denies Write/Edit/MultiEdit operations targeting files in PROTECTED_FILES
+(e.g. .env, uv.lock, CHANGELOG.md).  Returns a JSON response with either an
+"allow" or "deny" permission decision.  This prevents accidental overwrites of
+files that should only be modified by dedicated scripts or workflows.
+"""
 from __future__ import annotations
 
 import json

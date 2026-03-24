@@ -92,7 +92,6 @@ find "$tmp_proj/demo" -maxdepth 4 -print | sort
 
 - `AGENTS.md`
 - `.vibe/config.toml`
-- `.vibe/skills/semantic-repo-search/SKILL.md`
 
 ### 3. Commit the release
 

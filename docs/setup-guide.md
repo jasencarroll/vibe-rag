@@ -64,7 +64,6 @@ This writes:
 
 - `AGENTS.md`
 - `.vibe/config.toml`
-- `.vibe/skills/semantic-repo-search/SKILL.md`
 - `.codex/config.toml`
 - `.codex/hooks.json`
 - `.claude/settings.json`
@@ -80,9 +79,6 @@ This is the path that matters for release quality. Generated repos pin the resol
 Each client has its own config format. Here is the Vibe example (`.vibe/config.toml`):
 
 ```toml
-active_model = "devstral-2"
-skill_paths = [".vibe/skills"]
-
 [[mcp_servers]]
 name = "memory"
 transport = "stdio"
@@ -161,7 +157,7 @@ If `RAG_OR_API_KEY` is missing, `vibe-rag` reports a provider configuration erro
 
 `vibe-rag init` writes config for all four clients:
 
-- `.vibe/config.toml` and `.vibe/skills/semantic-repo-search/SKILL.md` (Vibe)
+- `.vibe/config.toml` (Vibe)
 - `.codex/config.toml` and `.codex/hooks.json` (Codex)
 - `.claude/settings.json` (Claude Code)
 - `.gemini/settings.json` and `.mcp.json` (Gemini CLI)
