@@ -210,7 +210,10 @@ def remember_structured(
     source_message_id: str = "",
     metadata: dict | None = None,
 ) -> dict:
-    """Compatibility wrapper -- delegates to the unified ``remember`` tool."""
+    """Deprecated: use ``remember(content='', summary=..., details=..., memory_kind=...)`` instead.
+
+    Backward-compatible wrapper kept for existing tests and internal callers.
+    """
     return remember(
         content="",
         summary=summary,

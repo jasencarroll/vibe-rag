@@ -90,12 +90,18 @@ def search_code(
     language: str | None = None,
     min_score: float = 0.0,
 ) -> dict:
-    """Backward-compatible wrapper around the unified search tool."""
+    """Deprecated: use ``search(query, scope='code')`` instead.
+
+    Backward-compatible wrapper kept for existing tests and internal callers.
+    """
     return search(query, limit=limit, scope="code", language=language, min_score=min_score)
 
 
 def search_docs(query: str, limit: int = 10) -> dict:
-    """Backward-compatible wrapper around the unified search tool."""
+    """Deprecated: use ``search(query, scope='docs')`` instead.
+
+    Backward-compatible wrapper kept for existing tests and internal callers.
+    """
     return search(query, limit=limit, scope="docs")
 
 
