@@ -1,3 +1,30 @@
+"""Memory tools -- MCP tool definitions for storing and editing memories.
+
+This module registers 9 MCP tools via ``@mcp.tool()``:
+
+  - **remember** -- store a durable memory (freeform or structured)
+  - **update_memory** -- edit an existing memory in place
+  - **summarize_thread** -- list and summarize memories attached to a thread
+  - **ingest_daily_note** -- store a daily note (memory_event_v1 convention)
+  - **ingest_pr_outcome** -- store a pull-request outcome (memory_event_v1)
+  - **save_session_memory** -- hook-driven per-turn distillation
+  - **save_session_summary** -- hook-driven rolling session summary
+  - **supersede_memory** -- replace an outdated memory with a corrected version
+  - **forget** -- permanently delete a memory by ID
+
+It also provides **remember_structured**, a deprecated compat wrapper that
+delegates to ``remember()`` and is *not* registered as an MCP tool.
+
+Dual-DB design
+~~~~~~~~~~~~~~
+Memories live in one of two SQLite databases:
+
+- **project** (``scope="project"``) -- stored in ``.vibe/index.db``,
+  scoped to the current project.
+- **user** (``scope="user"``) -- stored in ``~/.vibe/memory.db``,
+  shared across all projects for cross-project knowledge.
+"""
+
 from __future__ import annotations
 
 from datetime import date as calendar_date
@@ -94,7 +121,71 @@ def remember(
     source_message_id: str = "",
     metadata: dict | None = None,
 ) -> dict:
-    """Store a durable memory. Pass just content for quick notes, or summary+details+memory_kind for structured memories. scope='user' for cross-project knowledge, scope='project' (default) for project-specific decisions. Memories are automatically retrieved in future sessions via load_session_context."""
+    """Store a durable memory. Pass just content for quick notes, or summary+details+memory_kind for structured memories. scope='user' for cross-project knowledge, scope='project' (default) for project-specific decisions. Memories are automatically retrieved in future sessions via load_session_context.
+
+    Two storage paths
+    -----------------
+    **Freeform** (content only, summary left empty):
+        A quick note.  The first 200 characters of *content* are used as the
+        auto-generated summary.  ``memory_kind`` is inferred from content
+        keywords when not explicitly provided (falls back to ``"note"``).
+        Metadata is tagged ``capture_kind="freeform"``.
+
+    **Structured** (summary provided, with optional details):
+        A richer memory.  The stored body is ``summary`` alone when *details*
+        is empty, or ``summary + "\\n\\n" + details`` otherwise.
+        ``memory_kind`` defaults to ``"decision"`` when not provided.
+        Metadata is tagged ``capture_kind="manual"``.
+
+    Parameters
+    ----------
+    content : str
+        The main text of the memory.  Required for freeform memories.
+        Ignored when *summary* is provided (structured path), though it
+        is accepted without error.  Max 10 000 characters.
+    summary : str, optional
+        Short headline.  When non-empty the structured path is used.
+        Max 10 000 characters.
+    details : str, optional
+        Extended details appended after the summary in the stored body.
+        Only meaningful on the structured path.  Max 10 000 characters.
+    memory_kind : MemoryKind, optional
+        One of ``"note"``, ``"decision"``, ``"constraint"``, ``"todo"``,
+        ``"summary"``, ``"fact"``.  Defaults to ``"decision"`` on the
+        structured path; auto-inferred on the freeform path (using
+        keyword heuristics: todo > constraint > decision > fact, with
+        ``"note"`` as the fallback when the inferred kind is
+        ``"summary"``).
+    tags : str, optional
+        Comma-separated tag string, e.g. ``"api,auth,v2"``.
+        Max 512 characters total.
+    scope : str, optional
+        ``"project"`` (default) writes to the project DB;
+        ``"user"`` writes to the cross-project user DB.
+    source_session_id : str, optional
+        Opaque session identifier for provenance tracking.
+    source_message_id : str, optional
+        Opaque message identifier for provenance tracking.
+    metadata : dict or None, optional
+        Arbitrary key-value pairs merged into the stored metadata.
+        ``capture_kind`` is set automatically (``"freeform"`` or
+        ``"manual"``) and should not be overridden here.
+
+    Returns
+    -------
+    dict
+        On success: ``{"ok": True, "backend": "<scope>-sqlite",
+        "memory": <MemoryPayload>}`` where ``<MemoryPayload>`` contains
+        at minimum ``id`` (int), ``summary``, ``content``,
+        ``memory_kind``, ``tags`` (list[str]), ``source_db``,
+        ``created_at``, ``updated_at``, ``provenance``, and more.
+
+        On failure: ``{"ok": False, "error": {"code": ..., "message": ...,
+        "details": {...}}}``.  Common error codes:
+        ``"invalid_scope"``, ``"empty_content"``, ``"content_too_large"``,
+        ``"tags_too_long"``, ``"invalid_memory_kind"``,
+        ``"embedding_failed"``.
+    """
     if scope not in ("project", "user"):
         return _failure("invalid_scope", "scope must be 'project' or 'user'")
 
@@ -237,7 +328,62 @@ def update_memory(
     tags: str = "",
     metadata: dict | None = None,
 ) -> dict:
-    """Edit an existing memory in place. Only provided fields are changed. Use 'project:ID' or 'user:ID' prefix to target a specific database, or just the numeric ID (defaults to project)."""
+    """Edit an existing memory in place. Only provided fields are changed. Use 'project:ID' or 'user:ID' prefix to target a specific database, or just the numeric ID (defaults to project).
+
+    This performs a partial update: only non-empty parameters overwrite the
+    corresponding stored field.  Empty-string parameters (the default) leave
+    the existing value untouched.  When any text field (*content*, *summary*,
+    or *details*) is changed, the embedding is automatically recomputed.
+
+    Parameters
+    ----------
+    memory_id : str
+        The memory to update.  Accepts three formats:
+
+        - A bare integer string, e.g. ``"42"`` -- looks up the ID in the
+          project DB first, then the user DB.  Returns an
+          ``"ambiguous_memory_id"`` error if the same numeric ID exists
+          in both databases.
+        - ``"project:<int>"``, e.g. ``"project:42"`` -- targets only the
+          project DB.
+        - ``"user:<int>"``, e.g. ``"user:42"`` -- targets only the user DB.
+    content : str, optional
+        New freeform body text.  When provided, the summary is auto-generated
+        from the first 200 characters unless *summary* is also provided.
+        Max 10 000 characters.
+    summary : str, optional
+        New headline.  When provided alongside *details* (or existing
+        details), the stored body is rebuilt as
+        ``summary + "\\n\\n" + details``.  Max 10 000 characters.
+    details : str, optional
+        New extended details.  Combined with *summary* (new or existing)
+        to form the stored body.  Max 10 000 characters.
+    memory_kind : MemoryKind, optional
+        New kind.  Must be one of ``"note"``, ``"decision"``,
+        ``"constraint"``, ``"todo"``, ``"summary"``, ``"fact"``.
+    tags : str, optional
+        New comma-separated tag string.  Replaces all existing tags.
+        Max 512 characters.
+    metadata : dict or None, optional
+        Key-value pairs **merged** into the existing metadata (existing
+        keys not present in *metadata* are preserved; overlapping keys
+        are overwritten by the new values).
+
+    Returns
+    -------
+    dict
+        On success: ``{"ok": True, "backend": "<scope>-sqlite",
+        "memory": <MemoryPayload>}`` with the updated memory.
+
+        On failure: ``{"ok": False, "error": {"code": ..., ...}}``.
+        Common error codes: ``"invalid_memory_id"`` (not a valid
+        locator string), ``"memory_not_found"`` (no memory with that
+        ID in the resolved DB), ``"ambiguous_memory_id"`` (bare
+        integer exists in both project and user DBs),
+        ``"empty_content"``, ``"content_too_large"``,
+        ``"tags_too_long"``, ``"invalid_memory_kind"``,
+        ``"embedding_failed"``.
+    """
     parsed = _parse_memory_locator(
         memory_id,
         error_code="invalid_memory_id",

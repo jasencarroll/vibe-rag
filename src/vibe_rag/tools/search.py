@@ -1,3 +1,16 @@
+"""Search MCP tools for the vibe-rag server.
+
+Provides two registered ``@mcp.tool()`` endpoints:
+
+* **search** -- unified semantic search across the project code index and
+  documentation index, with configurable scope.
+* **search_memory** -- semantic search over stored memories (project-scoped
+  and user-scoped), with optional tag / thread / date filters.
+
+Two **deprecated** thin wrappers (``search_code``, ``search_docs``) are kept
+for backward compatibility but are *not* registered as MCP tools.
+"""
+
 from __future__ import annotations
 
 import math
@@ -24,7 +37,59 @@ def search(
     language: str | None = None,
     min_score: float = 0.0,
 ) -> dict:
-    """Semantic search across code and documentation. Use scope='code' for implementation details, scope='docs' for guides and specs, or scope='all' (default) for both. Prefer over grep when you know the behavior but not exact symbols or filenames. Results include match_reason explaining why each matched."""
+    """Semantic search across code and documentation.
+
+    Use ``scope='code'`` for implementation details, ``scope='docs'`` for
+    guides and specs, or ``scope='all'`` (default) for both.  Prefer over
+    grep when you know the *behavior* but not exact symbols or filenames.
+
+    Parameters
+    ----------
+    query : str
+        Natural-language search query (max 2 000 chars).
+    limit : int, default 10
+        Maximum number of results to return.
+    scope : ``"all"`` | ``"code"`` | ``"docs"``, default ``"all"``
+        Which index to search.  When ``scope="all"`` the budget is split
+        **60 % code / 40 % docs** (``math.ceil(limit * 0.6)`` code slots),
+        then remaining slots go to docs so the total never exceeds *limit*.
+    language : str or None, default None
+        Filter code results by language (e.g. ``"python"``).  Ignored when
+        ``scope="docs"``.
+    min_score : float, default 0.0
+        Drop code results whose vector similarity is below this threshold.
+        Set to 0 to return all results regardless of score.
+
+    Returns
+    -------
+    dict
+        ``{"ok": True, ...}`` on success with keys:
+
+        * **query**, **limit**, **scope**, **language**, **min_score** --
+          echo of the request parameters.
+        * **result_total** -- number of results returned.
+        * **results** -- list of result dicts.  Each code result contains
+          ``file_path``, ``start_line``, ``end_line``, ``content``,
+          ``language``, ``symbol``, ``rank_score``, ``match_sources``,
+          ``match_reason``, ``provenance``, and ``result_type="code"``.
+          Each doc result contains ``file_path``, ``chunk_index``,
+          ``content``, ``preview``, ``rank_score``, ``match_sources``,
+          ``match_reason``, ``provenance``, and ``result_type="doc"``.
+        * **warnings** -- list of per-scope warning dicts when one scope
+          fails but the other succeeds (only possible when ``scope="all"``).
+
+        ``{"ok": False, "error": {...}}`` on failure (invalid scope, empty
+        index, embedding error, etc.).
+
+    Notes
+    -----
+    Under the hood, each scope performs a **hybrid search**: vector
+    similarity *and* lexical keyword search are run independently, then
+    merged via **Reciprocal Rank Fusion (RRF)** (k=60) and **reranked**
+    with path-intent boosts and term-overlap scoring.  When
+    ``scope="all"``, code and doc results are combined and sorted by
+    ``rank_score`` descending, then trimmed to *limit*.
+    """
     if scope not in ("all", "code", "docs"):
         return _failure("invalid_scope", f"scope must be 'all', 'code', or 'docs', got '{scope}'")
 
@@ -90,17 +155,27 @@ def search_code(
     language: str | None = None,
     min_score: float = 0.0,
 ) -> dict:
-    """Deprecated: use ``search(query, scope='code')`` instead.
+    """Search code index only.
 
-    Backward-compatible wrapper kept for existing tests and internal callers.
+    .. deprecated::
+        Use ``search(query, scope='code')`` instead.
+
+    Thin backward-compatible wrapper kept for existing tests and internal
+    callers.  Not registered as an MCP tool.  Delegates directly to
+    :func:`search` with ``scope="code"``, forwarding all parameters.
     """
     return search(query, limit=limit, scope="code", language=language, min_score=min_score)
 
 
 def search_docs(query: str, limit: int = 10) -> dict:
-    """Deprecated: use ``search(query, scope='docs')`` instead.
+    """Search documentation index only.
 
-    Backward-compatible wrapper kept for existing tests and internal callers.
+    .. deprecated::
+        Use ``search(query, scope='docs')`` instead.
+
+    Thin backward-compatible wrapper kept for existing tests and internal
+    callers.  Not registered as an MCP tool.  Delegates directly to
+    :func:`search` with ``scope="docs"``, forwarding all parameters.
     """
     return search(query, limit=limit, scope="docs")
 
@@ -114,7 +189,56 @@ def search_memory(
     since: str = "",
     until: str = "",
 ) -> dict:
-    """Search stored memories by semantic similarity. Optional filters: tags, thread_id, and ISO 8601 since/until timestamps. Results include match_reason and staleness indicators."""
+    """Search stored memories by semantic similarity.
+
+    Queries both the project-scoped memory DB and the user-scoped memory DB,
+    merges the results, and returns them ranked by a composite score that
+    factors in vector similarity, recency, and structured-memory priority.
+
+    Parameters
+    ----------
+    query : str
+        Natural-language search query (max 2 000 chars).
+    limit : int, default 10
+        Maximum number of results to return.
+    tags : str, default ``""``
+        Comma-separated tag filter.  Only memories whose tags overlap with
+        the requested set are returned.  Pass ``""`` to skip filtering.
+    thread_id : str, default ``""``
+        Restrict results to a specific conversation thread.
+    since : str, default ``""``
+        ISO 8601 datetime lower bound (inclusive).  Only memories created
+        at or after this timestamp are returned.
+    until : str, default ``""``
+        ISO 8601 datetime upper bound (inclusive).  Only memories created
+        at or before this timestamp are returned.
+
+    Returns
+    -------
+    dict
+        ``{"ok": True, ...}`` on success with keys:
+
+        * **query**, **limit**, **tags**, **thread_id**, **since**,
+          **until** -- echo of the request parameters.
+        * **result_total** -- number of results returned.
+        * **results** -- list of memory payload dicts, each containing
+          ``id``, ``source_db``, ``summary``, ``content``, ``score``,
+          ``project_id``, ``memory_kind``, ``tags``, ``created_at``,
+          ``updated_at``, ``supersedes``, ``superseded_by``,
+          ``match_reason``, ``stale_reasons``, and ``provenance``.
+        * **warnings** -- always ``[]`` (reserved for future use).
+
+        ``{"ok": False, "error": {...}}`` on failure (invalid query,
+        invalid tags, no memories stored, embedding error, etc.).
+
+    Notes
+    -----
+    Results include ``match_reason`` explaining why each memory matched
+    and ``stale_reasons`` indicating potential staleness (e.g. superseded,
+    old age).  When tag / thread / date filters are active the internal
+    fetch limit is multiplied by 5 to ensure enough candidates survive
+    post-filtering.
+    """
     error, results = _search_memory_results(
         query,
         limit=limit,
