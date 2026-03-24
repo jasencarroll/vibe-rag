@@ -173,16 +173,14 @@ If PyPI resolution fails immediately after a successful publish workflow, wait a
 uv tool install --upgrade --python 3.12 vibe-rag@X.Y.Z
 ```
 
-## Vibe Integration Notes
+## Client Integration Notes
 
-- Vibe remains a bootstrap/compatibility path, not the strongest validated integration.
-- If docs reference the maintained Vibe install, keep that link current.
-- When changing session bootstrap behavior, verify:
-  - packaged `vibe`
-  - packaged `vibe-rag`
-  - trusted project-local `.vibe/config.toml`
-  - `RAG_OR_API_KEY` in the MCP server `env`
-  - local user memory at `~/.vibe/memory.db`
+vibe-rag supports four MCP clients equally: Claude, Codex, Gemini, and Vibe. When changing session bootstrap behavior, verify all four paths:
+
+- packaged config scaffolding in `src/vibe_rag/template_bundle/` (claude, codex, gemini, vibe)
+- trusted project-local `.vibe/config.toml`
+- `RAG_OR_API_KEY` in the MCP server `env`
+- local user memory at `~/.vibe/memory.db`
 
 ## E2E Verification Pattern
 
