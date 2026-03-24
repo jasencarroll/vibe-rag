@@ -346,6 +346,7 @@ def test_ingest_pr_outcome_rejects_invalid_pr_number(tmp_db, mock_embedder):
 
 
 def test_remember_inferrs_constraint_kind_from_freeform_content(tmp_db, mock_embedder):
+    """Freeform remember auto-classifies as 'constraint' when content contains constraint terms."""
     remember("Only demo tokens are allowed in this smoke-test API.")
 
     result = load_session_context("demo tokens", memory_limit=4, code_limit=0, docs_limit=0)
@@ -1296,6 +1297,7 @@ def test_format_briefing_prefers_manual_memory_over_auto_capture():
 
 
 def test_format_briefing_budget():
+    """Briefing output is truncated to stay within the 6000-char budget."""
     pulse = {
         "branch": "main",
         "is_default_branch": True,
@@ -1960,6 +1962,7 @@ def test_search_memory_does_not_return_other_project_user_results_by_default(tmp
 
 
 def test_search_memory_internal_flag_is_not_global(tmp_db, mock_embedder):
+    """search_all_user_projects=True still excludes other-project memories from results."""
     import vibe_rag.server as srv
     from vibe_rag.tools._helpers import _search_memory_results
 
@@ -2210,6 +2213,7 @@ def test_load_session_context_reports_corrupt_index_metadata(tmp_db, mock_embedd
 
 
 def test_search_memory_prefers_structured_memory_kinds(tmp_db, mock_embedder):
+    """Verifies load_session_context ranks structured kinds above freeform notes."""
     remember("raw note about deployment")
     remember_structured(summary="deployment constraint", memory_kind="constraint")
 
@@ -2222,6 +2226,7 @@ def test_search_memory_prefers_structured_memory_kinds(tmp_db, mock_embedder):
 
 
 def test_load_session_context_downranks_low_signal_auto_memory(tmp_db, mock_embedder):
+    """Low-signal auto memory is skipped at save time; manual memory ranks first in context."""
     saved = save_session_summary(
         task="hi",
         turns=[{"user": "hi", "assistant": "hello"}],
@@ -2308,6 +2313,7 @@ def test_load_session_context_filters_stale_cross_project_memory_when_current_pr
 
 
 def test_load_session_context_retains_auto_memories_when_durable_memory_exists(tmp_db, mock_embedder):
+    """Auto session_rollup memories are surfaced even when no manual memories exist."""
     import vibe_rag.server as srv
 
     srv._get_user_db().remember_structured(
@@ -2540,6 +2546,7 @@ def test_cleanup_duplicate_auto_memories_reports_and_deletes_duplicates(tmp_db, 
 
 
 def test_cleanup_duplicate_auto_memories_only_loads_payloads_once(tmp_db, monkeypatch):
+    """_all_memory_payloads is called exactly once even when apply=True triggers deletes."""
     import vibe_rag.tools as tools_mod
 
     payloads = [
@@ -2887,6 +2894,7 @@ def test_index_project_does_not_persist_new_hashes_when_embedding_fails(
 
 
 def test_search_memory_scores_are_bounded_positive(tmp_db, mock_embedder):
+    """Scores stay positive even when raw vector distance exceeds 1.0."""
     import vibe_rag.server as srv
 
     remember_structured(
@@ -2996,6 +3004,7 @@ def test_remember_scope_project_is_default(tmp_db, mock_embedder):
 
 
 def test_remember_scope_invalid_returns_error(tmp_db, mock_embedder):
+    """WARNING: test body has no assertions -- scope='global' call result is never checked."""
     result = remember("some content", scope="global")
 # --- Unified search tool tests ---
 

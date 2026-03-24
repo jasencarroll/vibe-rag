@@ -34,3 +34,9 @@
 - **Description:** _validate_query handles empty/whitespace task and returns error, but no test exercises this path for load_session_context specifically.
 - **Impact:** Low — validation logic is tested via other tools
 
+### [P1] test_remember_scope_invalid_returns_error has ZERO assertions
+- **File:** tests/test_tools.py:3006
+- **Found:** Phase 4, Sprint 2
+- **Description:** Test calls `remember("some content", scope="global")` but never checks the result. Passes vacuously. Name claims "returns_error" but nothing is verified.
+- **Impact:** Medium — invalid scope may silently succeed without detection
+

@@ -9,13 +9,28 @@ from vibe_rag.db.sqlite import SqliteVecDB
 
 
 class FakeEmbedder:
-    """Returns deterministic fixed-width vectors. No API calls."""
+    """Deterministic embedding stub that replaces the real embedding provider in tests.
+
+    Produces fixed-width 2560-dimensional vectors derived from token hashing
+    (blake2b), so identical inputs always yield identical vectors.  Only the
+    first 64 dimensions carry signal; the remaining 2496 are zero-padded to
+    match the default ``VIBE_RAG_EMBEDDING_DIMENSIONS=2560`` used by the
+    project's SqliteVecDB instances.
+
+    No network calls, no API keys, no Ollama -- safe for CI and offline use.
+    """
 
     _TOKEN_RE = re.compile(r"[a-z0-9_]+")
     _ACTIVE_DIMENSIONS = 64
     _TOTAL_DIMENSIONS = 2560
 
     def _vector(self, text: str) -> list[float]:
+        """Build a deterministic unit vector from *text* via token hashing.
+
+        Each lowercase alphanumeric token is hashed with blake2b to select
+        two slots in the active region, then the active region is L2-normalised
+        and zero-padded to ``_TOTAL_DIMENSIONS``.
+        """
         active = [0.0] * self._ACTIVE_DIMENSIONS
         for token in self._TOKEN_RE.findall(text.lower()):
             digest = hashlib.blake2b(token.encode("utf-8"), digest_size=8).digest()
@@ -28,21 +43,44 @@ class FakeEmbedder:
         return normalized + [0.0] * (self._TOTAL_DIMENSIONS - self._ACTIVE_DIMENSIONS)
 
     def embed_text_sync(self, texts: list[str]) -> list[list[float]]:
+        """Embed a batch of plain-text strings (used for doc chunks and memories)."""
         return [self._vector(text) for text in texts]
 
     def embed_code_sync(self, texts: list[str]) -> list[list[float]]:
+        """Embed a batch of code strings (used for code chunks during indexing)."""
         return [self._vector(text) for text in texts]
 
     def embed_code_query_sync(self, texts: list[str]) -> list[list[float]]:
+        """Embed a code search query.  Delegates to :meth:`embed_code_sync`."""
         return self.embed_code_sync(texts)
 
     def close(self) -> None:
+        """No-op cleanup -- nothing to release in the fake."""
         return None
 
 
 @pytest.fixture
 def tmp_db(tmp_path: Path):
-    """Provides an initialized SqliteVecDB and patches the server global."""
+    """Provide throwaway project and user SQLite-vec databases for one test.
+
+    Sets up:
+        - A fresh ``project.db`` and ``user.db`` inside *tmp_path*, both
+          initialised with 2560-dimensional vector tables (matching the
+          ``FakeEmbedder`` output width).
+        - Patches ``vibe_rag.server._project_db`` and ``._user_db`` so
+          that all tool functions see the test databases instead of the
+          real ones.
+
+    Yields:
+        The project ``SqliteVecDB`` instance (the user DB is accessible
+        indirectly via ``vibe_rag.server._user_db``).
+
+    Cleans up:
+        Restores the original ``_project_db`` and ``_user_db`` globals on
+        the server module and closes both database connections.  The
+        underlying files are removed automatically when *tmp_path* is
+        garbage-collected by pytest.
+    """
     import vibe_rag.server as srv
     project_db = SqliteVecDB(tmp_path / "project.db", embedding_dimensions=2560)
     user_db = SqliteVecDB(tmp_path / "user.db", embedding_dimensions=2560)
@@ -61,7 +99,21 @@ def tmp_db(tmp_path: Path):
 
 @pytest.fixture
 def mock_embedder():
-    """Patches the server's embedder with a fake that needs no API key."""
+    """Replace the server's embedding provider with a deterministic fake.
+
+    Sets up:
+        Instantiates a :class:`FakeEmbedder` and patches
+        ``vibe_rag.server._embedder`` so that all tool functions
+        (indexing, search, remember) use it instead of a real provider.
+        No API keys or Ollama process required.
+
+    Yields:
+        The ``FakeEmbedder`` instance, in case the test needs to inspect
+        or further customise it.
+
+    Cleans up:
+        Restores the original ``_embedder`` reference on the server module.
+    """
     import vibe_rag.server as srv
     fake = FakeEmbedder()
     old_embedder = srv._embedder
@@ -81,12 +133,29 @@ _SAMPLE_MD_GUIDE = "## Deployment\n\nDeploy to Railway with docker.\n"
 
 @pytest.fixture
 def indexed_project(tmp_db, mock_embedder, tmp_path: Path):
-    """Create a temp project with .py and .md files, index it, and yield the path.
+    """Provide a fully indexed mini-project with code and doc files.
 
-    The fixture handles chdir into the project directory and restores the
-    original working directory on teardown.  After yielding, both code and
-    doc indexes are populated so search_code / search_docs / load_session_context
-    can be called immediately.
+    Sets up:
+        - Writes three sample files into *tmp_path*:
+          ``auth.py`` (authentication stub), ``billing.py`` (invoice stub),
+          and ``guide.md`` (deployment guide).
+        - Changes the working directory to *tmp_path* so that
+          ``index_project()`` discovers the files correctly.
+        - Calls ``index_project()`` to populate the code and doc indexes
+          in the test database (provided by ``tmp_db`` and ``mock_embedder``).
+
+    Yields:
+        The *tmp_path* ``Path`` pointing to the project root.  At this
+        point both the code index and the doc index are populated, so
+        ``search_code``, ``search_docs``, ``search``, and
+        ``load_session_context`` can be called immediately.
+
+    Cleans up:
+        Restores the original working directory.  Database and file
+        cleanup is handled by the ``tmp_db`` and ``tmp_path`` fixtures.
+
+    Depends on:
+        ``tmp_db``, ``mock_embedder`` (via fixture arguments).
     """
     from vibe_rag.tools import index_project
 
@@ -106,11 +175,27 @@ def indexed_project(tmp_db, mock_embedder, tmp_path: Path):
 
 @pytest.fixture
 def populated_memory(tmp_db, mock_embedder):
-    """Store a few memories of different kinds and yield their IDs.
+    """Seed the memory database with three memories of different kinds.
 
-    Returns a dict mapping memory kind to the ID returned by
-    ``remember_structured``, e.g. ``{"decision": 1, "fact": 2, "note": 3}``.
-    Useful for search_memory / forget / update_memory tests.
+    Sets up:
+        Calls ``remember_structured`` three times to insert:
+
+        - **decision** -- "gateway owns auth tokens" (auth-token routing).
+        - **fact** -- "max retry count is 5" (retry-policy detail).
+        - **note** -- "need to refactor billing module" (tech-debt note).
+
+    Yields:
+        ``dict[str, int]`` mapping each memory kind to its database ID,
+        e.g. ``{"decision": 1, "fact": 2, "note": 3}``.  These IDs can
+        be used with ``search_memory``, ``forget``, ``update_memory``,
+        and ``supersede_memory`` in the consuming test.
+
+    Cleans up:
+        Nothing explicit -- the in-memory databases created by ``tmp_db``
+        are closed and deleted when that fixture tears down.
+
+    Depends on:
+        ``tmp_db``, ``mock_embedder`` (via fixture arguments).
     """
     from vibe_rag.tools import remember_structured
 
@@ -156,11 +241,26 @@ _PROVIDER_ENV_VARS = (
 
 @pytest.fixture
 def clean_env(monkeypatch):
-    """Remove embedding and persistence env vars for a pristine environment.
+    """Strip all vibe-rag-related environment variables for a pristine env.
 
-    Useful for embedder / provider-selection tests that need deterministic
-    environment state.  Each variable is deleted via ``monkeypatch.delenv``
-    so the original values are automatically restored on teardown.
+    Sets up:
+        Deletes every variable listed in ``_PROVIDER_ENV_VARS`` (DB paths,
+        API keys, embedding model/dimension overrides) via
+        ``monkeypatch.delenv``.  This guarantees that provider-selection
+        logic and DB-path resolution see a blank slate, regardless of
+        what the developer's shell exports.
+
+    Yields:
+        Nothing -- the fixture's value is the side-effect of clearing the
+        environment.  Tests can then ``monkeypatch.setenv`` individual
+        variables to exercise specific configurations.
+
+    Cleans up:
+        ``monkeypatch`` automatically restores every deleted variable to
+        its original value (or absence) when the test finishes.
+
+    Depends on:
+        ``monkeypatch`` (pytest built-in).
     """
     for var in _PROVIDER_ENV_VARS:
         monkeypatch.delenv(var, raising=False)
