@@ -1,3 +1,11 @@
+"""Shared helper functions for MCP tool implementations.
+
+Provides the building blocks that the tool submodules (search, memory, session,
+status, index) import: result formatting, validation, search pipelines, ranking,
+briefing assembly, and project-state introspection.  Constants for query/memory
+limits and memory-classification term sets are also defined here.
+"""
+
 from __future__ import annotations
 
 import hashlib
@@ -147,6 +155,7 @@ logger = logging.getLogger(__name__)
 
 
 def _tool_error(code: str, message: str, **details: Any) -> ToolError:
+    """Build a structured ``ToolError`` dict with a machine-readable code and human message."""
     return {
         "code": code,
         "message": message,
@@ -155,14 +164,17 @@ def _tool_error(code: str, message: str, **details: Any) -> ToolError:
 
 
 def _failure(code: str, message: str, **details: Any) -> dict:
+    """Return a standard ``{"ok": False, "error": ...}`` envelope for tool failures."""
     return {"ok": False, "error": _tool_error(code, message, **details)}
 
 
 def _success(**payload: Any) -> dict:
+    """Return a standard ``{"ok": True, ...}`` envelope for successful tool responses."""
     return {"ok": True, **payload}
 
 
 def _failure_from_error(error: ToolError, **details: Any) -> dict:
+    """Convert an existing ``ToolError`` into a failure envelope, merging extra details."""
     merged = dict(error.get("details") or {})
     merged.update(details)
     return _failure(error["code"], error["message"], **merged)
@@ -207,6 +219,7 @@ def _content_hash(content: str) -> str:
 
 
 def _validate_query(query: str) -> ToolError | None:
+    """Return a ``ToolError`` if *query* is empty or exceeds ``MAX_QUERY_LENGTH``, else ``None``."""
     if not query.strip():
         return _tool_error("empty_query", "query is empty")
     if len(query) > MAX_QUERY_LENGTH:
@@ -215,6 +228,7 @@ def _validate_query(query: str) -> ToolError | None:
 
 
 def _validate_memory_content(content: str) -> ToolError | None:
+    """Return a ``ToolError`` if *content* is empty or exceeds ``MAX_MEMORY_LENGTH``, else ``None``."""
     if not content.strip():
         return _tool_error("empty_content", "content is empty")
     if len(content) > MAX_MEMORY_LENGTH:
@@ -1016,6 +1030,7 @@ def _path_query_term_boost(query: str, file_path: str) -> float:
 
 
 def _rerank_results(query: str, results: list[dict], *, content_key: str = "content") -> list[dict]:
+    """Re-sort *results* by combining rank score with path/content term-overlap boosts."""
     for item in results:
         file_path = str(item.get("file_path") or "")
         path_boost = _path_query_term_boost(query, file_path)
@@ -1035,6 +1050,7 @@ def _rerank_results(query: str, results: list[dict], *, content_key: str = "cont
 
 
 def _rerank_doc_results(query: str, results: list[dict]) -> list[dict]:
+    """Re-sort doc *results* with intent-aware bonuses (e.g. CLAUDE.md priority, bootstrap/release heuristics)."""
     terms = _query_terms(query)
     intents = _query_intents(query)
 
@@ -1081,6 +1097,12 @@ def _rerank_doc_results(query: str, results: list[dict]) -> list[dict]:
 
 
 def _rrf_merge(*result_sets: tuple[str, list[dict]], k: int = 60, limit: int) -> list[dict]:
+    """Merge multiple ranked result lists using Reciprocal Rank Fusion.
+
+    Each *result_set* is a ``(source_name, results)`` pair.  The fused
+    ``rank_score`` for each unique result is the sum of ``1/(k + rank)``
+    across all lists it appears in.  Returns the top *limit* results.
+    """
     merged: dict[tuple[str, int | str], dict] = {}
     for source_name, results in result_sets:
         for rank, item in enumerate(results, start=1):
@@ -1133,6 +1155,7 @@ def _match_reason(query: str, content: str, score: float) -> str:
 
 
 def _code_result_payload(result: RankedCodeResult, query: str = "") -> CodeSearchResult:
+    """Convert a ranked DB row into a ``CodeSearchResult`` dict with provenance and match reason."""
     provenance: SearchProvenance = {
         "source": "project-index",
         "indexed_at": result.get("indexed_at"),
@@ -1155,6 +1178,7 @@ def _code_result_payload(result: RankedCodeResult, query: str = "") -> CodeSearc
 
 
 def _doc_result_payload(result: RankedDocResult, query: str = "") -> DocSearchResult:
+    """Convert a ranked DB row into a ``DocSearchResult`` dict with provenance and match reason."""
     content = str(result["content"])
     provenance: SearchProvenance = {
         "source": "project-index",
@@ -1175,6 +1199,7 @@ def _doc_result_payload(result: RankedDocResult, query: str = "") -> DocSearchRe
 
 
 def _memory_payload(result: MemoryRow, current_project_id: str | None = None, query: str = "") -> MemoryPayload:
+    """Convert a ``MemoryRow`` into a ``MemoryPayload`` with staleness, provenance, and thread fields."""
     metadata = result.get("metadata") or {}
     capture_kind = str(metadata.get("capture_kind") or "").strip() or "unknown"
     superseded_by = _int_or_none(result.get("superseded_by"))
@@ -1470,6 +1495,7 @@ def _git_command(args: list[str], cwd: Path, timeout: float = 2.0) -> str | None
 
 
 def _project_pulse(project_root: Path) -> dict:
+    """Snapshot the project's git state: branch, workspace status, recent commits, and ahead/behind counts."""
     branch = _git_command(["branch", "--show-current"], project_root)
     if branch is None:
         return {
@@ -1686,6 +1712,7 @@ def _current_file_counts(project_root: Path) -> tuple[int, int]:
 
 
 def _session_narrative(user_db, project_id: str, limit: int = 3) -> str | None:
+    """Build a short prose recap of the most recent session memories for the load_session_context briefing."""
     all_memories = user_db.list_memories(
         limit=max(user_db.memory_count(include_superseded=True) + 10, 20),
         include_superseded=False,
@@ -1739,6 +1766,7 @@ def _session_narrative(user_db, project_id: str, limit: int = 3) -> str | None:
 
 
 def _hazard_scan(project_db, project_root: Path, project_id: str, pulse: dict) -> list[dict]:
+    """Detect actionable hazards (missing index, stale index, provider down, etc.) for the session briefing."""
     hazards: list[dict] = []
 
     if project_db.code_chunk_count() == 0:
@@ -1793,6 +1821,7 @@ def _hazard_scan(project_db, project_root: Path, project_id: str, pulse: dict) -
 
 
 def _live_decisions(project_db, user_db, project_id: str, limit: int = 3) -> list[dict]:
+    """Return the most recent decision/constraint memories for the session briefing."""
     candidates: list[dict] = []
     for db, source_db in ((project_db, "project"), (user_db, "user")):
         memories = db.list_memories(
@@ -1910,6 +1939,12 @@ def _format_briefing(
     task_results: dict,
     project_id: str,
 ) -> str:
+    """Assemble the full session-start briefing string from its component sections.
+
+    Combines the git-state header, session narrative, hazard warnings,
+    live decisions, and task-context search results into a single
+    string capped at ``BRIEFING_CHAR_BUDGET`` characters.
+    """
     remaining = BRIEFING_CHAR_BUDGET
     sections: list[str] = []
 
@@ -1948,6 +1983,11 @@ def _format_briefing(
 
 
 def _stale_state(db, project_root: Path, project_id: str) -> dict:
+    """Check whether the project index is stale or incompatible with the current embedding profile.
+
+    Returns a dict with ``is_stale``, ``is_incompatible``, ``warnings``,
+    ``metadata``, and the current/indexed embedding profiles.
+    """
     metadata_state = _index_metadata(db)
     metadata = metadata_state.get("metadata")
     metadata_error = metadata_state.get("error")
@@ -2107,6 +2147,11 @@ def _search_code_results(
     language: str | None = None,
     min_score: float = 0.0,
 ) -> tuple[ToolError | None, list[dict]]:
+    """Run a semantic+lexical code search, returning ``(error_or_None, ranked_results)``.
+
+    Combines vector search with lexical search via RRF merge, then re-ranks.
+    Returns a ``ToolError`` as the first element on validation or embedding failures.
+    """
     error = _validate_query(query)
     if error:
         return error, []
@@ -2157,6 +2202,7 @@ def _search_code_results(
 
 
 def _search_docs_results(query: str, limit: int = 10) -> tuple[ToolError | None, list[dict]]:
+    """Run a semantic+lexical doc search, returning ``(error_or_None, ranked_results)``."""
     error = _validate_query(query)
     if error:
         return error, []
@@ -2198,6 +2244,11 @@ def _search_memory_results(
     *,
     search_all_user_projects: bool = False,
 ) -> tuple[ToolError | None, list[dict]]:
+    """Run a semantic memory search across project and user DBs, returning ``(error_or_None, results)``.
+
+    Merges results from both databases, then applies optional post-filters
+    (tags, thread_id, date range).
+    """
     error = _validate_query(query)
     if error:
         return error, []

@@ -1,3 +1,17 @@
+"""MCP tools for project status dashboard and memory maintenance.
+
+Provides two ``@mcp.tool()`` endpoints:
+
+* **project_status** -- returns a comprehensive dashboard with index counts,
+  staleness info, language breakdown, and optional memory-health diagnostics.
+* **cleanup_duplicate_auto_memories** -- identifies (and optionally deletes)
+  duplicate auto-captured session memories using a normalised-key deduplication
+  strategy.
+
+Internal helpers build the memory-health summary and resolve monkeypatched
+references for testability.
+"""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -18,6 +32,12 @@ from vibe_rag.tools._helpers import (
 
 
 def _cleanup_candidate_summary(candidate: dict) -> dict:
+    """Distil a raw cleanup-candidate dict into a compact display summary.
+
+    Returns a dict with keys: ``id``, ``source_db``, ``summary``,
+    ``memory_kind``, ``cleanup_reasons`` (list[str]),
+    ``cleanup_priority`` (int), ``is_stale`` (bool), ``is_superseded`` (bool).
+    """
     return {
         "id": candidate.get("id"),
         "source_db": candidate.get("source_db"),
@@ -44,6 +64,7 @@ def _resolve_delete_memory_by_source_db(source_db, memory_id):
 
 
 def _current_project_user_memory_count() -> int:
+    """Return the number of non-superseded user-scoped memories for the current project."""
     current_project_id = _ensure_project_id()
     user_db = _get_user_db()
     return len(
@@ -111,7 +132,41 @@ def _memory_health_summary() -> dict:
 
 @mcp.tool()
 def project_status(include_memory_health: bool = True) -> dict:
-    """Dashboard view: index counts, staleness, language breakdown, and memory health including quality metrics, cleanup candidates, and recommendations. Use include_memory_health=False for a lighter response."""
+    """Dashboard view: index counts, staleness, language breakdown, and memory health including quality metrics, cleanup candidates, and recommendations. Use include_memory_health=False for a lighter response.
+
+    Parameters
+    ----------
+    include_memory_health : bool, default True
+        When *True* the response includes a ``memory_health`` section with
+        stale/superseded/duplicate counts, top cleanup candidates, capture-kind
+        and source-type breakdowns, and recommended maintenance actions.
+        Set to *False* for a lighter, index-only response.
+
+    Returns
+    -------
+    dict
+        A ``_success()`` envelope (``ok=True``, ``project_id``) containing a
+        ``status`` dict with the following top-level keys:
+
+        * **counts** -- ``code_chunks``, ``doc_chunks``, ``project_memories``,
+          ``user_memories`` (int counts for each store).
+        * **metadata** -- index metadata (embedding provider, model, last
+          index timestamp) via ``_index_metadata()``.
+        * **stale** -- staleness indicators for the project index (files
+          changed since last index, current git HEAD).
+        * **language_stats** -- per-language chunk counts from the project DB.
+        * **cleanup_candidates** -- up to 3 memory cleanup candidates with
+          reasons, priority, and stale/superseded flags.
+        * **memory_health** *(only when include_memory_health=True)* --
+          nested dict with sub-keys:
+
+          - ``summary`` -- ``total_memories``, ``stale_memories``,
+            ``superseded_memories``, ``duplicate_auto_memory_groups``.
+          - ``top_cleanup_candidates`` -- up to 3 candidate summaries.
+          - ``recommended_actions`` -- up to 3 human-readable suggestions.
+          - ``by_capture_kind`` -- dict mapping capture kind to count.
+          - ``by_source_type`` -- dict mapping source type to count.
+    """
     db = _get_db()
     metadata_state = _index_metadata(db)
     stale = _stale_state(db, Path.cwd(), _ensure_project_id())
@@ -142,7 +197,53 @@ def project_status(include_memory_health: bool = True) -> dict:
 
 @mcp.tool()
 def cleanup_duplicate_auto_memories(limit: int = 20, apply: bool = False) -> dict:
-    """Find and optionally prune duplicate auto-captured session memories. apply=False (default) to preview, apply=True to delete duplicates keeping newest."""
+    """Find and optionally prune duplicate auto-captured session memories. apply=False (default) to preview, apply=True to delete duplicates keeping newest.
+
+    Deduplication criteria
+    ----------------------
+    Two auto-captured memories are considered duplicates when they share the
+    same normalised key -- a tuple of ``(project_id, capture_kind,
+    lowercased single-line summary, lowercased single-line content)``.  Only
+    memories whose ``capture_kind`` is ``session_rollup`` or
+    ``session_distillation`` are eligible.  Within each duplicate group the
+    newest memory (by ``updated_at`` then ``id``) is kept; older copies are
+    candidates for deletion.
+
+    Parameters
+    ----------
+    limit : int, default 20
+        Maximum number of duplicate groups to process.  Must be >= 1.
+    apply : bool, default False
+        When *False* (default) the tool returns a **preview** of duplicate
+        groups without deleting anything.  Set to *True* to actually delete
+        the older duplicates, keeping only the newest memory per group.
+
+    Returns
+    -------
+    dict
+        Top-level keys:
+
+        * **ok** (bool) -- always ``True`` on success.
+        * **project_id** (str) -- current project identifier.
+        * **apply** (bool) -- echo of the ``apply`` parameter.
+        * **group_total** (int) -- number of duplicate groups found (up to
+          *limit*).
+        * **deleted_total** (int) -- total memories actually deleted (0 when
+          ``apply=False``).
+        * **groups** (list[dict]) -- one entry per duplicate group, each
+          containing:
+
+          - ``count`` (int) -- total memories in the group.
+          - ``capture_kind`` (str) -- shared capture kind.
+          - ``project_id`` (str) -- shared project id.
+          - ``summary`` (str) -- shared summary text.
+          - ``memory_ids`` (list[int]) -- all memory ids in the group,
+            ordered by ``updated_at``.
+          - ``keep_id`` (int) -- the newest memory id that is retained.
+          - ``delete_ids`` (list[int]) -- ids that would be (or were) deleted.
+          - ``deleted_ids`` (list[int]) -- ids that were actually deleted
+            (empty when ``apply=False``).
+    """
     if limit < 1:
         return _failure("invalid_limit", "limit must be at least 1", limit=limit)
 
