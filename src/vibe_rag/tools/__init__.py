@@ -1,8 +1,24 @@
-"""tools package -- split from the former monolithic tools.py.
+"""tools package -- MCP tool definitions split across submodules.
 
-Importing this package registers all @mcp.tool() decorators (submodules are
-imported below) and re-exports every public *and* private name so that
-``from vibe_rag.tools import X`` keeps working for all existing call-sites.
+Importing this package has two side-effects:
+
+1. **Registers all 15 @mcp.tool() decorators** by importing each submodule
+   (index, memory, search, session, status).
+2. **Re-exports a curated set of public and private names** so that existing
+   call-sites using ``from vibe_rag.tools import X`` continue to work --
+   including deprecated compat wrappers (``search_code``, ``search_docs``,
+   ``remember_structured``) that are *not* registered as MCP tools but are
+   kept importable for tests and internal use.
+
+Submodule tool breakdown (15 total):
+  index.py   (1): index_project
+  memory.py  (9): remember, update_memory, summarize_thread,
+                   ingest_daily_note, ingest_pr_outcome,
+                   save_session_memory, save_session_summary,
+                   supersede_memory, forget
+  search.py  (2): search, search_memory
+  session.py (1): load_session_context
+  status.py  (2): project_status, cleanup_duplicate_auto_memories
 """
 
 from __future__ import annotations
@@ -16,13 +32,12 @@ from vibe_rag.tools import status as _mod_status  # noqa: F401
 
 # -- re-export MCP tool functions -------------------------------------------
 from vibe_rag.tools.index import index_project, _index_project_impl  # noqa: F401
-from vibe_rag.tools.search import search, search_code, search_docs, search_memory  # noqa: F401
+from vibe_rag.tools.search import search, search_memory  # noqa: F401
 from vibe_rag.tools.memory import (  # noqa: F401
     forget,
     ingest_daily_note,
     ingest_pr_outcome,
     remember,
-    remember_structured,
     save_session_memory,
     save_session_summary,
     summarize_thread,
@@ -35,6 +50,11 @@ from vibe_rag.tools.status import (  # noqa: F401
     project_status,
     _memory_health_summary,
 )
+
+# -- re-export deprecated compat wrappers (NOT @mcp.tool()-registered) ------
+# Kept importable for backward-compatible tests and internal callers.
+from vibe_rag.tools.search import search_code, search_docs  # noqa: F401
+from vibe_rag.tools.memory import remember_structured  # noqa: F401
 
 # -- re-export helpers, constants, and private names -------------------------
 # Tests and internal callers import these from ``vibe_rag.tools``.
