@@ -515,7 +515,48 @@ def summarize_thread(
     until: str = "",
     include_superseded: bool = False,
 ) -> dict:
-    """List and summarize memories attached to a thread. Memories can carry `metadata.thread_id` / `metadata.thread_title` or `metadata.thread = {id, title}`."""
+    """List and summarize memories attached to a thread. Memories can carry ``metadata.thread_id`` / ``metadata.thread_title`` or ``metadata.thread = {id, title}``.
+
+    Parameters
+    ----------
+    thread_id : str
+        Required.  The thread identifier to query (e.g. ``"daily:2025-01-15"``
+        or ``"pr:42"``).  Whitespace is stripped.
+    limit : int, optional
+        Maximum number of memories to return.  Default ``20``.
+    scope : str, optional
+        ``"all"`` (default), ``"project"``, or ``"user"`` -- which DB(s)
+        to search.
+    since : str, optional
+        ISO datetime lower bound (inclusive).  Empty string = no filter.
+    until : str, optional
+        ISO datetime upper bound (inclusive).  Empty string = no filter.
+    include_superseded : bool, optional
+        When ``True``, include memories that have been superseded.
+        Default ``False``.
+
+    Returns
+    -------
+    dict
+        On success (results found):
+            ``{"ok": True, "thread_id": str, "thread_title": str|null,
+            "scope": str, "since": str, "until": str,
+            "include_superseded": bool,
+            "result_total": int, "results": [<MemoryPayload>, ...],
+            "counts": {"by_kind": {str: int}, "by_source_db": {str: int}},
+            "status": {"started_at": str|null, "updated_at": str|null,
+            "thread_title": str|null},
+            "summary": "<human-readable summary string>"}``
+
+        On success (no results):
+            Same shape with ``result_total=0``, ``results=[]``,
+            empty counts, null status fields, and a
+            "No memories found" summary message.
+
+        On failure: ``{"ok": False, "error": {"code": ..., ...}}``.
+        Error codes are forwarded from ``_list_thread_memory_results``
+        (e.g. ``"invalid_thread_id"``, ``"invalid_scope"``).
+    """
     error, results = _list_thread_memory_results(
         thread_id,
         limit=limit,
@@ -618,7 +659,47 @@ def ingest_daily_note(
     thread_title: str = "",
     metadata: dict | None = None,
 ) -> dict:
-    """Store a daily note using the memory_event_v1 convention. Defaults to user scope and a `daily:YYYY-MM-DD` thread."""
+    """Store a daily note using the memory_event_v1 convention. Defaults to user scope and a ``daily:YYYY-MM-DD`` thread.
+
+    Delegates to ``remember()`` with ``memory_kind="summary"`` and enriched
+    metadata (``convention``, ``adapter``, ``note_date``, ``event_at``,
+    ``thread``).
+
+    Parameters
+    ----------
+    note_date : str
+        Required.  ISO date string ``"YYYY-MM-DD"``.  Used to derive
+        the default ``thread_id`` (``"daily:YYYY-MM-DD"``) and
+        ``event_at`` (midnight UTC) when those are not provided.
+    summary : str
+        Headline for the note.  Max 10 000 chars.
+    details : str, optional
+        Extended body.  Max 10 000 chars.
+    event_at : str, optional
+        ISO datetime override.  Defaults to ``"<note_date>T00:00:00Z"``.
+    tags : str, optional
+        Default ``"daily,note"``.
+    scope : str, optional
+        Default ``"user"``.  Can be ``"project"`` or ``"user"``.
+    thread_id : str, optional
+        Default ``"daily:<note_date>"``.
+    thread_title : str, optional
+        Default ``"Daily Note <note_date>"``.
+    metadata : dict or None, optional
+        Extra key-value pairs merged into stored metadata.
+
+    Returns
+    -------
+    dict
+        On success: same shape as ``remember()`` with additional
+        top-level keys ``"adapter": "daily_note"`` and
+        ``"convention": "memory_event_v1"``.
+
+        On failure: ``{"ok": False, "error": {"code": ..., ...}}``.
+        Common error codes: ``"missing_note_date"``,
+        ``"invalid_note_date"`` (not YYYY-MM-DD),
+        ``"invalid_thread_id"``, plus all ``remember()`` error codes.
+    """
     normalized_note_date, date_error = _normalize_note_date(note_date)
     if date_error:
         return date_error
@@ -680,7 +761,58 @@ def ingest_pr_outcome(
     pr_url: str = "",
     metadata: dict | None = None,
 ) -> dict:
-    """Store a pull-request outcome using the memory_event_v1 convention. Defaults to project scope and a `pr:<number>` thread."""
+    """Store a pull-request outcome using the memory_event_v1 convention. Defaults to project scope and a ``pr:<number>`` thread.
+
+    Delegates to ``remember()`` with ``memory_kind="summary"`` and enriched
+    metadata (``convention``, ``adapter``, ``outcome``, ``pr_number``,
+    ``pr_title``, ``thread``, plus optional git fields).
+
+    The stored body is auto-built from the PR metadata fields (number,
+    title, outcome, issue, branch, commit, URL) followed by any
+    user-supplied *details*.
+
+    Parameters
+    ----------
+    pr_number : int
+        Required.  Must be a positive integer.
+    title : str
+        Required.  PR title.  Max 10 000 chars.
+    outcome : str
+        Required.  Outcome description (e.g. ``"merged"``, ``"closed"``).
+        Normalized to lowercase with collapsed whitespace.
+    summary : str, optional
+        Headline override.  Defaults to
+        ``"PR #<number> <outcome>: <title>"``.
+    details : str, optional
+        Additional body text appended after the auto-built detail lines.
+    event_at : str, optional
+        ISO datetime.  Defaults to current UTC time.
+    tags : str, optional
+        Default ``"pr,outcome"``.
+    scope : str, optional
+        Default ``"project"``.
+    thread_id : str, optional
+        Default ``"pr:<pr_number>"``.
+    thread_title : str, optional
+        Default ``"PR #<pr_number>: <title>"``.
+    issue_id, branch, commit_sha, pr_url : str, optional
+        Git context fields stored in metadata and included in the body.
+    metadata : dict or None, optional
+        Extra key-value pairs merged into stored metadata.
+
+    Returns
+    -------
+    dict
+        On success: same shape as ``remember()`` with additional
+        top-level keys ``"adapter": "pr_outcome"`` and
+        ``"convention": "memory_event_v1"``.
+
+        On failure: ``{"ok": False, "error": {"code": ..., ...}}``.
+        Common error codes: ``"invalid_pr_number"`` (not a positive int),
+        ``"empty_content"`` / ``"content_too_large"`` (from title validation),
+        ``"missing_outcome"``, ``"invalid_thread_id"``, plus all
+        ``remember()`` error codes.
+    """
     try:
         normalized_pr_number = int(pr_number)
     except (TypeError, ValueError):
@@ -768,7 +900,90 @@ def save_session_memory(
     memory_kind: MemoryKind = "summary",
     metadata: dict | None = None,
 ) -> dict:
-    """Hook-driven: persist a distilled memory from a completed chat turn. Filters low-signal content and deduplicates automatically. Typically invoked by session hooks, not called directly."""
+    """Hook-driven: persist a distilled memory from a completed chat turn. Filters low-signal content and deduplicates automatically. Typically invoked by session hooks, not called directly.
+
+    Processing pipeline
+    -------------------
+    1. **Skip check**: responses starting with "I have no durable memory"
+       or "no durable memory" are skipped immediately.
+    2. **Distillation**: ``task`` and ``response`` are condensed into a
+       summary (max ~200 chars) and content body via ``_distill_session_turn``.
+    3. **Auto-classification** (when ``memory_kind`` is ``"summary"``):
+       ``_infer_auto_memory_kind`` tokenizes the combined task+summary+content
+       and matches against keyword sets in priority order:
+
+       - **todo** -- matches: todo, follow-up, followup, next, still, open,
+         pending, finish, add, implement
+       - **constraint** -- matches: constraint, must, cannot, required,
+         requires, never, always, limit, allowed, accepted
+       - **decision** -- matches: decision, decided, choose, chosen, prefer,
+         policy, owns, owner
+       - **fact** -- matches: fact, lives, located, uses, version, path,
+         project, id
+       - Falls back to ``"summary"`` if none match.
+    4. **Transient/low-signal filtering**: memories about transient status
+       (e.g. "tests passed", "looks good") are skipped unless durable
+       signal keywords are also present.
+    5. **Session metadata inference**: ``topic`` and ``outcome`` fields are
+       auto-populated when not already in metadata.
+    6. **Deduplication** (three layers):
+       a. Exact source match -- same (session_id, message_id) already stored.
+       b. Content-duplicate scan -- recent memories with same capture_kind
+          and matching summary/content.
+       c. Non-novel scan -- semantically similar memory already exists in
+          either DB for the current project.
+    7. **Merge suggestion**: if a similar but non-duplicate memory exists,
+       a ``merge_suggestion`` payload is included in the response.
+    8. **Storage**: new memory is always written to the **user DB**.
+
+    Parameters
+    ----------
+    task : str
+        The user's request / task description.  Max 10 000 chars.
+    response : str
+        The assistant's response.  Max 10 000 chars.
+    source_session_id : str
+        Required.  Opaque session identifier for deduplication.
+    source_message_id : str
+        Required.  Opaque message identifier for deduplication.
+    user_message_id : str, optional
+        Additional user-side message ID stored in metadata.
+    tags : str, optional
+        Comma-separated tags.  Default ``"session,auto"``.
+    memory_kind : MemoryKind, optional
+        Default ``"summary"``.  When ``"summary"``, auto-classification
+        overrides it based on content keywords.  Any other explicit kind
+        is used as-is.
+    metadata : dict or None, optional
+        Extra key-value pairs.  ``capture_kind`` is forced to
+        ``"session_distillation"``; ``task`` is auto-populated.
+
+    Returns
+    -------
+    dict
+        On success (stored):
+            ``{"ok": True, "backend": "user-sqlite", "deduplicated": False,
+            "memory_kind": "<inferred>",
+            "merge_suggestion": <payload>|null,
+            "memory": <MemoryPayload>}``
+
+        On success (skipped):
+            ``{"ok": True, "skipped": True,
+            "reason": "low-signal response"|"non-durable auto memory"|
+            "low-signal auto memory"}``
+
+        On success (deduplicated):
+            ``{"ok": True, "backend": "user-sqlite", "deduplicated": True,
+            "memory": <MemoryPayload>}``
+            -- optionally with ``"skipped": True`` and ``"reason"`` when
+            the duplicate/non-novel memory causes the save to be suppressed.
+
+        On failure: ``{"ok": False, "error": {"code": ..., ...}}``.
+        Common error codes: ``"empty_content"``, ``"content_too_large"``,
+        ``"missing_source_session_id"``, ``"missing_source_message_id"``,
+        ``"tags_too_long"``, ``"invalid_memory_kind"``,
+        ``"embedding_failed"``.
+    """
     if _should_skip_session_capture(response):
         return _success(skipped=True, reason="low-signal response")
     task_error = _validate_memory_content(task)
@@ -909,7 +1124,68 @@ def save_session_summary(
     tags: str = "session,summary,auto",
     metadata: dict | None = None,
 ) -> dict:
-    """Hook-driven: maintain a rolling summary of the current session. Each call supersedes the previous summary. Typically invoked by session hooks, not called directly."""
+    """Hook-driven: maintain a rolling summary of the current session. Each call supersedes the previous summary. Typically invoked by session hooks, not called directly.
+
+    Rolling-supersede behavior
+    --------------------------
+    All session summaries for a given ``source_session_id`` share a
+    synthetic ``source_message_id`` of ``"__session_summary__"``.  When
+    an existing summary for this session is found, the new memory
+    **supersedes** it (sets ``supersedes`` on the new row and
+    ``superseded_by`` on the old row).  This means only the latest
+    summary is returned by default searches.
+
+    Deduplication is checked via ``latest_message_id`` in metadata: if
+    the existing summary already reflects the current
+    ``source_message_id``, it is returned as-is (``deduplicated=True``).
+
+    Parameters
+    ----------
+    task : str
+        High-level task description for the session.  Max 10 000 chars.
+    turns : list[dict]
+        List of conversation turns, each a dict with ``"user"`` and
+        ``"assistant"`` string keys.  The last turn's assistant response
+        is checked for low-signal content.
+    source_session_id : str
+        Required.  Identifies the session for supersede chaining.
+    source_message_id : str
+        Required.  The latest message ID; stored in metadata as
+        ``latest_message_id`` for dedup comparison.
+    user_message_id : str, optional
+        Additional user-side message ID stored in metadata.
+    tags : str, optional
+        Default ``"session,summary,auto"``.
+    metadata : dict or None, optional
+        Extra key-value pairs.  ``capture_kind`` is forced to
+        ``"session_rollup"``; ``task``, ``latest_message_id``, and
+        ``turn_count`` are auto-populated.
+
+    Returns
+    -------
+    dict
+        On success (stored):
+            ``{"ok": True, "backend": "user-sqlite", "deduplicated": False,
+            "memory_kind": "summary",
+            "merge_suggestion": <payload>|null,
+            "memory": <MemoryPayload>}``
+
+        On success (skipped):
+            ``{"ok": True, "skipped": True,
+            "reason": "low-signal response"|"non-durable auto memory"|
+            "low-signal auto memory"}``
+
+        On success (deduplicated):
+            ``{"ok": True, "backend": "user-sqlite", "deduplicated": True,
+            "memory": <MemoryPayload>}``
+
+        On failure: ``{"ok": False, "error": {"code": ..., ...}}``.
+        Common error codes: ``"empty_content"``, ``"content_too_large"``,
+        ``"invalid_turns"`` (not a list, or element not a dict, or
+        distillation error), ``"missing_source_session_id"``,
+        ``"missing_source_message_id"``, ``"tags_too_long"``,
+        ``"embedding_failed"``.
+    """
     task_error = _validate_memory_content(task)
     if task_error:
         return _failure_from_error(task_error)
@@ -1040,7 +1316,61 @@ def supersede_memory(
     source_message_id: str = "",
     metadata: dict | None = None,
 ) -> dict:
-    """Replace an outdated memory with a corrected version. Creates a new memory linked to the old one, marking it as superseded. Use for changed decisions; use update_memory for minor edits."""
+    """Replace an outdated memory with a corrected version. Creates a new memory linked to the old one, marking it as superseded. Use for changed decisions; use update_memory for minor edits.
+
+    Chain relationship
+    ------------------
+    1. A **new** memory is created in the **user DB** (always, regardless of
+       where the old memory lives).
+    2. The new memory's ``supersedes`` field is set to *old_memory_id*.
+    3. The old memory's ``superseded_by`` field is set to the new memory's ID.
+    4. The old memory remains in its original DB but is excluded from default
+       search results (``include_superseded=False``).
+
+    If the ``superseded_by`` update on the old memory fails, the newly
+    created memory is rolled back (deleted) and a ``"supersede_failed"``
+    error is returned.
+
+    Parameters
+    ----------
+    old_memory_id : str
+        ID of the memory to supersede.  Accepts bare integer (``"42"``),
+        ``"project:<int>"``, or ``"user:<int>"``.  When bare, both DBs
+        are searched; if found in both, project-scoped match for the
+        current project is preferred; otherwise ``"ambiguous_memory_id"``
+        is returned.
+    summary : str
+        Headline for the replacement memory.  Required, max 10 000 chars.
+    details : str, optional
+        Extended body appended after summary.  Max 10 000 chars.
+    memory_kind : MemoryKind, optional
+        Defaults to ``"decision"``.
+    tags : str, optional
+        Comma-separated tag string.  Max 512 chars.
+    source_session_id : str, optional
+        Provenance session identifier.
+    source_message_id : str, optional
+        Provenance message identifier.
+    metadata : dict or None, optional
+        Extra key-value pairs merged into stored metadata.
+        ``capture_kind`` is set to ``"manual"`` automatically.
+
+    Returns
+    -------
+    dict
+        On success: ``{"ok": True, "backend": "user-sqlite",
+        "memory": <MemoryPayload>}`` where the payload includes
+        ``supersedes`` pointing to *old_memory_id*.
+
+        On failure: ``{"ok": False, "error": {"code": ..., ...}}``.
+        Common error codes: ``"missing_old_memory_id"``,
+        ``"invalid_old_memory_id"``, ``"memory_not_found"``,
+        ``"ambiguous_memory_id"``, ``"empty_content"``,
+        ``"content_too_large"``, ``"tags_too_long"``,
+        ``"invalid_memory_kind"``, ``"embedding_failed"``,
+        ``"supersede_failed"`` (old memory update failed; new memory
+        is rolled back).
+    """
     if not old_memory_id:
         return _failure("missing_old_memory_id", "old_memory_id is required")
     parsed_memory = _parse_memory_locator(
@@ -1121,7 +1451,35 @@ def supersede_memory(
 
 @mcp.tool()
 def forget(memory_id: str) -> dict:
-    """Permanently delete a memory by ID. Use 'project:ID' or 'user:ID' prefix to target a specific database."""
+    """Permanently delete a memory by ID. Use 'project:ID' or 'user:ID' prefix to target a specific database.
+
+    This is a **hard delete**: the memory row and its embedding vector are
+    removed from SQLite.  There is no soft-delete or undo.
+
+    Parameters
+    ----------
+    memory_id : str
+        The memory to delete.  Accepts three formats:
+
+        - A bare integer string, e.g. ``"42"`` -- looks up the ID in the
+          project DB first, then the user DB.  Returns an
+          ``"ambiguous_memory_id"`` error if the same numeric ID exists
+          in both databases.
+        - ``"project:<int>"`` -- targets only the project DB.
+        - ``"user:<int>"`` -- targets only the user DB.
+
+    Returns
+    -------
+    dict
+        On success: ``{"ok": True, "backend": "<scope>-sqlite",
+        "deleted": True, "memory_id": <int>,
+        "content_preview": "<first 200 chars>"}``
+
+        On failure: ``{"ok": False, "error": {"code": ..., ...}}``.
+        Common error codes: ``"invalid_memory_id"`` (unparseable locator),
+        ``"ambiguous_memory_id"`` (bare ID exists in both DBs),
+        ``"memory_not_found"`` (no memory with that ID).
+    """
     parsed_memory = _parse_memory_locator(
         memory_id,
         error_code="invalid_memory_id",

@@ -1,3 +1,17 @@
+"""MCP tool and implementation for project indexing.
+
+Provides ``index_project`` (the MCP-exposed tool) and its internal
+workhorse ``_index_project_impl``.  The implementation walks the project
+tree, chunks code and documentation files, generates embeddings, and
+upserts the results into the project SQLite-vec database.
+
+Incremental indexing is the default: each file's content hash is stored
+alongside its chunks, so only files that have actually changed since the
+last run are re-chunked and re-embedded.  A full rebuild is triggered
+automatically when the embedding profile (provider/model/dimensions)
+changes, or on explicit request via ``force_full_rebuild``.
+"""
+
 from __future__ import annotations
 
 import time
@@ -33,6 +47,79 @@ def _index_project_impl(
     force_full_rebuild: bool = False,
     rebuild_reason: str | None = None,
 ) -> dict:
+    """Index (or re-index) the current project's code and documentation.
+
+    This is the internal workhorse behind the ``index_project`` MCP tool.
+    The pipeline proceeds through five stages:
+
+    1. **Path resolution & file discovery** -- ``paths`` is normalised via
+       ``_normalize_paths`` and ``collect_files_with_skips`` walks the
+       resulting directory tree, separating code files from documentation
+       files and recording any skipped paths.
+    2. **Incremental change detection** -- For every discovered file the
+       SHA-256 content hash is compared against the hash stored from the
+       previous indexing run.  Files whose hash has not changed are counted
+       as *unchanged* and skipped.  Stale entries (files that no longer
+       exist on disk) are removed from the database.
+    3. **Chunking** -- Changed code files are chunked with tree-sitter
+       aware ``chunk_code``; changed doc files are chunked with
+       ``chunk_doc`` (markdown-section-aware).
+    4. **Embedding** -- Chunk text is sent to the configured embedding
+       provider in batches via ``_embed_sync_with_progress``.  If
+       embedding fails for any batch the entire indexing run is aborted
+       and a failure dict is returned -- no partial writes occur because
+       the DB upsert stage has not yet started.
+    5. **DB upsert** -- Old chunks for each changed file are deleted and
+       replaced with the freshly embedded chunks.  Index metadata
+       (timestamp, git HEAD, embedding profile, file/chunk counts) is
+       persisted so future runs can detect profile changes.
+
+    A *full rebuild* (clearing all existing chunks and hashes first) is
+    triggered when ``force_full_rebuild`` is ``True`` **or** when the
+    current embedding profile differs from the one recorded in the index
+    metadata, since vectors from different models are not comparable.
+
+    Args:
+        paths: Controls which paths to index.
+
+            * ``None`` -- index the entire project root (auto-detected via
+              git or cwd).
+            * A single ``str`` -- index that one directory or file.
+            * A ``list[str]`` -- index each listed path.
+
+            Invalid paths cause an early ``"invalid_path"`` failure return.
+        progress_callback: Optional callable invoked at each major phase
+            transition (file discovery, chunking start/complete, embedding
+            start, index complete) with a ``dict`` of phase-specific
+            metrics.  Conforms to the ``ProgressCallback`` protocol from
+            ``vibe_rag.indexing.embedder``.
+        force_full_rebuild: When ``True``, wipe all existing chunks and
+            file hashes before re-indexing.  Also set automatically when
+            the embedding profile has changed.
+        rebuild_reason: Human-readable reason attached to the rebuild
+            warning when ``force_full_rebuild`` is ``True``.
+
+    Returns:
+        A dict with ``"status": "ok"`` on success or
+        ``"status": "error"`` on failure.
+
+        On success the dict contains:
+
+        * ``summary`` -- human-readable one-line description of work done.
+        * ``full_rebuild`` -- whether a full rebuild was performed.
+        * ``project_id`` / ``project_root`` -- identifiers for the project.
+        * ``elapsed_seconds`` -- wall-clock time for the run.
+        * ``counts`` -- nested dict with ``code_files``, ``doc_files``,
+          ``code_chunks``, ``doc_chunks``, ``code_unchanged``,
+          ``doc_unchanged``, ``code_skipped``, ``doc_skipped``,
+          ``indexed_code_chunks``, ``indexed_doc_chunks``.
+        * ``warnings`` -- list of dicts for skipped files and rebuild
+          notices.
+
+        On failure the dict contains ``code`` (e.g.
+        ``"invalid_path"``, ``"embedding_provider_unavailable"``,
+        ``"no_files_found"``, ``"indexing_failed"``) and ``message``.
+    """
     start = time.time()
 
     normalized = _normalize_paths(paths)
@@ -310,5 +397,24 @@ def _index_project_impl(
 
 @mcp.tool()
 def index_project(paths: list[str] | str | None = None) -> dict:
-    """Index or re-index code and docs in the current project for semantic search. Run after major file changes or when search returns stale results."""
+    """Index or re-index code and docs in the current project for semantic search.
+
+    Run after major file changes or when search returns stale results.
+    Indexing is incremental by default: only files whose content has changed
+    (detected via SHA-256 hash) are re-chunked and re-embedded.  A full
+    rebuild happens automatically when the embedding profile changes.
+
+    Args:
+        paths: What to index.
+
+            * ``None`` (default) -- index the entire project root.
+            * A single path string -- index that directory or file.
+            * A list of path strings -- index each listed path.
+
+    Returns:
+        A dict containing ``"status"`` (``"ok"`` or ``"error"``),
+        ``summary``, ``elapsed_seconds``, ``counts`` (code/doc files,
+        chunks, unchanged, skipped), and ``warnings`` (skipped files,
+        rebuild notices).  See ``_index_project_impl`` for full detail.
+    """
     return _index_project_impl(paths)
